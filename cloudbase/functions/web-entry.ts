@@ -39,7 +39,9 @@ const server = http.createServer(async (incoming, outgoing) => {
     const body = await readBody(incoming);
     const response = await handleApi(requestFromIncoming(incoming, body), process.env as WorkerEnv);
     outgoing.writeHead(response.status, Object.fromEntries(response.headers.entries()));
-    outgoing.end(await response.text());
+    // Node's HTTP server rejects a body on 204 responses. OPTIONS is used for
+    // browser CORS preflight and intentionally returns 204 from handleApi.
+    outgoing.end(response.status === 204 || response.status === 304 ? undefined : await response.text());
   } catch (error) {
     outgoing.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
     outgoing.end(JSON.stringify({ error: error instanceof Error ? error.message : '服务器错误' }));

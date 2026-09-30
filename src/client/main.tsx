@@ -13,7 +13,12 @@ function appPath(path: string) {
 }
 
 function api<T>(path: string, init?: RequestInit) {
-  return fetch(`${apiBaseUrl}${path}`, { ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } }).then(async (response) => {
+  const headers = new Headers(init?.headers);
+  // Keep cross-origin business POSTs as CORS-safelisted requests. The
+  // CloudBase HTTP gateway currently rejects OPTIONS preflight with 500;
+  // the API parses the body as JSON regardless of this content type.
+  if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'text/plain;charset=UTF-8');
+  return fetch(`${apiBaseUrl}${path}`, { ...init, headers }).then(async (response) => {
     const payload = await response.json().catch(() => ({})) as { error?: string };
     if (!response.ok) throw new Error(payload.error || '请求失败，请稍后重试');
     return payload as T;
