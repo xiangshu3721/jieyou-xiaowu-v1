@@ -7,7 +7,9 @@ export default defineConfig(({ mode }) => {
   const isCloudflareBuild = mode === 'cloudflare';
   return {
       plugins: [react(), ...(isCloudflareBuild ? [cloudflare()] : [])],
-    base: mode === 'pages' ? '/jieyou-xiaowu-v1/' : '/',
+    // GitHub Pages is served from the custom-domain root in production.
+    // Keep an override available for a repository-subpath preview.
+    base: mode === 'pages' ? (env.VITE_PAGES_BASE || '/') : '/',
     server: {
       port: Number(env.VITE_PORT || '5174'),
       proxy: {
