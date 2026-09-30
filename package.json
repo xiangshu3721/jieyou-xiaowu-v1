@@ -1,0 +1,38 @@
+{
+  "name": "jieyou-xiaowu-v1",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k \"node --import tsx server/index.ts\" \"vite --host 127.0.0.1\"",
+    "dev:api": "node --import tsx server/index.ts",
+    "dev:web": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "e2e:check": "node --import tsx scripts/e2e-check.ts",
+    "e2e:real": "node --import tsx scripts/e2e-real.ts",
+    "cf:dev": "wrangler dev",
+    "cf:deploy": "vite build --mode cloudflare && wrangler deploy",
+    "build:cloudbase": "vite build && node scripts/build-cloudbase-function.mjs",
+    "build:pages": "vite build --mode pages && node scripts/prepare-pages.mjs",
+    "deploy:cloudbase": "npm run build:cloudbase && node scripts/deploy-cloudbase.mjs"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.62.2",
+    "@cloudflare/workers-types": "^5.20260930.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "concurrently": "^9.1.2",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4",
+    "wrangler": "^4.144.0"
+  }
+}
