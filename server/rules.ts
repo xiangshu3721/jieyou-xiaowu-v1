@@ -360,7 +360,7 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
 function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
   if (routing === 'HUMAN_MENTOR') return 'HANDOFF';
   if (assessment.needed) return 'ASSESSMENT';
-  if (intent === 'WANTS_ACTION') return 'HELP';
+  if (intent === 'WANTS_ACTION') return gaps.length ? 'CLARIFY' : 'HELP';
   if (intent === 'WANTS_COMFORT' || intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
   if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (gaps.length) return 'CLARIFY';
