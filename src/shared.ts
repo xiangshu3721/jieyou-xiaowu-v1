@@ -35,6 +35,29 @@ export type RoutingState =
   | 'PROFESSIONAL_REFERRAL'
   | 'EMERGENCY_SUPPORT';
 
+export type TriageRouting = 'AI_SUPPORT' | 'HUMAN_MENTOR' | 'PROFESSIONAL_REFERRAL' | 'SAFETY_SUPPORT';
+export type Complexity = 'LIGHT' | 'MODERATE' | 'COMPLEX' | 'HIGH_RISK';
+export type DepthLevel = 'D0' | 'D1' | 'D2' | 'D3';
+
+export interface ProblemMap {
+  main_issue: string | null;
+  issue_types: TopicCode[];
+  scene_summary: string | null;
+  onset_duration: string | null;
+  frequency: string | null;
+  severity_score: number | null;
+  functional_impacts: string[];
+  known_triggers: string[];
+  attempts: string[];
+  user_goal: string | null;
+}
+
+export interface AssessmentRecommendation {
+  needed: boolean;
+  recommended_tool: string | null;
+  reason: string | null;
+}
+
 export type BookingPreference = 'NOT_EXPRESSED' | 'INTERESTED' | 'ACCEPTED' | 'DECLINED';
 export type SafetyStatus = 'NO_SIGNAL_DETECTED' | 'NEEDS_CLARIFICATION' | 'URGENT';
 
@@ -44,6 +67,16 @@ export interface ChatMessage {
 }
 
 export interface ConversationAnalysis {
+  /** V1.2 导诊内部状态：由服务端规则基线生成，模型只能补充自然语言。 */
+  problem_map: ProblemMap;
+  information_gaps: string[];
+  assessment: AssessmentRecommendation;
+  complexity: Complexity;
+  diagnostic_sufficiency: number;
+  routing: TriageRouting;
+  depth_level: DepthLevel;
+  next_question: string | null;
+
   conversation_state: ConversationState;
   primary_topic: TopicCode;
   secondary_topics: TopicCode[];

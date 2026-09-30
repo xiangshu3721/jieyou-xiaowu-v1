@@ -62,7 +62,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     const userMessages = messages.filter((item) => item.role === 'user');
     const latestText = userMessages.at(-1)?.content || '';
     if (!messages.length || !latestText) return send(response, 400, { error: '请先输入你想聊的内容' });
-    const contextText = messages.slice(0, -1).map((message) => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`).join('\n');
+    const contextText = messages.slice(0, -1).filter((message) => message.role === 'user').map((message) => `用户：${message.content}`).join('\n');
     const baseline = analyzeConversation(latestText, contextText);
     if (baseline.safety_status === 'URGENT') {
       return send(response, 200, { reply: emergencyReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });

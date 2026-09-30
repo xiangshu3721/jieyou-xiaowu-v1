@@ -308,12 +308,12 @@ export async function handleApi(request: Request, env: WorkerEnv) {
   if (limited) return limited;
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.0.0', ...configurationStatus(env) }, request);
+    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.2.0', ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/dev/rules') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.0.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
+    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.2.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/chat') {
@@ -322,16 +322,16 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const messages = messagesValue(body.messages);
       const latestText = messages.filter((item) => item.role === 'user').at(-1)?.content || '';
       if (!messages.length || !latestText) return json(400, { error: '请先输入你想聊的内容' }, request);
-      const contextText = messages.slice(0, -1).map((message) => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`).join('\n');
+      const contextText = messages.slice(0, -1).filter((message) => message.role === 'user').map((message) => `用户：${message.content}`).join('\n');
       const baseline = analyzeConversation(latestText, contextText);
-      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.0.0', model: 'safety-rule' }, request);
-      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.0.0', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.2.0', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.2.0', model: 'safety-rule' }, request);
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...messages]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis));
-      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.0.0', model: apiConfig(env).deepseek.model }, request);
+      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.2.0', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
@@ -344,7 +344,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const messages = messagesValue(body.messages);
       if (!messages.some((item) => item.role === 'user')) return json(400, { error: '没有可整理的聊天内容' }, request);
       const summary = await callDeepSeek(env, [{ role: 'system', content: prompts.summary }, { role: 'user', content: conversationText(messages.filter((item) => item.role === 'user')) }], 0.2);
-      return json(200, { summary, promptVersion: env.PROMPT_VERSION || 'v1.0.0' }, request);
+      return json(200, { summary, promptVersion: env.PROMPT_VERSION || 'v1.2.0' }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError ? error.message : '摘要暂时生成失败';
       return json(502, { error: message, code: 'SUMMARY_UNAVAILABLE' }, request);

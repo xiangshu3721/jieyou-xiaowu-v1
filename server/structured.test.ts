@@ -19,6 +19,23 @@ describe('结构化 AI 输出校验', () => {
     expect(parsed?.analysis.primary_topic).toBe('CAREER');
   });
 
+  it('解析 V1.2 导诊字段，并限制枚举和值域', () => {
+    const parsed = parseAssistantOutput(JSON.stringify({
+      routing: 'AI_SUPPORT',
+      complexity: 'MODERATE',
+      depth_level: 'D1',
+      diagnostic_sufficiency: 1.4,
+      information_gaps: ['现实约束'],
+      assessment: { needed: true, recommended_tool: '职业兴趣与决策辅助', reason: '帮助比较选项' },
+      assistant_reply: '我们先看一个最关键的现实约束。',
+    }));
+    expect(parsed?.analysis.routing).toBe('AI_SUPPORT');
+    expect(parsed?.analysis.complexity).toBe('MODERATE');
+    expect(parsed?.analysis.depth_level).toBe('D1');
+    expect(parsed?.analysis.diagnostic_sufficiency).toBe(1);
+    expect(parsed?.analysis.assessment?.needed).toBe(true);
+  });
+
   it('模型输出异常时返回安全降级结果', () => {
     expect(parseAssistantOutput('{not-json}')).toBeNull();
     const analysis = analyzeConversation('我最近工作压力很大');
@@ -49,5 +66,18 @@ it('移除同一条回复中重复的真人服务文案', () => {
     })));
     expect(merged.conversation_state).toBe('HUMAN_SERVICE');
     expect(merged.routing_state).toBe('HUMAN_SUPPORT');
+  });
+
+  it('服务端规则保留问题地图和 AI 自助路径，不被模型强行改成真人', () => {
+    const baseline = analyzeConversation('我最近很累，只想倾诉，不想听建议');
+    const merged = mergeAnalysis(baseline, parseAssistantOutput(JSON.stringify({
+      routing: 'HUMAN_MENTOR',
+      complexity: 'COMPLEX',
+      problem_map: { main_issue: '模型猜测的主诉' },
+      assistant_reply: '我建议你预约真人。',
+    })));
+    expect(merged.routing).toBe('AI_SUPPORT');
+    expect(merged.routing_state).toBe('AI_SELF_HELP');
+    expect(merged.problem_map).toEqual(baseline.problem_map);
   });
 });
