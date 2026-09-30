@@ -7,7 +7,7 @@ export default defineConfig(({ mode }) => {
   const isCloudflareBuild = mode === 'cloudflare';
   return {
       plugins: [react(), ...(isCloudflareBuild ? [cloudflare()] : [])],
-    base: mode === 'pages' ? './' : '/',
+    base: mode === 'pages' ? '/jieyou-xiaowu-v1/' : '/',
     server: {
       port: Number(env.VITE_PORT || '5174'),
       proxy: {
