@@ -16,11 +16,12 @@ const files = {
   routing: 'routing-rules.md',
   safety: 'safety-rules.md',
   assessment: 'assessment-rules.md',
+  naturalness: 'naturalness-rules.md',
   summary: 'booking-summary.md',
 };
 
 export const prompts = {
-  chat: [files.system, files.conversation, files.taxonomy, files.routing, files.safety, files.assessment].map(readRuleFile).join('\n\n'),
+  chat: [files.system, files.conversation, files.naturalness, files.taxonomy, files.routing, files.safety, files.assessment].map(readRuleFile).join('\n\n'),
   classifier: readRuleFile(files.taxonomy),
   router: readRuleFile(files.routing),
   safety: readRuleFile(files.safety),

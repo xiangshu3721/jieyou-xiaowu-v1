@@ -38,6 +38,11 @@ export type RoutingState =
 export type TriageRouting = 'AI_SUPPORT' | 'HUMAN_MENTOR' | 'PROFESSIONAL_REFERRAL' | 'SAFETY_SUPPORT';
 export type Complexity = 'LIGHT' | 'MODERATE' | 'COMPLEX' | 'HIGH_RISK';
 export type DepthLevel = 'D0' | 'D1' | 'D2' | 'D3';
+export type ConversationMode = 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF';
+export type ResponseGoal = ConversationMode;
+export type ReplyLength = 'SHORT' | 'MEDIUM' | 'LONG';
+export type HumanHandoffState = 'NOT_READY' | 'READY' | 'OFFERED' | 'ACCEPTED' | 'DECLINED';
+export type SeverityLevel = 'LOW' | 'MODERATE' | 'MODERATE_HIGH' | 'HIGH' | 'UNKNOWN';
 
 export interface ProblemMap {
   main_issue: string | null;
@@ -76,6 +81,19 @@ export interface ConversationAnalysis {
   routing: TriageRouting;
   depth_level: DepthLevel;
   next_question: string | null;
+
+  /** V1.3 自然对话与真人交接控制字段；均由服务端基线裁决。 */
+  conversation_mode: ConversationMode;
+  response_goal: ResponseGoal;
+  problem_clarity: number;
+  severity_level: SeverityLevel;
+  ai_help_value: number;
+  human_help_value: number;
+  handoff_state: HumanHandoffState;
+  reply_length: ReplyLength;
+  ask_question: boolean;
+  show_booking_button: boolean;
+  handoff_ready: boolean;
 
   conversation_state: ConversationState;
   primary_topic: TopicCode;

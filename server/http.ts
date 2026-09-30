@@ -75,7 +75,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...messages]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
-      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis));
+      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
       return send(response, 200, { reply, analysis, promptVersion: config.promptVersion, model: config.deepseek.model });
     } catch (error) {
       const message = error instanceof DeepSeekUnavailableError ? error.message : 'AI 暂时没有回应，请稍后重试';

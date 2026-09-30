@@ -2,10 +2,15 @@ import type {
   AssessmentRecommendation,
   BookingPreference,
   Complexity,
+  ConversationMode,
   ConversationAnalysis,
   ConversationState,
   DepthLevel,
+  HumanHandoffState,
+  ReplyLength,
   RoutingState,
+  ResponseGoal,
+  SeverityLevel,
   SafetyStatus,
   TopicCode,
   TriageRouting,
@@ -29,6 +34,11 @@ const userIntents = new Set<UserIntent>(['VENTING', 'WANTS_COMFORT', 'WANTS_CLAR
 const bookingPreferences = new Set<BookingPreference>(['NOT_EXPRESSED', 'INTERESTED', 'ACCEPTED', 'DECLINED']);
 const complexities = new Set<Complexity>(['LIGHT', 'MODERATE', 'COMPLEX', 'HIGH_RISK']);
 const depthLevels = new Set<DepthLevel>(['D0', 'D1', 'D2', 'D3']);
+const conversationModes = new Set<ConversationMode>(['LISTEN', 'CLARIFY', 'MIRROR', 'ASSESS', 'HELP', 'ASSESSMENT', 'HANDOFF']);
+const responseGoals = new Set<ResponseGoal>(['LISTEN', 'CLARIFY', 'MIRROR', 'ASSESS', 'HELP', 'ASSESSMENT', 'HANDOFF']);
+const replyLengths = new Set<ReplyLength>(['SHORT', 'MEDIUM', 'LONG']);
+const handoffStates = new Set<HumanHandoffState>(['NOT_READY', 'READY', 'OFFERED', 'ACCEPTED', 'DECLINED']);
+const severityLevels = new Set<SeverityLevel>(['LOW', 'MODERATE', 'MODERATE_HIGH', 'HIGH', 'UNKNOWN']);
 
 function textList(value: unknown, maxItems = 5, maxLength = 220) {
   if (!Array.isArray(value)) return [];
@@ -91,6 +101,17 @@ export function parseAssistantOutput(raw: string): ParsedAssistantOutput | null 
   if (complexities.has(value.complexity as Complexity)) analysis.complexity = value.complexity as Complexity;
   if (depthLevels.has(value.depth_level as DepthLevel)) analysis.depth_level = value.depth_level as DepthLevel;
   if (typeof value.diagnostic_sufficiency === 'number' && Number.isFinite(value.diagnostic_sufficiency)) analysis.diagnostic_sufficiency = Math.max(0, Math.min(1, value.diagnostic_sufficiency));
+  if (conversationModes.has(value.conversation_mode as ConversationMode)) analysis.conversation_mode = value.conversation_mode as ConversationMode;
+  if (responseGoals.has(value.response_goal as ResponseGoal)) analysis.response_goal = value.response_goal as ResponseGoal;
+  if (typeof value.problem_clarity === 'number' && Number.isFinite(value.problem_clarity)) analysis.problem_clarity = Math.max(0, Math.min(1, value.problem_clarity));
+  if (severityLevels.has(value.severity_level as SeverityLevel)) analysis.severity_level = value.severity_level as SeverityLevel;
+  if (typeof value.ai_help_value === 'number' && Number.isFinite(value.ai_help_value)) analysis.ai_help_value = Math.max(0, Math.min(1, value.ai_help_value));
+  if (typeof value.human_help_value === 'number' && Number.isFinite(value.human_help_value)) analysis.human_help_value = Math.max(0, Math.min(1, value.human_help_value));
+  if (handoffStates.has(value.handoff_state as HumanHandoffState)) analysis.handoff_state = value.handoff_state as HumanHandoffState;
+  if (replyLengths.has(value.reply_length as ReplyLength)) analysis.reply_length = value.reply_length as ReplyLength;
+  if (typeof value.ask_question === 'boolean') analysis.ask_question = value.ask_question;
+  if (typeof value.show_booking_button === 'boolean') analysis.show_booking_button = value.show_booking_button;
+  if (typeof value.handoff_ready === 'boolean') analysis.handoff_ready = value.handoff_ready;
   analysis.information_gaps = textList(value.information_gaps, 6, 160);
   analysis.next_question = optionalText(value.next_question, 240);
   const assessment = parseAssessment(value.assessment);
@@ -112,7 +133,10 @@ export function naturalReply(raw: string) {
   return trimmed.slice(0, 4_000);
 }
 
-export function normalizeUserReply(reply: string) {
+export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis) {
+  if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
+    return fallbackReply(analysis);
+  }
   const replaced = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, humanServiceCopy);
   let keptCopy = false;
   return replaced
@@ -167,13 +191,14 @@ export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssi
 export function fallbackReply(analysis: ConversationAnalysis) {
   if (analysis.safety_status === 'URGENT') return emergencyReply;
   if (analysis.safety_status === 'NEEDS_CLARIFICATION') return safetyClarificationReply;
-  if (analysis.routing === 'HUMAN_MENTOR') return `${humanServiceCopy} 你可以点击页面上的“预约真人导师聊聊（免费）→”，填写并确认这次想获得的帮助。`;
+  if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) return `${humanServiceCopy} 如果你愿意，可以点击“免费预约真人导师”，把这次想获得的帮助交给真人继续接住。`;
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';
-  if (analysis.information_gaps.length && analysis.next_question) return `我先把你刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
+  if (!analysis.ask_question && analysis.reply_length === 'SHORT') return '我先接住你刚才说的这部分，不急着把它解释清楚。我们可以先从眼前最影响你的地方慢慢看。';
+  if (analysis.information_gaps.length && analysis.next_question) return `我先听你把刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
   if (analysis.complexity === 'LIGHT') return '你现在描述的问题比较具体，我们可以先从一个最小、现实可行的动作开始，再看看它对你有没有帮助。';
-  return '我先把目前的情况做个阶段性整理，再和你一起看下一步更适合继续自己梳理，还是找真人支持。';
+  return '我先把目前的情况做个阶段性整理，再和你一起看一个更适合眼下的下一步。';
 }
 
 export function createFallbackAnalysis(latestText: string, contextText = '') {

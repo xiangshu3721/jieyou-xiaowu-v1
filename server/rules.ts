@@ -104,7 +104,8 @@ function firstMatch(text: string, pattern: RegExp) {
 }
 
 function extractDuration(text: string) {
-  return firstMatch(text, /(?:最近\s*)?[0-9一二两三四五六七八九十]+\s*(?:年|个月|周|天)|半年|一年多|几个月|几周|很久|长期|一直以来|最近一段时间|最近|这段时间/);
+  const specific = firstMatch(text, /[0-9一二两三四五六七八九十]+\s*(?:年|个月|周|天)|半年|一年多|几个月|几周|很久|长期|一直以来/);
+  return specific || firstMatch(text, /最近一段时间|最近|这段时间/);
 }
 
 function extractFrequency(text: string) {
@@ -112,7 +113,7 @@ function extractFrequency(text: string) {
 }
 
 function extractSeverity(text: string) {
-  const numeric = text.match(/(?:现在|目前|大概|大约|强度|严重程度|焦虑|痛苦|难受)[^0-9]{0,8}(10|[0-9])\s*(?:分|\/10)/);
+  const numeric = text.match(/(?:现在|目前|大概|大约|强度|严重程度|焦虑|痛苦|难受)?[^0-9]{0,8}(10|[0-9])\s*(?:分|\/10)/);
   if (numeric) return Math.max(0, Math.min(10, Number(numeric[1])));
   if (/崩溃|撑不住|极度|非常严重|特别严重/.test(text)) return 8;
   if (/很严重|很大|特别难受|很痛苦/.test(text)) return 7;
@@ -145,7 +146,7 @@ function extractAttempts(text: string) {
 }
 
 function extractGoal(text: string, intent: UserIntent) {
-  const explicit = text.match(/(?:希望|想要|想先|最想|需要|想把|想知道)([^。！？\n]{2,60})/);
+  const explicit = text.match(/(?:希望|想要|想先|最想|需要|想把|想知道|想)([^。！？\n]{2,60})/);
   if (explicit) return limitText(explicit[0], 100);
   if (intent === 'WANTS_HUMAN') return '希望获得真人导师的进一步支持';
   if (intent === 'WANTS_ACTION') return '希望得到一个现实可行的下一步';
@@ -239,13 +240,59 @@ function diagnosticSufficiency(problemMap: ProblemMap, safety: SafetyStatus) {
   return Number((dimensions.filter(Boolean).length / dimensions.length).toFixed(2));
 }
 
-function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, complexity: Complexity, sufficiency: number, assessment: AssessmentRecommendation): TriageRouting {
+function severityLevel(problemMap: ProblemMap, safety: SafetyStatus) {
+  if (safety === 'URGENT') return 'HIGH' as const;
+  if (problemMap.severity_score !== null && problemMap.severity_score >= 8) return 'HIGH' as const;
+  if (problemMap.severity_score !== null && problemMap.severity_score >= 6 || problemMap.functional_impacts.length >= 2) return 'MODERATE_HIGH' as const;
+  if (problemMap.severity_score !== null && problemMap.severity_score >= 4 || problemMap.functional_impacts.length > 0) return 'MODERATE' as const;
+  if (problemMap.severity_score !== null) return 'LOW' as const;
+  return 'UNKNOWN' as const;
+}
+
+function hasExtendedSupportSignal(text: string, problemMap: ProblemMap, complexity: Complexity, supportFeedback: string | null) {
+  const repeated = /反复|每次|总是|经常|几乎每天|长期|一直|很久/.test(text) || Boolean(problemMap.frequency);
+  const longTerm = /半年|一年|几个月|几年来|长期|很久|一直/.test(text) || Boolean(problemMap.onset_duration && !/最近/.test(problemMap.onset_duration));
+  const deep = /童年|创伤|人格模式|深层关系|原生家庭/.test(text);
+  return Boolean(supportFeedback) || problemMap.attempts.length > 0 || deep || (repeated && (longTerm || problemMap.functional_impacts.length > 0));
+}
+
+function aiHelpValue(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, supportFeedback: string | null) {
+  if (supportFeedback) return 0.25;
+  if (complexity === 'COMPLEX') return 0.3;
+  if (complexity === 'MODERATE') {
+    if (problemMap.attempts.length || problemMap.functional_impacts.length || /长期|几个月|很久|反复|总是/.test(text)) return 0.45;
+    return 0.6;
+  }
+  if (intent === 'WANTS_ACTION') return 0.85;
+  return 0.75;
+}
+
+function humanHelpValue(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, supportFeedback: string | null) {
+  if (intent === 'WANTS_HUMAN') return 1;
+  if (supportFeedback) return 0.9;
+  if (complexity === 'COMPLEX') return 0.85;
+  const longTerm = /半年|一年|几个月|几年来|长期|很久|一直/.test(text) || Boolean(problemMap.onset_duration && !/最近/.test(problemMap.onset_duration));
+  if (longTerm && problemMap.functional_impacts.length > 0) return 0.85;
+  if (problemMap.attempts.length > 0 && problemMap.functional_impacts.length > 0) return 0.82;
+  if (complexity === 'MODERATE') return 0.55;
+  return 0.25;
+}
+
+function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null) {
+  if (intent === 'WANTS_HUMAN') return true;
+  if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
+  const aiValue = aiHelpValue(text, intent, complexity, problemMap, supportFeedback);
+  const humanValue = humanHelpValue(text, intent, complexity, problemMap, supportFeedback);
+  return sufficiency >= 0.75 && (aiValue <= 0.4 || humanValue >= 0.8) && hasExtendedSupportSignal(text, problemMap, complexity, supportFeedback);
+}
+
+function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, complexity: Complexity, sufficiency: number, assessment: AssessmentRecommendation, supportFeedback: string | null, handoffReady = false): TriageRouting {
   if (safety !== 'NO_SIGNAL_DETECTED') return 'SAFETY_SUPPORT';
   if (professionalPatterns.some((pattern) => pattern.test(text))) return 'PROFESSIONAL_REFERRAL';
   if (intent === 'WANTS_HUMAN') return 'HUMAN_MENTOR';
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return 'AI_SUPPORT';
   if (assessment.needed) return 'AI_SUPPORT';
-  if ((complexity === 'MODERATE' || complexity === 'COMPLEX') && sufficiency >= 0.6) return 'HUMAN_MENTOR';
+  if (handoffReady || shouldOfferHuman(text, intent, complexity, buildProblemMap(text, classifyConcern(text), intent), sufficiency, supportFeedback)) return 'HUMAN_MENTOR';
   return 'AI_SUPPORT';
 }
 
@@ -278,6 +325,7 @@ function strategyFor(routing: TriageRouting, intent: UserIntent, gaps: string[],
 
 function depthFor(text: string, complexity: Complexity, routing: TriageRouting, gaps: string[]): 'D0' | 'D1' | 'D2' | 'D3' {
   if (routing === 'SAFETY_SUPPORT') return 'D0';
+  if (routing === 'HUMAN_MENTOR') return 'D0';
   if (complexity === 'COMPLEX' && /童年|创伤|人格|深层|原生家庭/.test(text)) return 'D3';
   if (gaps.length) return 'D1';
   if (/尝试|反复|模式|选择|矛盾/.test(text)) return 'D2';
@@ -305,7 +353,25 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
   const problemMap = buildProblemMap(text, topics, intent);
   const complexity = determineComplexity(text, topics, problemMap, safety);
   const sufficiency = diagnosticSufficiency(problemMap, safety);
-  return legacyRouting(routeFor(safety, text, intent, complexity, sufficiency, { needed: false, recommended_tool: null, reason: null }));
+  const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
+  return legacyRouting(routeFor(safety, text, intent, complexity, sufficiency, { needed: false, recommended_tool: null, reason: null }, supportFeedback));
+}
+
+function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
+  if (routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (assessment.needed) return 'ASSESSMENT';
+  if (intent === 'WANTS_ACTION') return 'HELP';
+  if (intent === 'WANTS_COMFORT' || intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
+  if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
+  if (gaps.length) return 'CLARIFY';
+  return 'HELP';
+}
+
+function replyLengthFor(text: string, intent: UserIntent, goal: ReturnType<typeof responseGoalFor>, complexity: Complexity): 'SHORT' | 'MEDIUM' | 'LONG' {
+  if (goal === 'HANDOFF' || goal === 'LISTEN' || intent === 'WANTS_END') return 'SHORT';
+  if (goal === 'ASSESSMENT' || goal === 'MIRROR' || complexity === 'COMPLEX') return 'MEDIUM';
+  if (intent === 'WANTS_ACTION' && /具体|方案|步骤|怎么做|下一步/.test(text)) return 'LONG';
+  return text.length > 90 ? 'MEDIUM' : 'SHORT';
 }
 
 export function analyzeConversation(latestText: string, contextText = ''): ConversationAnalysis {
@@ -319,7 +385,15 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   const gaps = buildInformationGaps(problemMap);
   const assessment = chooseAssessment(allUserText, topics, complexity, problemMap.user_goal);
   const sufficiency = diagnosticSufficiency(problemMap, safety);
-  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessment);
+  const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
+  const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
+    && !assessment.needed
+    && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback);
+  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessment, supportFeedback, preliminaryHandoffReady);
+  const handoffReady = routing === 'HUMAN_MENTOR';
+  const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
+  const handoffState = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : handoffReady ? 'OFFERED' as const : 'NOT_READY' as const;
+  const askQuestion = !handoffReady && responseGoal !== 'HANDOFF' && responseGoal !== 'HELP' && responseGoal !== 'ASSESSMENT' && intent !== 'WANTS_END' && gaps.length > 0;
   const legacyRoute = legacyRouting(routing);
   const reasons = [
     safety === 'URGENT' ? '检测到可信的即时危险表达' : '',
@@ -330,7 +404,6 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   ].filter(Boolean);
   const conversationState = legacyState(routing, safety, intent);
   const confirmedFacts = unique(sentences(allUserText).map((sentence) => sentence.slice(0, 160)), 5);
-  const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   return {
     problem_map: problemMap,
     information_gaps: gaps,
@@ -340,6 +413,17 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
     routing,
     depth_level: depthFor(allUserText, complexity, routing, gaps),
     next_question: chooseNextQuestion(gaps),
+    conversation_mode: responseGoal,
+    response_goal: responseGoal,
+    problem_clarity: sufficiency,
+    severity_level: severityLevel(problemMap, safety),
+    ai_help_value: Number(aiHelpValue(allUserText, intent, complexity, problemMap, supportFeedback).toFixed(2)),
+    human_help_value: Number(humanHelpValue(allUserText, intent, complexity, problemMap, supportFeedback).toFixed(2)),
+    handoff_state: handoffState,
+    reply_length: replyLengthFor(text, intent, responseGoal, complexity),
+    ask_question: askQuestion,
+    show_booking_button: handoffReady,
+    handoff_ready: handoffReady,
     conversation_state: conversationState,
     primary_topic: topics[0],
     secondary_topics: topics.slice(1),

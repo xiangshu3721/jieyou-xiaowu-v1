@@ -80,4 +80,47 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.assessment.needed).toBe(false);
     expect(analysis.routing).toBe('AI_SUPPORT');
   });
+
+  it('V1.3 默认先由 AI 支持，不因中度标签提前展示真人入口', () => {
+    const analysis = analyzeConversation('最近总是焦虑怎么办');
+    expect(analysis.routing).toBe('AI_SUPPORT');
+    expect(analysis.handoff_state).toBe('NOT_READY');
+    expect(analysis.show_booking_button).toBe(false);
+    expect(analysis.response_goal).not.toBe('HANDOFF');
+  });
+
+  it('V1.3 信息充分且继续 AI 收益有限时停止追问并交接', () => {
+    const analysis = analyzeConversation(
+      '8分，而且已经持续两三个月、影响睡眠和做事状态了。我想搞清楚焦虑来源。',
+      '最近总是焦虑怎么办\n晚上，脑子停不下来\n两三个月吧，最近还失眠，什么都提不起劲',
+    );
+    expect(analysis.handoff_ready).toBe(true);
+    expect(analysis.handoff_state).toBe('OFFERED');
+    expect(analysis.show_booking_button).toBe(true);
+    expect(analysis.response_goal).toBe('HANDOFF');
+    expect(analysis.ask_question).toBe(false);
+    expect(analysis.routing).toBe('HUMAN_MENTOR');
+  });
+
+  it('V1.3 用户直接提出真人需求时立即展示交接入口', () => {
+    const analysis = analyzeConversation('我想找真人导师聊聊');
+    expect(analysis.handoff_state).toBe('OFFERED');
+    expect(analysis.show_booking_button).toBe(true);
+    expect(analysis.ask_question).toBe(false);
+    expect(analysis.response_goal).toBe('HANDOFF');
+  });
+
+  it('V1.3 用户拒绝真人后保持 AI 支持且不再展示入口', () => {
+    const analysis = analyzeConversation('我暂时不想找真人，先这样聊聊就好');
+    expect(analysis.handoff_state).toBe('DECLINED');
+    expect(analysis.show_booking_button).toBe(false);
+    expect(analysis.routing).toBe('AI_SUPPORT');
+  });
+
+  it('V1.3 安全路径不展示商业交接入口', () => {
+    const analysis = analyzeConversation('我现在正准备伤害自己');
+    expect(analysis.handoff_state).toBe('NOT_READY');
+    expect(analysis.show_booking_button).toBe(false);
+    expect(analysis.routing).toBe('SAFETY_SUPPORT');
+  });
 });

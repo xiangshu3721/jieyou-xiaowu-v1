@@ -232,7 +232,7 @@ function ChatPage() {
           <p>情绪、情感、工作、家庭等困扰，都可以问我，我会陪着你一起</p>
         </section>
         {messages.length > 0 && <section className="message-stream" aria-live="polite">
-          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={() => { location.href = appPath('/booking'); }}>预约真人导师聊聊（免费）→</button>}</div></div>)}
+          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人导师 →</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
