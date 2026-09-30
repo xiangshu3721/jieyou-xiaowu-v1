@@ -39,6 +39,28 @@ function Header({ onHome }: { onHome?: () => void }) {
 
 type SendingPhase = 'listening' | 'replying';
 
+type SpeechRecognitionResultLike = { isFinal: boolean; 0: { transcript: string } };
+type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
+type SpeechRecognitionLike = {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  onstart: (() => void) | null;
+  onend: (() => void) | null;
+  onerror: ((event: { error?: string }) => void) | null;
+  onresult: ((event: SpeechRecognitionEventLike) => void) | null;
+  start: () => void;
+  stop: () => void;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+
+function createSpeechRecognition() {
+  if (typeof window === 'undefined') return null;
+  const browserWindow = window as Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor };
+  const Recognition = browserWindow.SpeechRecognition || browserWindow.webkitSpeechRecognition;
+  return Recognition ? new Recognition() : null;
+}
+
 function LoadingDots() { return <span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>; }
 
 function LoadingStatus({ phase }: { phase: SendingPhase }) {
@@ -73,7 +95,9 @@ function ChatPage() {
   const [sendingPhase, setSendingPhase] = useState<SendingPhase>('listening');
   const [error, setError] = useState('');
   const [scrolled, setScrolled] = useState(false);
+  const [recording, setRecording] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
 
   useEffect(() => {
     history.replaceState(null, '', appPath('/'));
@@ -91,9 +115,64 @@ function ChatPage() {
     return () => window.cancelAnimationFrame(frame);
   }, [messages.length, sending]);
 
+  useEffect(() => () => {
+    recognitionRef.current?.stop();
+  }, []);
+
+  function toggleVoiceInput() {
+    if (sending) return;
+    if (recording) {
+      recognitionRef.current?.stop();
+      return;
+    }
+    const recognition = createSpeechRecognition();
+    if (!recognition) {
+      setError('当前浏览器不支持语音输入，请使用最新版 Chrome 或 Safari。');
+      return;
+    }
+    const baseText = input.trim();
+    const separator = baseText && !/[，。！？；：,.!?;:\s]$/.test(baseText) ? ' ' : '';
+    recognition.lang = 'zh-CN';
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.onstart = () => { setError(''); setRecording(true); };
+    recognition.onresult = (event) => {
+      let finalText = '';
+      let interimText = '';
+      for (let index = 0; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) continue;
+        if (result.isFinal) finalText += result[0].transcript;
+        else interimText += result[0].transcript;
+      }
+      const transcript = `${finalText}${interimText}`;
+      if (transcript) setInput(`${baseText}${separator}${transcript}`);
+    };
+    recognition.onerror = (event) => {
+      if (event.error !== 'aborted') setError(event.error === 'not-allowed' ? '麦克风权限被拒绝，请在浏览器设置中允许麦克风。' : '语音识别暂时不可用，请重试或直接输入。');
+      setRecording(false);
+      recognitionRef.current = null;
+    };
+    recognition.onend = () => {
+      setRecording(false);
+      recognitionRef.current = null;
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      setRecording(false);
+      recognitionRef.current = null;
+      setError('语音输入启动失败，请稍后重试。');
+    }
+  }
+
   async function send() {
     const content = input.trim();
     if (!content || !session || sending) return;
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setRecording(false);
     if (wantsHumanBooking(content)) {
       setInput('');
       location.href = appPath('/booking');
@@ -158,7 +237,7 @@ function ChatPage() {
         </div>
         <section className="composer-card">
           <textarea id="chat-input" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="自由表达你的困惑，别有压力" rows={3} />
-          <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><button className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div>
+          <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
         <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><span>对话仅保存在当前浏览器</span></div>
       </div>
