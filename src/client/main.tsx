@@ -61,6 +61,13 @@ function createSpeechRecognition() {
   return Recognition ? new Recognition() : null;
 }
 
+function speechUnavailableMessage() {
+  if (typeof window !== 'undefined' && !window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
+    return '语音输入需要安全连接，请通过 https://littlemo.icu 打开后再点击麦克风。';
+  }
+  return '当前浏览器暂未开放网页语音识别，请更新 Chrome 或 Safari；也可以点击手机键盘上的麦克风听写。';
+}
+
 function LoadingDots() { return <span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>; }
 
 function LoadingStatus({ phase }: { phase: SendingPhase }) {
@@ -127,7 +134,7 @@ function ChatPage() {
     }
     const recognition = createSpeechRecognition();
     if (!recognition) {
-      setError('当前浏览器不支持语音输入，请使用最新版 Chrome 或 Safari。');
+      setError(speechUnavailableMessage());
       return;
     }
     const baseText = input.trim();
@@ -149,7 +156,7 @@ function ChatPage() {
       if (transcript) setInput(`${baseText}${separator}${transcript}`);
     };
     recognition.onerror = (event) => {
-      if (event.error !== 'aborted') setError(event.error === 'not-allowed' ? '麦克风权限被拒绝，请在浏览器设置中允许麦克风。' : '语音识别暂时不可用，请重试或直接输入。');
+      if (event.error !== 'aborted') setError(event.error === 'not-allowed' || event.error === 'service-not-allowed' ? (window.isSecureContext ? '麦克风或语音识别权限未开启，请在浏览器设置中允许本网站使用麦克风。' : speechUnavailableMessage()) : '语音识别暂时不可用，请重试或直接使用手机键盘听写。');
       setRecording(false);
       recognitionRef.current = null;
     };
@@ -163,7 +170,7 @@ function ChatPage() {
     } catch {
       setRecording(false);
       recognitionRef.current = null;
-      setError('语音输入启动失败，请稍后重试。');
+      setError(speechUnavailableMessage());
     }
   }
 
