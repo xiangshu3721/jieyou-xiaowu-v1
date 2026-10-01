@@ -417,13 +417,16 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   const problemMap = buildProblemMap(allUserText, topics, intent);
   const complexity = determineComplexity(allUserText, topics, problemMap, safety);
   const gaps = buildInformationGaps(problemMap);
-  const assessment = chooseAssessment(allUserText, topics, complexity, problemMap.user_goal);
+  const assessmentCandidate = chooseAssessment(allUserText, topics, complexity, problemMap.user_goal);
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
     && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback);
-  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessment, supportFeedback, preliminaryHandoffReady);
+  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady);
   const handoffReady = routing === 'HUMAN_MENTOR';
+  const assessment = handoffReady
+    ? { needed: false, recommended_tool: null, reason: null }
+    : assessmentCandidate;
   const minimumJudgment = minimumSufficientJudgment(allUserText, complexity, problemMap, sufficiency);
   const directHumanIntent = intent === 'WANTS_HUMAN';
   const humanIntent = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : directHumanIntent ? 'EXPLICIT' as const : 'NOT_EXPLICIT' as const;
