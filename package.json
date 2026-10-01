@@ -19,6 +19,7 @@
     "deploy:cloudbase": "npm run build:cloudbase && node scripts/deploy-cloudbase.mjs"
   },
   "dependencies": {
+    "@cloudbase/node-sdk": "^3.18.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0"
   },

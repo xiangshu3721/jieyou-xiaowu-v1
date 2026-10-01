@@ -7,11 +7,14 @@ import { analyzeConversation, emergencyReply, safetyClarificationReply } from '.
 import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
+import { FileLearningStore } from './learning-store.js';
+import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from './learning-service.js';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
+const learningStore = new FileLearningStore();
 
 function send(response: http.ServerResponse, status: number, body: unknown) {
-  response.writeHead(status, { ...jsonHeaders, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token', 'Access-Control-Allow-Methods': 'GET, POST, OPTIONS' });
+  response.writeHead(status, { ...jsonHeaders, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token', 'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS' });
   response.end(JSON.stringify(body));
 }
 
@@ -48,12 +51,49 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   if (request.method === 'OPTIONS') return send(response, 204, {});
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return send(response, 200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: config.promptVersion, ...configurationStatus() });
+    return send(response, 200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: config.promptVersion, learningConfigured: true, ...configurationStatus() });
   }
 
   if (request.method === 'GET' && url.pathname === '/api/dev/rules') {
     if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
     return send(response, 200, { promptMetadata, promptTexts: prompts, ...configurationStatus() });
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/events') {
+    const body = await readBody(request);
+    const result = await recordLearningEvent(body, learningStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/review') {
+    const body = await readBody(request);
+    const result = await reviewConversation(body, learningStore, callDeepSeek, prompts.reviewer);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/session/delete') {
+    const body = await readBody(request);
+    const result = await deleteLearningSession(body, learningStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/learning/dashboard') {
+    if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
+    const result = await learningDashboard(learningStore, config.promptVersion);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/insights/run') {
+    if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
+    const result = await runLearningInsights(learningStore, config.promptVersion);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/mentor-feedback') {
+    if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
+    const body = await readBody(request);
+    const result = await recordMentorFeedback(body, learningStore);
+    return send(response, result.status, result.body);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/chat') {

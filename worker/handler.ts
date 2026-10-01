@@ -1,6 +1,8 @@
 import type { AppointmentInput, ChatMessage } from '../src/shared.js';
 import { analyzeConversation, emergencyReply, safetyClarificationReply } from '../server/rules.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
+import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
+import { createCloudBaseLearningStore } from './learning-store.js';
 import { promptMetadata, prompts } from './prompts.js';
 
 export interface WorkerEnv {
@@ -14,6 +16,9 @@ export interface WorkerEnv {
   FEISHU_BASE_URL?: string;
   PROMPT_VERSION?: string;
   DEV_TOKEN?: string;
+  CLOUDBASE_APIKEY?: string;
+  CLOUDBASE_ENV_ID?: string;
+  CLOUDBASE_API_ENDPOINT?: string;
   DB?: D1Database;
 }
 
@@ -40,6 +45,7 @@ const jsonHeaders = {
 
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
 let feishuTokenCache: { token: string; expiresAt: number } | null = null;
+let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseLearningStore> } | null = null;
 
 function json(status: number, body: unknown, request?: Request) {
   const origin = request?.headers.get('Origin');
@@ -49,7 +55,7 @@ function json(status: number, body: unknown, request?: Request) {
       ...jsonHeaders,
       'Access-Control-Allow-Origin': origin || '*',
       'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token',
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+      'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS',
     },
   });
 }
@@ -109,8 +115,17 @@ function configurationStatus(env: WorkerEnv) {
     deepseekConfigured: Boolean(config.deepseek.apiKey),
     feishuConfigured: Boolean(config.feishu.appId && config.feishu.appSecret && config.feishu.appToken && config.feishu.tableId),
     d1Configured: Boolean(env.DB),
+    learningConfigured: Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
     devConfigured: Boolean(env.DEV_TOKEN),
   };
+}
+
+function learningStoreFor(env: WorkerEnv) {
+  const key = `${env.CLOUDBASE_ENV_ID || ''}:${env.CLOUDBASE_APIKEY || ''}`;
+  if (learningStoreCache?.key === key) return learningStoreCache.store;
+  const store = createCloudBaseLearningStore(env);
+  learningStoreCache = { key, store };
+  return store;
 }
 
 function clientKey(request: Request) {
@@ -118,7 +133,7 @@ function clientKey(request: Request) {
 }
 
 function rateLimit(request: Request, pathname: string) {
-  if (!['/api/chat', '/api/booking-summary', '/api/appointments'].includes(pathname)) return null;
+  if (!['/api/chat', '/api/booking-summary', '/api/appointments', '/api/learning/events', '/api/learning/review'].includes(pathname)) return null;
   const key = `${clientKey(request)}:${pathname}`;
   const now = Date.now();
   const current = requestCounts.get(key);
@@ -308,12 +323,49 @@ export async function handleApi(request: Request, env: WorkerEnv) {
   if (limited) return limited;
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.4.0', ...configurationStatus(env) }, request);
+    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.5.0', ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/dev/rules') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.4.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
+    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.5.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/events') {
+    const body = await readBody(request);
+    const result = await recordLearningEvent(body, learningStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/review') {
+    const body = await readBody(request);
+    const result = await reviewConversation(body, learningStoreFor(env), (messages, temperature) => callDeepSeek(env, messages, temperature), prompts.reviewer);
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/session/delete') {
+    const body = await readBody(request);
+    const result = await deleteLearningSession(body, learningStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/learning/dashboard') {
+    if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
+    const result = await learningDashboard(learningStoreFor(env), env.PROMPT_VERSION || 'v1.5.0');
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/insights/run') {
+    if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
+    const result = await runLearningInsights(learningStoreFor(env), env.PROMPT_VERSION || 'v1.5.0');
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/mentor-feedback') {
+    if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
+    const body = await readBody(request);
+    const result = await recordMentorFeedback(body, learningStoreFor(env));
+    return json(result.status, result.body, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/chat') {
@@ -324,14 +376,14 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       if (!messages.length || !latestText) return json(400, { error: '请先输入你想聊的内容' }, request);
       const contextText = messages.slice(0, -1).filter((message) => message.role === 'user').map((message) => `用户：${message.content}`).join('\n');
       const baseline = analyzeConversation(latestText, contextText);
-      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.4.0', model: 'safety-rule' }, request);
-      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.4.0', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.5.0', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.5.0', model: 'safety-rule' }, request);
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...messages]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
-      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.4.0', model: apiConfig(env).deepseek.model }, request);
+      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.5.0', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
@@ -344,7 +396,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const messages = messagesValue(body.messages);
       if (!messages.some((item) => item.role === 'user')) return json(400, { error: '没有可整理的聊天内容' }, request);
       const summary = await callDeepSeek(env, [{ role: 'system', content: prompts.summary }, { role: 'user', content: conversationText(messages.filter((item) => item.role === 'user')) }], 0.2);
-      return json(200, { summary, promptVersion: env.PROMPT_VERSION || 'v1.4.0' }, request);
+      return json(200, { summary, promptVersion: env.PROMPT_VERSION || 'v1.5.0' }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError ? error.message : '摘要暂时生成失败';
       return json(502, { error: message, code: 'SUMMARY_UNAVAILABLE' }, request);

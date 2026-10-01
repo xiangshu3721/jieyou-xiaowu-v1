@@ -19,6 +19,8 @@ const requiredKeys = [
   'FEISHU_APP_TOKEN',
   'FEISHU_TABLE_ID',
   'FEISHU_BASE_URL',
+  'CLOUDBASE_APIKEY',
+  'DEV_TOKEN',
 ];
 
 function parseEnv(text) {
@@ -60,8 +62,8 @@ const missing = requiredKeys.filter((key) => !values[key]);
 if (missing.length) throw new Error(`.env.local 缺少 CloudBase 生产变量：${missing.join(', ')}`);
 
 const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, values[key]]));
+envVariables.CLOUDBASE_ENV_ID = values.CLOUDBASE_ENV_ID || envId;
 if (values.PROMPT_VERSION) envVariables.PROMPT_VERSION = values.PROMPT_VERSION;
-if (values.DEV_TOKEN) envVariables.DEV_TOKEN = values.DEV_TOKEN;
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'jieyou-cloudbase-'));
 try {

@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { ChatResponse } from '../shared.js';
 import { addMessage, clearLocalMessages, getOrCreateSession, listMessages, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
+import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview, setLearningConsent } from './learning.js';
 import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -109,13 +110,33 @@ function ChatPage() {
   const [recording, setRecording] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const messagesRef = useRef<LocalMessage[]>([]);
+  const learningConsentRef = useRef(getLearningConsent());
+  const [learningConsent, setLearningConsentState] = useState(learningConsentRef.current);
+  const learningSessionIdRef = useRef(getLearningSessionId());
+  const learningTrackerRef = useRef(new LearningMetricsTracker());
+  const learningFinalizedRef = useRef(false);
+
+  function emitLearningEvent(eventType: string, metadata?: Record<string, string | number | boolean | null>, keepalive = false) {
+    if (!learningConsentRef.current) return;
+    void sendLearningEvent({ baseUrl: apiBaseUrl, eventType, sessionId: learningSessionIdRef.current, metrics: learningTrackerRef.current.snapshot(), metadata, keepalive });
+  }
+
+  function moveToBooking() {
+    learningTrackerRef.current.markBookingClicked();
+    emitLearningEvent('booking_clicked', { entry: 'chat' });
+    location.href = appPath('/booking');
+  }
 
   useEffect(() => {
     history.replaceState(null, '', appPath('/'));
     (async () => {
       const mainSession = await getOrCreateSession();
       setSession(mainSession);
-      setMessages(await listMessages(mainSession.id));
+      const storedMessages = await listMessages(mainSession.id);
+      messagesRef.current = storedMessages;
+      learningTrackerRef.current.resetFromMessages(storedMessages);
+      setMessages(storedMessages);
     })().catch(() => setError('本地记录暂时无法打开，请检查浏览器存储权限。'));
   }, []);
 
@@ -128,6 +149,17 @@ function ChatPage() {
 
   useEffect(() => () => {
     recognitionRef.current?.stop();
+  }, []);
+
+  useEffect(() => {
+    const finalizeLearning = () => {
+      if (learningFinalizedRef.current || !learningConsentRef.current || !messagesRef.current.length) return;
+      learningFinalizedRef.current = true;
+      emitLearningEvent('session_end', undefined, true);
+      void sendLearningReview({ baseUrl: apiBaseUrl, sessionId: learningSessionIdRef.current, messages: messagesRef.current, keepalive: true });
+    };
+    window.addEventListener('pagehide', finalizeLearning);
+    return () => window.removeEventListener('pagehide', finalizeLearning);
   }, []);
 
   function toggleVoiceInput() {
@@ -187,32 +219,50 @@ function ChatPage() {
     if (wantsHumanBooking(content)) {
       setInput('');
       const userMessage = await addMessage(session.id, 'user', content);
-      setMessages((current) => [...current, userMessage]);
-      location.href = appPath('/booking');
+      messagesRef.current = [...messagesRef.current, userMessage];
+      learningTrackerRef.current.recordUser(content);
+      setMessages(messagesRef.current);
+      moveToBooking();
       return;
     }
     if (/清除|删除|清空.*(?:聊天|记录)|聊天记录.*清除/.test(content)) {
       await clearLocalMessages();
       setInput('');
+      await deleteLearningSession(learningSessionIdRef.current, apiBaseUrl);
+      rotateLearningSession();
+      learningSessionIdRef.current = getLearningSessionId();
+      learningConsentRef.current = false;
+      setLearningConsentState(false);
+      learningTrackerRef.current = new LearningMetricsTracker();
+      learningFinalizedRef.current = false;
+      messagesRef.current = [];
       setMessages([]);
       setError('这次聊天记录和对应的本地导诊状态已清除。');
       return;
     }
     setInput(''); setError(''); setSending(true); setSendingPhase('listening');
     const userMessage = await addMessage(session.id, 'user', content);
-    setMessages((current) => [...current, userMessage]);
+    messagesRef.current = [...messagesRef.current, userMessage];
+    learningTrackerRef.current.recordUser(content);
+    setMessages(messagesRef.current);
     try {
       const listeningDuration = Math.min(1_300, 700 + content.length * 24);
       await wait(listeningDuration);
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, messages: [...messages, userMessage].map(({ role, content: text }) => ({ role, content: text })) }) });
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, messages: messagesRef.current.map(({ role, content: text }) => ({ role, content: text })) }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
       await saveSessionUnderstanding(session.id, result.analysis);
       setSession((current) => current ? { ...current, understanding: result.analysis } : current);
       const assistant = await addMessage(session.id, 'assistant', result.reply);
-      setMessages((current) => [...current, assistant]);
+      messagesRef.current = [...messagesRef.current, assistant];
+      const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
+      learningTrackerRef.current.recordAssistant(result.reply);
+      learningTrackerRef.current.recordAnalysis(result.analysis);
+      if (result.analysis.show_booking_button && !hadBookingButton) emitLearningEvent('booking_cta_shown', { route: result.analysis.routing });
+      emitLearningEvent('chat_turn', { state: result.analysis.conversation_state, route: result.analysis.routing, topic: result.analysis.primary_topic });
+      setMessages(messagesRef.current);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'AI 暂时没有回应，请稍后重试');
     } finally { setSending(false); setSendingPhase('listening'); }
@@ -220,9 +270,24 @@ function ChatPage() {
 
   async function clearCurrentConversation() {
     if (!confirm('确定清空这一次对话吗？清空后无法恢复。')) return;
+    await deleteLearningSession(learningSessionIdRef.current, apiBaseUrl);
+    rotateLearningSession();
+    learningSessionIdRef.current = getLearningSessionId();
+    learningConsentRef.current = false;
+    setLearningConsentState(false);
+    learningTrackerRef.current = new LearningMetricsTracker();
+    learningFinalizedRef.current = false;
     await clearLocalMessages();
+    messagesRef.current = [];
     setMessages([]);
     setError('');
+  }
+
+  function changeLearningConsent(value: boolean) {
+    learningConsentRef.current = value;
+    setLearningConsentState(value);
+    setLearningConsent(value);
+    if (value) emitLearningEvent('learning_consent_updated', { consent: true });
   }
 
   function useQuickPrompt(prompt: string) { setInput(prompt); }
@@ -238,14 +303,14 @@ function ChatPage() {
           <p>情绪、情感、工作、家庭等困扰，都可以问我，我会陪着你一起</p>
         </section>
         {messages.length > 0 && <section className="message-stream" aria-live="polite">
-          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人聊聊</button>}</div></div>)}
+          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
       </div>
       <div className="chat-dock">
         <div className="chat-options">
-          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人聊聊</button></div>
+          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={moveToBooking}>免费预约真人聊聊</button></div>
           <div className="quick-prompt-list">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => useQuickPrompt(prompt)}>{prompt}</button>)}</div>
         </div>
         <section className="composer-card">
@@ -253,6 +318,8 @@ function ChatPage() {
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
         <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><span>对话仅保存在当前浏览器</span></div>
+        <label className="learning-consent"><input type="checkbox" checked={learningConsent} onChange={(event) => changeLearningConsent(event.target.checked)} /><span>允许匿名使用本次对话帮助改进解忧小屋</span></label>
+        {learningConsent && <button className="learning-delete" type="button" onClick={() => void clearCurrentConversation()}>撤回授权并删除本次学习数据</button>}
       </div>
     </main>
   </div>;
@@ -271,6 +338,14 @@ function BookingPage() {
   const [error, setError] = useState('');
   const [requestId] = useState(newRequestId);
   const summaryRequestedRef = useRef(false);
+  const generatedSummaryRef = useRef('');
+  const bookingLearningTrackerRef = useRef(new LearningMetricsTracker());
+
+  function emitBookingLearning(eventType: 'summary_generated' | 'summary_edited', ratio: number | null = null) {
+    if (!getLearningConsent()) return;
+    if (ratio !== null) bookingLearningTrackerRef.current.markSummaryEdited(ratio);
+    void sendLearningEvent({ baseUrl: apiBaseUrl, eventType, sessionId: getLearningSessionId(), metrics: bookingLearningTrackerRef.current.snapshot(), metadata: ratio === null ? undefined : { summary_modified_ratio: ratio } });
+  }
 
   useEffect(() => {
     void getOrCreateSession().then(async (mainSession) => {
@@ -285,6 +360,8 @@ function BookingPage() {
         try {
           const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: mainSession.id, messages: storedMessages.map(({ role, content }) => ({ role, content })) }) });
           setSummary(result.summary);
+          generatedSummaryRef.current = result.summary;
+          emitBookingLearning('summary_generated');
         } catch (err) {
           setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。');
         } finally {
@@ -299,14 +376,14 @@ function BookingPage() {
   async function generateSummary() {
     if (!messages.length) return setError('当前对话还没有可整理的内容。');
     setError(''); setLoadingSummary(true);
-    try { const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: session?.id, messages: messages.map(({ role, content }) => ({ role, content })) }) }); setSummary(result.summary); }
+    try { const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: session?.id, messages: messages.map(({ role, content }) => ({ role, content })) }) }); setSummary(result.summary); generatedSummaryRef.current = result.summary; emitBookingLearning('summary_generated'); }
     catch (err) { setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。'); }
     finally { setLoadingSummary(false); }
   }
   async function submit() {
     if (!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting) return;
     setError(''); setSubmitting(true);
-    try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); await api('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent }) }); location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
+    try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); const original = generatedSummaryRef.current.trim(); const edited = original && original !== summary.trim(); const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length); const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0; if (edited) emitBookingLearning('summary_edited', ratio); await api('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent }) }); location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
   function goBack() { location.href = appPath('/'); }
@@ -333,6 +410,47 @@ function DevPage() {
   return <div className="app-shell"><Header onHome={() => { location.href = appPath('/'); }} /><main className="dev-page"><div className="page-heading"><p className="eyebrow">内部调试</p><h1>规则、真实模型与<br /><em>外部配置状态。</em></h1><p>此页面只提供服务端口令保护的调试数据，不对普通用户开放业务结果。</p></div><section className="dev-card"><label>内部调试口令<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="DEV_TOKEN" /></label><button className="primary-button" onClick={() => void loadRules()}>读取调试配置</button>{rules && <div className="dev-grid"><div><span>Prompt 版本</span><strong>{rules.promptMetadata?.version}</strong></div><div><span>DeepSeek</span><strong>{rules.deepseekConfigured ? '已配置' : '未配置'}</strong></div><div><span>飞书</span><strong>{rules.feishuConfigured ? '已配置' : '未配置'}</strong></div></div>}</section><section className="dev-card"><div className="field"><label htmlFor="case">真实模型固定案例</label><textarea id="case" value={caseText} onChange={(event) => setCaseText(event.target.value)} rows={4} /></div><button className="secondary-button" onClick={() => void runCase()}>调用真实 DeepSeek 测试</button>{testResult && analysis && <div className="test-result"><p>{testResult.reply}</p><small>标签：{analysis.tags.join('、')} · 导诊：{analysis.route} · 模型：{testResult.model}</small><div className="triage-debug"><h3>V1.2 导诊内部结果</h3><div className="triage-debug-grid"><div><span>主诉</span><strong>{analysis.problem_map.main_issue || '未知'}</strong></div><div><span>问题类型</span><strong>{analysis.problem_map.issue_types.join('、')}</strong></div><div><span>复杂度</span><strong>{analysis.complexity}</strong></div><div><span>诊断充分度</span><strong>{analysis.diagnostic_sufficiency}</strong></div><div><span>服务路径</span><strong>{analysis.routing}</strong></div><div><span>深度层级</span><strong>{analysis.depth_level}</strong></div></div><p><b>场景摘要：</b>{analysis.problem_map.scene_summary || '未知'}</p><p><b>信息缺口：</b>{analysis.information_gaps.length ? analysis.information_gaps.join('、') : '暂无'}</p><p><b>测评：</b>{analysis.assessment.needed ? `${analysis.assessment.recommended_tool || '辅助测评'}（${analysis.assessment.reason || '用于降低不确定性'}）` : '当前不需要'}</p><p><b>分流依据：</b>{analysis.routing_reason}</p><p><b>下一问：</b>{analysis.next_question || '暂不追问'}</p></div></div>}</section>{error && <div className="inline-error" role="alert">{error}</div>}</main></div>;
 }
 
-function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; return <ChatPage />; }
+type LearningDashboardPayload = {
+  generated_at: string;
+  data_mode: string;
+  prompt_version: string;
+  totals: Record<string, number>;
+  recent_insights: Array<{ insight_id: string; observation: string; candidate_action: string; sample_size: number }>;
+  candidate_rules: Array<{ candidate_id: string; observed_problem: string; proposed_change: string; status: string; required_tests: string[] }>;
+};
+
+function LearningPage() {
+  const [token, setToken] = useState('');
+  const [dashboard, setDashboard] = useState<LearningDashboardPayload | null>(null);
+  const [requestId, setRequestId] = useState('');
+  const [feedback, setFeedback] = useState({ judgment_accuracy: 'ACCURATE', summary_helpfulness: 'HELPFUL', handoff_timing: 'APPROPRIATE', missed_core_problem: false, ai_could_continue: 'NO', tags: '', note: '' });
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  async function loadDashboard() {
+    setError('');
+    try { setDashboard(await api<LearningDashboardPayload>('/api/learning/dashboard', { headers: { 'X-Dev-Token': token } })); }
+    catch (err) { setError(err instanceof Error ? err.message : '学习看板暂时无法打开'); }
+  }
+
+  async function runInsights() {
+    setError(''); setMessage('');
+    try { await api('/api/learning/insights/run', { method: 'POST', headers: { 'X-Dev-Token': token }, body: '{}' }); await loadDashboard(); setMessage('已按当前样本运行洞察；只有证据充分时才会生成候选规则。'); }
+    catch (err) { setError(err instanceof Error ? err.message : '洞察运行失败'); }
+  }
+
+  async function saveFeedback() {
+    setError(''); setMessage('');
+    try {
+      await api('/api/learning/mentor-feedback', { method: 'POST', headers: { 'X-Dev-Token': token }, body: JSON.stringify({ request_id: requestId, ...feedback, tags: feedback.tags.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean) }) });
+      setMessage('导师反馈已记录，不会直接修改线上 Prompt。');
+      setRequestId('');
+    } catch (err) { setError(err instanceof Error ? err.message : '导师反馈记录失败'); }
+  }
+
+  return <div className="app-shell"><Header onHome={() => { location.href = appPath('/'); }} /><main className="dev-page learning-page"><div className="page-heading"><p className="eyebrow">V1.5A 学习数据中心</p><h1>从真实反馈里，<br /><em>慢慢变得更好。</em></h1><p>这里仅查看匿名结构化指标、用户授权后的脱敏复盘和导师反馈。候选规则必须人工审核，不会自动改线上规则。</p></div><section className="dev-card"><label>后台口令<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="DEV_TOKEN" /></label><div className="learning-actions"><button className="primary-button" onClick={() => void loadDashboard()}>读取学习看板</button><button className="secondary-button" onClick={() => void runInsights()} disabled={!dashboard}>运行近期洞察</button></div>{dashboard && <><div className="learning-meta">数据模式：{dashboard.data_mode} · Prompt：{dashboard.prompt_version} · 生成于：{new Date(dashboard.generated_at).toLocaleString()}</div><div className="dev-grid learning-grid">{Object.entries(dashboard.totals).map(([key, value]) => <div key={key}><span>{({ sessions: '会话数', average_turn_count: '平均轮数', average_question_count: '平均提问数', repeated_question_rate: '重复提问率', user_abandon_rate: '中途离开率', handoff_rate: '交接率', booking_click_rate: '预约点击率', summary_edit_rate: '摘要修改率', assessment_completion_rate: '测评完成率', reviewer_count: '复盘数', mentor_feedback_count: '导师反馈数' } as Record<string, string>)[key] || key}</span><strong>{typeof value === 'number' && key.endsWith('rate') ? `${Math.round(value * 100)}%` : value}</strong></div>)}</div></>}</section>{dashboard && <section className="dev-card learning-list"><h2>近期洞察</h2>{dashboard.recent_insights.length ? dashboard.recent_insights.map((insight) => <article key={insight.insight_id}><strong>{insight.observation}</strong><p>样本 {insight.sample_size} · 建议：{insight.candidate_action}</p></article>) : <p className="learning-empty">目前样本不足，暂不生成洞察。</p>}<h2>候选规则</h2>{dashboard.candidate_rules.length ? dashboard.candidate_rules.map((rule) => <article key={rule.candidate_id}><strong>{rule.status}</strong><p>{rule.observed_problem}</p><p>拟议：{rule.proposed_change}</p><small>回归：{rule.required_tests.join('、')}</small></article>) : <p className="learning-empty">还没有待人工审核的候选规则。</p>}</section>}<section className="dev-card"><h2>导师反馈</h2><div className="learning-form-grid"><label>预约编号<input value={requestId} onChange={(event) => setRequestId(event.target.value)} placeholder="例如预约编号" /></label><label>AI 判断<select value={feedback.judgment_accuracy} onChange={(event) => setFeedback({ ...feedback, judgment_accuracy: event.target.value })}><option value="ACCURATE">准确</option><option value="PARTIAL">部分准确</option><option value="INACCURATE">不准确</option></select></label><label>摘要是否有帮助<select value={feedback.summary_helpfulness} onChange={(event) => setFeedback({ ...feedback, summary_helpfulness: event.target.value })}><option value="HELPFUL">有帮助</option><option value="NEUTRAL">一般</option><option value="NOT_HELPFUL">没帮助</option></select></label><label>交接时机<select value={feedback.handoff_timing} onChange={(event) => setFeedback({ ...feedback, handoff_timing: event.target.value })}><option value="APPROPRIATE">合适</option><option value="TOO_EARLY">太早</option><option value="TOO_LATE">太晚</option></select></label><label>AI 是否还能继续<select value={feedback.ai_could_continue} onChange={(event) => setFeedback({ ...feedback, ai_could_continue: event.target.value })}><option value="NO">不能</option><option value="YES">可以</option><option value="UNCERTAIN">不确定</option></select></label></div><label className="learning-check"><input type="checkbox" checked={feedback.missed_core_problem} onChange={(event) => setFeedback({ ...feedback, missed_core_problem: event.target.checked })} />AI 是否漏掉了核心问题</label><label>标签（用逗号分隔）<input value={feedback.tags} onChange={(event) => setFeedback({ ...feedback, tags: event.target.value })} placeholder="例如：摘要准确、交接太早" /></label><label>备注<textarea value={feedback.note} onChange={(event) => setFeedback({ ...feedback, note: event.target.value })} rows={3} placeholder="只记录必要的复盘信息" /></label><button className="primary-button" disabled={!requestId.trim()} onClick={() => void saveFeedback()}>保存导师反馈</button></section>{message && <div className="test-result">{message}</div>}{error && <div className="inline-error" role="alert">{error}</div>}</main></div>;
+}
+
+function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; return <ChatPage />; }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

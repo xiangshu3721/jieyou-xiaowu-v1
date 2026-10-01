@@ -18,6 +18,7 @@ const files = {
   assessment: 'assessment-rules.md',
   naturalness: 'naturalness-rules.md',
   summary: 'booking-summary.md',
+  reviewer: 'conversation-reviewer.md',
 };
 
 export const prompts = {
@@ -26,6 +27,7 @@ export const prompts = {
   router: readRuleFile(files.routing),
   safety: readRuleFile(files.safety),
   summary: readRuleFile(files.summary),
+  reviewer: readRuleFile(files.reviewer),
 };
 
 export const promptMetadata = {
