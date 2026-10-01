@@ -36,8 +36,17 @@ const possibleDangerPatterns = [
 ];
 
 const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /药物/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
-const humanPatterns = [/真人/, /人工/, /导师/, /预约/, /深入聊/, /持续支持/, /想.{0,6}找人聊/, /找个人陪我聊/];
-const declineHumanPatterns = [/不需要真人/, /不用预约/, /不想预约/, /先不用找人/, /不想找真人/];
+const humanPatterns = [
+  /真人/, /人工/, /导师/, /预约/, /深入聊/, /持续支持/, /想.{0,6}找人聊/, /找个人陪我聊/,
+  /咨询师/, /心理老师/, /专业的人/, /咨询一下/, /约一下/, /一对一/, /1\s*v\s*1/i,
+  /想和人聊/, /能不能找人/, /有没有人/, /想找老师/, /想找咨询师/, /安排个人/,
+  /(?:有|有没有).{0,8}咨询服务/, /(?:有|有没有|能不能|可以).{0,8}(?:老师|导师).{0,8}(?:聊|咨询|沟通|安排)/,
+  /(?:AI|人工智能).{0,8}(?:没用|不行|聊不下去|不想聊)/i,
+];
+const declineHumanPatterns = [
+  /不需要(?:真人|人工|老师|导师|咨询师)/, /不用预约/, /不想预约/, /先不用找人/,
+  /不想找(?:真人|老师|导师|心理咨询师|咨询师)/, /拒绝(?:真人|人工|预约)/,
+];
 const endPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 
 export const topicLabels: Record<TopicCode, string> = {
@@ -249,11 +258,20 @@ function severityLevel(problemMap: ProblemMap, safety: SafetyStatus) {
   return 'UNKNOWN' as const;
 }
 
-function hasExtendedSupportSignal(text: string, problemMap: ProblemMap, complexity: Complexity, supportFeedback: string | null) {
-  const repeated = /反复|每次|总是|经常|几乎每天|长期|一直|很久/.test(text) || Boolean(problemMap.frequency);
-  const longTerm = /半年|一年|几个月|几年来|长期|很久|一直/.test(text) || Boolean(problemMap.onset_duration && !/最近/.test(problemMap.onset_duration));
-  const deep = /童年|创伤|人格模式|深层关系|原生家庭/.test(text);
-  return Boolean(supportFeedback) || problemMap.attempts.length > 0 || deep || (repeated && (longTerm || problemMap.functional_impacts.length > 0));
+function isMeaningfulDuration(problemMap: ProblemMap) {
+  return Boolean(problemMap.onset_duration && !/最近|这段时间/.test(problemMap.onset_duration));
+}
+
+function isRepeated(text: string, problemMap: ProblemMap) {
+  return /反复|每次|总是|经常|几乎每天|长期|一直|很久/.test(text) || Boolean(problemMap.frequency);
+}
+
+function minimumSufficientJudgment(text: string, complexity: Complexity, problemMap: ProblemMap, sufficiency: number) {
+  const issueKnown = problemMap.issue_types.some((topic) => topic !== 'OTHER');
+  const hasContext = Boolean(problemMap.scene_summary) || isMeaningfulDuration(problemMap) || Boolean(problemMap.frequency) || problemMap.functional_impacts.length > 0;
+  const hasReasonToContinueWithHuman = Boolean(problemMap.functional_impacts.length) || isMeaningfulDuration(problemMap) || problemMap.attempts.length > 0 || complexity === 'COMPLEX' || isRepeated(text, problemMap);
+  const hasEnoughWeightForHuman = Boolean(problemMap.functional_impacts.length) || isMeaningfulDuration(problemMap) || problemMap.attempts.length > 0 || complexity === 'COMPLEX';
+  return issueKnown && hasContext && hasReasonToContinueWithHuman && hasEnoughWeightForHuman && sufficiency >= 0.6;
 }
 
 function aiHelpValue(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, supportFeedback: string | null) {
@@ -278,21 +296,35 @@ function humanHelpValue(text: string, intent: UserIntent, complexity: Complexity
   return 0.25;
 }
 
+function aiFurtherValue(text: string, complexity: Complexity, problemMap: ProblemMap, supportFeedback: string | null) {
+  if (supportFeedback || complexity === 'COMPLEX' || problemMap.functional_impacts.length > 0 || problemMap.attempts.length > 0 || isMeaningfulDuration(problemMap) && isRepeated(text, problemMap)) return 'LOW' as const;
+  if (complexity === 'MODERATE') return 'MEDIUM' as const;
+  return 'HIGH' as const;
+}
+
+function humanHelpLevel(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, supportFeedback: string | null) {
+  if (intent === 'WANTS_HUMAN' || supportFeedback || complexity === 'COMPLEX') return 'HIGH' as const;
+  if ((isMeaningfulDuration(problemMap) || isRepeated(text, problemMap)) && problemMap.functional_impacts.length > 0) return 'HIGH' as const;
+  if (complexity === 'MODERATE') return 'MEDIUM' as const;
+  return 'LOW' as const;
+}
+
 function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null) {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
-  const aiValue = aiHelpValue(text, intent, complexity, problemMap, supportFeedback);
-  const humanValue = humanHelpValue(text, intent, complexity, problemMap, supportFeedback);
-  return sufficiency >= 0.75 && (aiValue <= 0.4 || humanValue >= 0.8) && hasExtendedSupportSignal(text, problemMap, complexity, supportFeedback);
+  return minimumSufficientJudgment(text, complexity, problemMap, sufficiency)
+    && aiFurtherValue(text, complexity, problemMap, supportFeedback) === 'LOW'
+    && humanHelpLevel(text, intent, complexity, problemMap, supportFeedback) === 'HIGH';
 }
 
 function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, complexity: Complexity, sufficiency: number, assessment: AssessmentRecommendation, supportFeedback: string | null, handoffReady = false): TriageRouting {
   if (safety !== 'NO_SIGNAL_DETECTED') return 'SAFETY_SUPPORT';
-  if (professionalPatterns.some((pattern) => pattern.test(text))) return 'PROFESSIONAL_REFERRAL';
   if (intent === 'WANTS_HUMAN') return 'HUMAN_MENTOR';
+  if (handoffReady) return 'HUMAN_MENTOR';
+  if (declineHumanPatterns.some((pattern) => pattern.test(text))) return 'AI_SUPPORT';
+  if (professionalPatterns.some((pattern) => pattern.test(text))) return 'PROFESSIONAL_REFERRAL';
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return 'AI_SUPPORT';
   if (assessment.needed) return 'AI_SUPPORT';
-  if (handoffReady || shouldOfferHuman(text, intent, complexity, buildProblemMap(text, classifyConcern(text), intent), sufficiency, supportFeedback)) return 'HUMAN_MENTOR';
   return 'AI_SUPPORT';
 }
 
@@ -334,10 +366,11 @@ function depthFor(text: string, complexity: Complexity, routing: TriageRouting, 
 
 function routingReason(routing: TriageRouting, complexity: Complexity, problemMap: ProblemMap, intent: UserIntent, assessment: AssessmentRecommendation) {
   if (routing === 'SAFETY_SUPPORT') return '出现需要优先处理的安全信号，暂停普通导诊和商业推荐';
+  if (routing === 'HUMAN_MENTOR' && intent === 'WANTS_HUMAN') return '用户明确表达真人帮助意愿，直接进入预约交接';
   if (routing === 'PROFESSIONAL_REFERRAL') return '用户需求涉及医疗、心理治疗或其他需要合格专业资质的事项';
   if (intent === 'WANTS_COMFORT') return '用户明确希望先倾诉，除安全需要外不强制量化、测评或真人导流';
   if (intent === 'WANTS_END') return '用户表达了结束或暂缓意愿，尊重其选择，不继续推进导诊';
-  if (routing === 'HUMAN_MENTOR') return `${complexity === 'COMPLEX' ? '多因素/深层内容' : '持续、反复或已有功能影响'}，继续在 AI 中追问的收益有限，适合真人导师继续梳理`;
+  if (routing === 'HUMAN_MENTOR') return `${complexity === 'COMPLEX' ? '多因素/深层内容' : '持续、反复或已有功能影响'}，已经达到最低充分判断，继续在 AI 中追问的收益有限，适合真人继续梳理`;
   if (assessment.needed) return `当前信息可以先由 AI 支持，${assessment.recommended_tool}可能比继续追问更有效地降低不确定性`;
   if (problemMap.issue_types.includes('OTHER')) return '当前主诉还不够清楚，先帮助用户聚焦问题';
   return '问题暂处于 AI 能适当支持的范围，继续收集会改变判断的最少信息';
@@ -354,7 +387,8 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
   const complexity = determineComplexity(text, topics, problemMap, safety);
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
-  return legacyRouting(routeFor(safety, text, intent, complexity, sufficiency, { needed: false, recommended_tool: null, reason: null }, supportFeedback));
+  const handoffReady = shouldOfferHuman(text, intent, complexity, problemMap, sufficiency, supportFeedback);
+  return legacyRouting(routeFor(safety, text, intent, complexity, sufficiency, { needed: false, recommended_tool: null, reason: null }, supportFeedback, handoffReady));
 }
 
 function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
@@ -387,10 +421,15 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
-    && !assessment.needed
     && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback);
   const routing = routeFor(safety, text, intent, complexity, sufficiency, assessment, supportFeedback, preliminaryHandoffReady);
   const handoffReady = routing === 'HUMAN_MENTOR';
+  const minimumJudgment = minimumSufficientJudgment(allUserText, complexity, problemMap, sufficiency);
+  const directHumanIntent = intent === 'WANTS_HUMAN';
+  const humanIntent = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : directHumanIntent ? 'EXPLICIT' as const : 'NOT_EXPLICIT' as const;
+  const handoffMode = directHumanIntent ? 'DIRECT_HANDOFF' as const : handoffReady ? 'QUICK_HANDOFF' as const : 'NONE' as const;
+  const furtherValue = aiFurtherValue(allUserText, complexity, problemMap, supportFeedback);
+  const humanLevel = humanHelpLevel(allUserText, intent, complexity, problemMap, supportFeedback);
   const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
   const handoffState = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : handoffReady ? 'OFFERED' as const : 'NOT_READY' as const;
   const askQuestion = !handoffReady && responseGoal !== 'HANDOFF' && responseGoal !== 'HELP' && responseGoal !== 'ASSESSMENT' && intent !== 'WANTS_END' && gaps.length > 0;
@@ -399,7 +438,8 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
     safety === 'URGENT' ? '检测到可信的即时危险表达' : '',
     safety === 'NEEDS_CLARIFICATION' ? '出现需要简短确认现实安全的表达' : '',
     routing === 'PROFESSIONAL_REFERRAL' ? '当前需求可能超出普通成长支持范围' : '',
-    routing === 'HUMAN_MENTOR' ? '用户明确表达真人意愿或信息已足够支持真人交接' : '',
+    routing === 'HUMAN_MENTOR' && directHumanIntent ? '用户明确表达真人帮助意愿' : '',
+    routing === 'HUMAN_MENTOR' && !directHumanIntent ? '已达到最低充分判断，继续 AI 的边际价值较低' : '',
     assessment.needed ? `建议辅助测评：${assessment.recommended_tool}` : '',
   ].filter(Boolean);
   const conversationState = legacyState(routing, safety, intent);
@@ -412,7 +452,7 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
     diagnostic_sufficiency: sufficiency,
     routing,
     depth_level: depthFor(allUserText, complexity, routing, gaps),
-    next_question: chooseNextQuestion(gaps),
+    next_question: handoffReady ? null : chooseNextQuestion(gaps),
     conversation_mode: responseGoal,
     response_goal: responseGoal,
     problem_clarity: sufficiency,
@@ -420,9 +460,18 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
     ai_help_value: Number(aiHelpValue(allUserText, intent, complexity, problemMap, supportFeedback).toFixed(2)),
     human_help_value: Number(humanHelpValue(allUserText, intent, complexity, problemMap, supportFeedback).toFixed(2)),
     handoff_state: handoffState,
+    handoff_mode: handoffMode,
+    minimum_sufficient_judgment: minimumJudgment,
+    human_intent: humanIntent,
+    ai_can_help_now: !handoffReady && routing === 'AI_SUPPORT',
+    ai_further_value: furtherValue,
+    human_help_level: humanLevel,
     reply_length: replyLengthFor(text, intent, responseGoal, complexity),
     ask_question: askQuestion,
+    no_more_questions: !askQuestion,
     show_booking_button: handoffReady,
+    booking_button_text: handoffReady ? '免费预约真人聊聊' : null,
+    booking_summary_ready: handoffReady,
     handoff_ready: handoffReady,
     conversation_state: conversationState,
     primary_topic: topics[0],

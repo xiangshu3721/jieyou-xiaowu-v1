@@ -6,6 +6,8 @@ import type {
   ConversationAnalysis,
   ConversationState,
   DepthLevel,
+  HandoffMode,
+  HumanIntentLevel,
   HumanHandoffState,
   ReplyLength,
   RoutingState,
@@ -15,6 +17,7 @@ import type {
   TopicCode,
   TriageRouting,
   UserIntent,
+  ValueLevel,
 } from '../src/shared.js';
 import { analyzeConversation, emergencyReply, safetyClarificationReply } from './rules.js';
 
@@ -39,6 +42,9 @@ const responseGoals = new Set<ResponseGoal>(['LISTEN', 'CLARIFY', 'MIRROR', 'ASS
 const replyLengths = new Set<ReplyLength>(['SHORT', 'MEDIUM', 'LONG']);
 const handoffStates = new Set<HumanHandoffState>(['NOT_READY', 'READY', 'OFFERED', 'ACCEPTED', 'DECLINED']);
 const severityLevels = new Set<SeverityLevel>(['LOW', 'MODERATE', 'MODERATE_HIGH', 'HIGH', 'UNKNOWN']);
+const handoffModes = new Set<HandoffMode>(['NONE', 'DIRECT_HANDOFF', 'QUICK_HANDOFF']);
+const humanIntentLevels = new Set<HumanIntentLevel>(['EXPLICIT', 'NOT_EXPLICIT', 'DECLINED']);
+const valueLevels = new Set<ValueLevel>(['HIGH', 'MEDIUM', 'LOW']);
 
 function textList(value: unknown, maxItems = 5, maxLength = 220) {
   if (!Array.isArray(value)) return [];
@@ -108,9 +114,18 @@ export function parseAssistantOutput(raw: string): ParsedAssistantOutput | null 
   if (typeof value.ai_help_value === 'number' && Number.isFinite(value.ai_help_value)) analysis.ai_help_value = Math.max(0, Math.min(1, value.ai_help_value));
   if (typeof value.human_help_value === 'number' && Number.isFinite(value.human_help_value)) analysis.human_help_value = Math.max(0, Math.min(1, value.human_help_value));
   if (handoffStates.has(value.handoff_state as HumanHandoffState)) analysis.handoff_state = value.handoff_state as HumanHandoffState;
+  if (handoffModes.has(value.handoff_mode as HandoffMode)) analysis.handoff_mode = value.handoff_mode as HandoffMode;
+  if (typeof value.minimum_sufficient_judgment === 'boolean') analysis.minimum_sufficient_judgment = value.minimum_sufficient_judgment;
+  if (humanIntentLevels.has(value.human_intent as HumanIntentLevel)) analysis.human_intent = value.human_intent as HumanIntentLevel;
+  if (typeof value.ai_can_help_now === 'boolean') analysis.ai_can_help_now = value.ai_can_help_now;
+  if (valueLevels.has(value.ai_further_value as ValueLevel)) analysis.ai_further_value = value.ai_further_value as ValueLevel;
+  if (valueLevels.has(value.human_help_level as ValueLevel)) analysis.human_help_level = value.human_help_level as ValueLevel;
   if (replyLengths.has(value.reply_length as ReplyLength)) analysis.reply_length = value.reply_length as ReplyLength;
   if (typeof value.ask_question === 'boolean') analysis.ask_question = value.ask_question;
+  if (typeof value.no_more_questions === 'boolean') analysis.no_more_questions = value.no_more_questions;
   if (typeof value.show_booking_button === 'boolean') analysis.show_booking_button = value.show_booking_button;
+  if (typeof value.booking_button_text === 'string') analysis.booking_button_text = value.booking_button_text.trim().slice(0, 80) || null;
+  if (typeof value.booking_summary_ready === 'boolean') analysis.booking_summary_ready = value.booking_summary_ready;
   if (typeof value.handoff_ready === 'boolean') analysis.handoff_ready = value.handoff_ready;
   analysis.information_gaps = textList(value.information_gaps, 6, 160);
   analysis.next_question = optionalText(value.next_question, 240);
@@ -135,6 +150,9 @@ export function naturalReply(raw: string) {
 
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis) {
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
+    return fallbackReply(analysis);
+  }
+  if (analysis?.show_booking_button && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis);
   }
   const replaced = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, humanServiceCopy);
@@ -191,7 +209,10 @@ export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssi
 export function fallbackReply(analysis: ConversationAnalysis) {
   if (analysis.safety_status === 'URGENT') return emergencyReply;
   if (analysis.safety_status === 'NEEDS_CLARIFICATION') return safetyClarificationReply;
-  if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) return `${humanServiceCopy} 如果你愿意，可以点击“免费预约真人导师”，把这次想获得的帮助交给真人继续接住。`;
+  if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) {
+    if (analysis.handoff_mode === 'DIRECT_HANDOFF') return '可以，那就直接找真人聊。';
+    return '这个事情找真人完整聊一次会更合适。';
+  }
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';

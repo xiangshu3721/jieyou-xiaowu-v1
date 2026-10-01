@@ -58,6 +58,28 @@ describe('结构化 AI 输出校验', () => {
     expect(parsed?.analysis.reply_length).toBe('SHORT');
   });
 
+  it('解析 V1.4 快速交接字段，并限制枚举和值域', () => {
+    const parsed = parseAssistantOutput(JSON.stringify({
+      handoff_mode: 'QUICK_HANDOFF',
+      minimum_sufficient_judgment: true,
+      human_intent: 'NOT_EXPLICIT',
+      ai_can_help_now: false,
+      ai_further_value: 'LOW',
+      human_help_level: 'HIGH',
+      no_more_questions: true,
+      booking_button_text: '免费预约真人聊聊',
+      booking_summary_ready: true,
+      assistant_reply: '这个事情找真人完整聊一次会更合适。',
+    }));
+    expect(parsed?.analysis.handoff_mode).toBe('QUICK_HANDOFF');
+    expect(parsed?.analysis.minimum_sufficient_judgment).toBe(true);
+    expect(parsed?.analysis.human_intent).toBe('NOT_EXPLICIT');
+    expect(parsed?.analysis.ai_further_value).toBe('LOW');
+    expect(parsed?.analysis.human_help_level).toBe('HIGH');
+    expect(parsed?.analysis.no_more_questions).toBe(true);
+    expect(parsed?.analysis.booking_button_text).toBe('免费预约真人聊聊');
+  });
+
   it('模型输出异常时返回安全降级结果', () => {
     expect(parseAssistantOutput('{not-json}')).toBeNull();
     const analysis = analyzeConversation('我最近工作压力很大');
@@ -115,5 +137,18 @@ it('移除同一条回复中重复的真人服务文案', () => {
     expect(merged.routing).toBe('AI_SUPPORT');
     expect(merged.show_booking_button).toBe(false);
     expect(normalizeUserReply(parsed?.reply || '', merged)).not.toMatch(/真人|导师|预约|人工|分配/);
+  });
+
+  it('V1.4 真人交接时服务端不接受模型继续追问', () => {
+    const baseline = analyzeConversation('我想找心理咨询师聊聊');
+    const merged = mergeAnalysis(baseline, parseAssistantOutput(JSON.stringify({
+      ask_question: true,
+      no_more_questions: false,
+      assistant_reply: '你愿意先说说持续多久了吗？',
+    })));
+    expect(merged.show_booking_button).toBe(true);
+    expect(merged.ask_question).toBe(false);
+    expect(merged.no_more_questions).toBe(true);
+    expect(normalizeUserReply('你愿意先说说持续多久了吗？', merged)).not.toMatch(/[？?]/);
   });
 });

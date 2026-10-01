@@ -84,14 +84,18 @@ function wait(milliseconds: number) {
 const quickPrompts = ['最近总是焦虑怎么办', '工作压力很大怎么办', '我想找真人聊聊'];
 
 function wantsHumanBooking(text: string) {
-  if (/(不想|不用|不需要|先不|拒绝).{0,8}(真人|预约|导师)/.test(text)) return false;
-  return /(?:想|希望|需要|我要|帮我|可以).{0,8}(?:找真人|真人聊|真人导师|预约真人|找个人聊)/.test(text)
-    || /(?:预约|找).{0,6}(?:真人|导师)/.test(text);
+  if (/(不想|不用|不需要|先不|拒绝).{0,8}(真人|预约|导师|老师|咨询师|人工)/.test(text)) return false;
+  return /(?:想|希望|需要|我要|帮我|可以).{0,8}(?:找真人|真人聊|真人导师|预约真人|找个人聊|找老师|找咨询师|心理咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
+    || /(?:预约|找|有没有|能不能).{0,8}(?:真人|导师|老师|咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
+    || /(?:有|有没有).{0,8}咨询服务/.test(text)
+    || /(?:有|有没有|能不能|可以).{0,8}(?:老师|导师).{0,8}(?:聊|咨询|沟通|安排)/.test(text)
+    || /(?:不想|不愿意).{0,4}(?:和|跟)\s*AI聊/i.test(text)
+    || /(?:AI|人工智能).{0,8}(?:没用|不行|聊不下去|不想聊)/i.test(text);
 }
 
 function hasHumanServiceCta(text: string) {
   if (/(不(?:建议|适合|需要|推荐)|不要).{0,8}(真人|预约|导师)/.test(text)) return false;
-  return /将会有专门的导师好好倾听|真人服务|真人导师聊聊|预约真人|预约入口/.test(text);
+  return /将会有专门的导师好好倾听|真人服务|真人导师聊聊|预约真人|预约入口|找真人聊|免费预约真人聊聊/.test(text);
 }
 
 function ChatPage() {
@@ -182,6 +186,8 @@ function ChatPage() {
     setRecording(false);
     if (wantsHumanBooking(content)) {
       setInput('');
+      const userMessage = await addMessage(session.id, 'user', content);
+      setMessages((current) => [...current, userMessage]);
       location.href = appPath('/booking');
       return;
     }
@@ -232,14 +238,14 @@ function ChatPage() {
           <p>情绪、情感、工作、家庭等困扰，都可以问我，我会陪着你一起</p>
         </section>
         {messages.length > 0 && <section className="message-stream" aria-live="polite">
-          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人导师 →</button>}</div></div>)}
+          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
       </div>
       <div className="chat-dock">
         <div className="chat-options">
-          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={() => { location.href = appPath('/booking'); }}>预约真人导师聊聊（免费）→</button></div>
+          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={() => { location.href = appPath('/booking'); }}>免费预约真人聊聊</button></div>
           <div className="quick-prompt-list">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => useQuickPrompt(prompt)}>{prompt}</button>)}</div>
         </div>
         <section className="composer-card">
@@ -264,8 +270,29 @@ function BookingPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [requestId] = useState(newRequestId);
+  const summaryRequestedRef = useRef(false);
 
-  useEffect(() => { void getOrCreateSession().then(async (mainSession) => { setSession(mainSession); setNickname(mainSession.profile?.nickname || ''); setContact(mainSession.profile?.contact || ''); setMessages(await listMessages(mainSession.id)); }).catch(() => setError('本地对话暂时无法打开。')); }, []);
+  useEffect(() => {
+    void getOrCreateSession().then(async (mainSession) => {
+      setSession(mainSession);
+      setNickname(mainSession.profile?.nickname || '');
+      setContact(mainSession.profile?.contact || '');
+      const storedMessages = await listMessages(mainSession.id);
+      setMessages(storedMessages);
+      if (storedMessages.length && !summaryRequestedRef.current) {
+        summaryRequestedRef.current = true;
+        setLoadingSummary(true);
+        try {
+          const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: mainSession.id, messages: storedMessages.map(({ role, content }) => ({ role, content })) }) });
+          setSummary(result.summary);
+        } catch (err) {
+          setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。');
+        } finally {
+          setLoadingSummary(false);
+        }
+      }
+    }).catch(() => setError('本地对话暂时无法打开。'));
+  }, []);
   function rememberProfile() {
     if (session) void saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() });
   }
@@ -284,7 +311,7 @@ function BookingPage() {
   }
   function goBack() { location.href = appPath('/'); }
 
-  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>把想获得的帮助<br /><em>说得更清楚一点。</em></h1><p>我们会把你确认后的信息交给运营人员，由人工在飞书中分配合适的导师并联系你。</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '从对话生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 只会根据你明确说过的内容整理，你可以直接修改、删除或重新填写。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
+  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>把想获得的帮助<br /><em>说得更清楚一点。</em></h1><p>我们会把你确认后的信息交给运营人员，由人工在飞书中分配合适的导师并联系你。</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 会根据你明确说过的内容自动整理，你可以直接修改、删除或重新填写。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
 }
 
 function Field({ label, value, onChange, onBlur, placeholder }: { label: string; value: string; onChange: (value: string) => void; onBlur?: () => void; placeholder: string }) { return <div className="field"><label>{label}</label><input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} placeholder={placeholder} /></div>; }

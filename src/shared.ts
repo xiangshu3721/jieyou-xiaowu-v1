@@ -43,6 +43,9 @@ export type ResponseGoal = ConversationMode;
 export type ReplyLength = 'SHORT' | 'MEDIUM' | 'LONG';
 export type HumanHandoffState = 'NOT_READY' | 'READY' | 'OFFERED' | 'ACCEPTED' | 'DECLINED';
 export type SeverityLevel = 'LOW' | 'MODERATE' | 'MODERATE_HIGH' | 'HIGH' | 'UNKNOWN';
+export type HandoffMode = 'NONE' | 'DIRECT_HANDOFF' | 'QUICK_HANDOFF';
+export type HumanIntentLevel = 'EXPLICIT' | 'NOT_EXPLICIT' | 'DECLINED';
+export type ValueLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 
 export interface ProblemMap {
   main_issue: string | null;
@@ -90,9 +93,18 @@ export interface ConversationAnalysis {
   ai_help_value: number;
   human_help_value: number;
   handoff_state: HumanHandoffState;
+  handoff_mode: HandoffMode;
+  minimum_sufficient_judgment: boolean;
+  human_intent: HumanIntentLevel;
+  ai_can_help_now: boolean;
+  ai_further_value: ValueLevel;
+  human_help_level: ValueLevel;
   reply_length: ReplyLength;
   ask_question: boolean;
+  no_more_questions: boolean;
   show_booking_button: boolean;
+  booking_button_text: string | null;
+  booking_summary_ready: boolean;
   handoff_ready: boolean;
 
   conversation_state: ConversationState;

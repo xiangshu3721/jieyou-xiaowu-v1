@@ -123,4 +123,52 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.show_booking_button).toBe(false);
     expect(analysis.routing).toBe('SAFETY_SUPPORT');
   });
+
+  it('V1.4 用户提到心理咨询师时直接进入真人交接，不宣称资质', () => {
+    const analysis = analyzeConversation('我想找心理咨询师聊聊');
+    expect(analysis.routing).toBe('HUMAN_MENTOR');
+    expect(analysis.human_intent).toBe('EXPLICIT');
+    expect(analysis.handoff_mode).toBe('DIRECT_HANDOFF');
+    expect(analysis.minimum_sufficient_judgment).toBe(false);
+    expect(analysis.show_booking_button).toBe(true);
+    expect(analysis.booking_button_text).toBe('免费预约真人聊聊');
+    expect(analysis.ask_question).toBe(false);
+    expect(analysis.no_more_questions).toBe(true);
+  });
+
+  it('V1.4 覆盖咨询服务和老师沟通等明确真人表达', () => {
+    for (const text of ['有没有心理咨询师？', '有没有老师可以聊？', '有咨询服务吗']) {
+      const analysis = analyzeConversation(text);
+      expect(analysis.handoff_mode).toBe('DIRECT_HANDOFF');
+      expect(analysis.human_intent).toBe('EXPLICIT');
+      expect(analysis.show_booking_button).toBe(true);
+      expect(analysis.ask_question).toBe(false);
+    }
+  });
+
+  it('V1.4 用户明确拒绝真人时不触发交接', () => {
+    const analysis = analyzeConversation('我不想找心理咨询师，先自己聊聊');
+    expect(analysis.human_intent).toBe('DECLINED');
+    expect(analysis.handoff_mode).toBe('NONE');
+    expect(analysis.routing).toBe('AI_SUPPORT');
+    expect(analysis.show_booking_button).toBe(false);
+  });
+
+  it('V1.4 达到最低充分判断后快速交接，不继续追问完整背景', () => {
+    const analysis = analyzeConversation('最近三个月总是焦虑，晚上睡不着，白天没精神');
+    expect(analysis.minimum_sufficient_judgment).toBe(true);
+    expect(analysis.handoff_mode).toBe('QUICK_HANDOFF');
+    expect(analysis.routing).toBe('HUMAN_MENTOR');
+    expect(analysis.show_booking_button).toBe(true);
+    expect(analysis.ask_question).toBe(false);
+    expect(analysis.next_question).toBeNull();
+  });
+
+  it('V1.4 信息仍不足且 AI 还有明显帮助价值时继续 AI 支持', () => {
+    const analysis = analyzeConversation('最近总是焦虑怎么办');
+    expect(analysis.handoff_mode).toBe('NONE');
+    expect(analysis.minimum_sufficient_judgment).toBe(false);
+    expect(analysis.routing).toBe('AI_SUPPORT');
+    expect(analysis.show_booking_button).toBe(false);
+  });
 });
