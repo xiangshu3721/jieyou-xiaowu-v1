@@ -3,6 +3,7 @@ import type {
   Complexity,
   ConversationAnalysis,
   ConversationState,
+  IssueStatus,
   ProblemMap,
   RoutingState,
   SafetyStatus,
@@ -78,6 +79,45 @@ function userTextOnly(latestText: string, contextText: string) {
     .map((line) => line.replace(/^\s*用户：/, '').trim())
     .filter(Boolean);
   return [...prior, latestText.trim()].filter(Boolean).join('\n').slice(-18_000);
+}
+
+export interface IssueAnalysisOptions {
+  issueId?: string;
+  issueStatus?: IssueStatus;
+  userTurnCount?: number;
+  handoffOffered?: boolean;
+  previousTopics?: TopicCode[];
+  newIssueDetected?: boolean;
+  newIssueConfidence?: number;
+}
+
+function userTurnCountFromContext(contextText: string) {
+  return contextText.split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('AI：')).length + 1;
+}
+
+/**
+ * V1.6 只在有足够语义证据时切换 Issue。关键词不同本身不够，
+ * “工作压力导致失眠”这类影响关系仍留在同一个 Issue。
+ */
+export function detectIssueSwitch(latestText: string, previousText = '', previousTopics: TopicCode[] = []) {
+  const latest = latestText.trim();
+  const previous = previousText.trim();
+  if (!latest || !previous) return { detected: false, confidence: 0 };
+  const explicitSwitch = /(?:另外|还有个事情|还有一件事|换个话题|我还想问一个|我还想说一个|其实我最近还|再说一个|另一个问题)/.test(latest);
+  const previousTopicSet = new Set(previousTopics.length ? previousTopics : classifyConcern(previous));
+  const latestTopics = classifyConcern(latest);
+  const novelTopics = latestTopics.filter((topic) => topic !== 'OTHER' && !previousTopicSet.has(topic));
+  const continuationSignals = /(?:所以|因此|也|还|同时|影响|导致|因为|晚上|睡眠|失眠|白天|这件事)/.test(latest);
+  const strongNewTopic = /(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣|孩子|亲子|父母|原生家庭|辞职|换工作|求职|债务|房贷|法律|诉讼)/.test(latest);
+  const strongTopicAlreadyInIssue = (/(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣)/.test(latest) && previousTopicSet.has('INTIMACY'))
+    || (/(?:孩子|亲子)/.test(latest) && previousTopicSet.has('PARENTING'))
+    || (/(?:父母|原生家庭)/.test(latest) && previousTopicSet.has('FAMILY'))
+    || (/(?:辞职|换工作|求职)/.test(latest) && previousTopicSet.has('CAREER'))
+    || (/(?:债务|房贷)/.test(latest) && previousTopicSet.has('MONEY'));
+  const strongNewDomain = strongNewTopic && !strongTopicAlreadyInIssue;
+  if (explicitSwitch && (novelTopics.length > 0 || strongNewDomain)) return { detected: true, confidence: 0.98 };
+  if ((novelTopics.length > 0 || strongNewDomain) && !continuationSignals) return { detected: true, confidence: 0.82 };
+  return { detected: false, confidence: explicitSwitch ? 0.35 : 0.12 };
 }
 
 function sentences(text: string) {
@@ -309,9 +349,10 @@ function humanHelpLevel(text: string, intent: UserIntent, complexity: Complexity
   return 'LOW' as const;
 }
 
-function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null) {
+function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1) {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
+  if (userTurnCount < 3) return false;
   return minimumSufficientJudgment(text, complexity, problemMap, sufficiency)
     && aiFurtherValue(text, complexity, problemMap, supportFeedback) === 'LOW'
     && humanHelpLevel(text, intent, complexity, problemMap, supportFeedback) === 'HIGH';
@@ -408,9 +449,14 @@ function replyLengthFor(text: string, intent: UserIntent, goal: ReturnType<typeo
   return text.length > 90 ? 'MEDIUM' : 'SHORT';
 }
 
-export function analyzeConversation(latestText: string, contextText = ''): ConversationAnalysis {
+export function analyzeConversation(latestText: string, contextText = '', options: IssueAnalysisOptions = {}): ConversationAnalysis {
   const text = latestText.trim();
   const allUserText = userTextOnly(text, contextText);
+  const userTurnCount = Math.max(1, Math.min(200, Math.round(options.userTurnCount ?? userTurnCountFromContext(contextText))));
+  const issueId = options.issueId || 'issue-current';
+  const issueStatus = options.issueStatus || 'ACTIVE';
+  const switchResult = options.newIssueDetected === undefined ? detectIssueSwitch(text, contextText, options.previousTopics) : { detected: options.newIssueDetected, confidence: options.newIssueConfidence ?? (options.newIssueDetected ? 0.9 : 0.12) };
+  const handoffWasOffered = options.handoffOffered === true;
   const safety = detectSafety(text);
   const intent = detectIntent(text);
   const topics = classifyConcern(allUserText);
@@ -421,7 +467,7 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
-    && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback);
+    && (intent === 'WANTS_HUMAN' || (!handoffWasOffered && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback, userTurnCount)));
   const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady);
   const handoffReady = routing === 'HUMAN_MENTOR';
   const assessment = handoffReady
@@ -434,7 +480,8 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
   const furtherValue = aiFurtherValue(allUserText, complexity, problemMap, supportFeedback);
   const humanLevel = humanHelpLevel(allUserText, intent, complexity, problemMap, supportFeedback);
   const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
-  const handoffState = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : handoffReady ? 'OFFERED' as const : 'NOT_READY' as const;
+  const declinedHuman = declineHumanPatterns.some((pattern) => pattern.test(text));
+  const handoffState = declinedHuman ? 'DECLINED' as const : handoffReady ? 'OFFERED' as const : handoffWasOffered ? 'READY' as const : 'NOT_READY' as const;
   const askQuestion = !handoffReady && responseGoal !== 'HANDOFF' && responseGoal !== 'HELP' && responseGoal !== 'ASSESSMENT' && intent !== 'WANTS_END' && gaps.length > 0;
   const legacyRoute = legacyRouting(routing);
   const reasons = [
@@ -494,6 +541,12 @@ export function analyzeConversation(latestText: string, contextText = ''): Conve
     route: routeForLegacy(routing),
     safety: safety === 'URGENT' ? 'urgent' : safety === 'NEEDS_CLARIFICATION' ? 'clarify' : 'normal',
     reasons,
+    current_issue_id: issueId,
+    new_issue_detected: switchResult.detected,
+    new_issue_confidence: Number(Math.max(0, Math.min(1, switchResult.confidence)).toFixed(2)),
+    user_turn_count: userTurnCount,
+    issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : issueStatus,
+    handoff_offered: handoffWasOffered || handoffReady,
   };
 }
 

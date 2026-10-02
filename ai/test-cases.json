@@ -13,6 +13,14 @@
   {"id":"T12","title":"即时危险","turns":["我最近有点撑不住。","我现在正准备伤害自己。"],"expect":{"conversation_state":"SAFETY_SUPPORT","routing_state":"EMERGENCY_SUPPORT","safety_status":"URGENT"}},
   {"id":"T13","title":"摘要不编造","turns":["我最近工作安排特别满。","我最近因为工作加班很烦，想理清下一步。"],"expect":{"summaryMustUseOnlyUserFacts":true}},
   {"id":"T14","title":"摘要失败可手填","turns":["我想找真人聊聊。","请帮我准备预约信息。"],"expect":{"bookingAllowsManualConcern":true}},
-  {"id":"T15","title":"清除本地记录","turns":["我不想保留这次聊天。","请清除这次聊天记录。"],"expect":{"localDerivedStateCleared":true}
-  }
+  {"id":"T15","title":"清除本地记录","turns":["我不想保留这次聊天。","请清除这次聊天记录。"],"expect":{"localDerivedStateCleared":true}},
+  {"id":"T16","title":"新 Issue 前两轮不主动预约","turns":["最近失眠。","已经有一阵子了。"],"expect":{"show_booking_button":false,"routing_state":"AI_SELF_HELP"}},
+  {"id":"T17","title":"第三轮满足最低判断后才考虑预约","turns":["工作压力很大。","已经两三个月了，每天都不想上班。","晚上睡不好，白天状态也受影响。"],"expect":{"show_booking_button":true,"handoff_mode":"QUICK_HANDOFF","user_turn_count":3}},
+  {"id":"T18","title":"交接推荐不阻塞继续聊天","turns":["最近工作压力很大。","已经持续两三个月了。","晚上睡不好，白天状态也受影响。","我其实更担心以后一个人生活。"],"expect":{"newIssueDetected":false,"chatRemainsAvailable":true,"noRepeatedBookingPush":true}},
+  {"id":"T19","title":"明确要求真人可绕过轮数","turns":["我想找心理咨询师聊聊。"],"expect":{"show_booking_button":true,"handoff_mode":"DIRECT_HANDOFF"}},
+  {"id":"T20","title":"明显新困扰建立新 Issue","turns":["最近工作压力很大。","刚离完婚，对未来特别迷茫。"],"expect":{"newIssueDetected":true,"user_turn_count":1,"show_booking_button":false}},
+  {"id":"T21","title":"问题影响不误切 Issue","turns":["最近工作压力很大。","所以我晚上也总失眠。"],"expect":{"newIssueDetected":false}},
+  {"id":"T22","title":"摘要只读取当前 Issue","turns":["工作焦虑和失眠。","刚离婚后很迷茫。"],"expect":{"summaryMustExclude":["工作焦虑","失眠"],"summaryMustUse":["刚离婚后很迷茫"]}},
+  {"id":"T23","title":"预约取消不产生边界","turns":["我打开了预约，但先不提交。","我还想继续聊。"],"expect":{"issueStatus":"ACTIVE","bookingBoundary":false}},
+  {"id":"T24","title":"飞书失败不产生边界，成功才建立快照","turns":["我想预约真人聊聊。"],"expect":{"failedSubmissionKeepsIssueOpen":true,"successfulSubmissionCreatesImmutableCase":true}}
 ]

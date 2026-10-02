@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { ChatResponse } from '../shared.js';
-import { addMessage, clearLocalMessages, getOrCreateSession, listMessages, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
+import type { BookingCaseSnapshot, ChatResponse, IssueLifecycle } from '../shared.js';
+import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
 import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview, setLearningConsent } from './learning.js';
 import './styles.css';
 
@@ -96,7 +96,7 @@ function wantsHumanBooking(text: string) {
 
 function hasHumanServiceCta(text: string) {
   if (/(不(?:建议|适合|需要|推荐)|不要).{0,8}(真人|预约|导师)/.test(text)) return false;
-  return /将会有专门的导师好好倾听|真人服务|真人导师聊聊|预约真人|预约入口|找真人聊|免费预约真人聊聊/.test(text);
+  return /将会有专门的导师好好倾听|真人服务|真人导师聊聊|预约真人|预约入口|找真人聊|免费预约真人聊聊|预约.{0,12}免费|真人导师.{0,12}联系|专门的导师.{0,12}(联系|倾听)/.test(text);
 }
 
 function ChatPage() {
@@ -122,7 +122,29 @@ function ChatPage() {
     void sendLearningEvent({ baseUrl: apiBaseUrl, eventType, sessionId: learningSessionIdRef.current, metrics: learningTrackerRef.current.snapshot(), metadata, keepalive });
   }
 
-  function moveToBooking() {
+  function issuePayload(currentSession: LocalSession | null = session) {
+    if (!currentSession) return undefined;
+    const issue = currentSession.issues[currentSession.currentIssueId];
+    if (!issue) return { issue_id: currentSession.currentIssueId, status: 'ACTIVE' as const, topic_tags: [], handoff_offered: false, booking_case_id: null };
+    return { issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags, handoff_offered: issue.handoff_offered, booking_case_id: issue.booking_case_id };
+  }
+
+  function messagePayload(message: LocalMessage) {
+    return { id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt };
+  }
+
+  async function ensureBookingIssueId() {
+    if (!session) return null;
+    const current = session.issues[session.currentIssueId];
+    if (current?.status !== 'BOOKING_SUBMITTED') return session.currentIssueId;
+    const fresh = await createFreshIssue(session.id);
+    if (!fresh) return session.currentIssueId;
+    setSession((value) => value ? { ...value, currentIssueId: fresh.issue_id, issues: { ...value.issues, [fresh.issue_id]: fresh } } : value);
+    return fresh.issue_id;
+  }
+
+  async function moveToBooking() {
+    await ensureBookingIssueId();
     learningTrackerRef.current.markBookingClicked();
     emitLearningEvent('booking_clicked', { entry: 'chat' });
     location.href = appPath('/booking');
@@ -218,11 +240,12 @@ function ChatPage() {
     setRecording(false);
     if (wantsHumanBooking(content)) {
       setInput('');
-      const userMessage = await addMessage(session.id, 'user', content);
+      const issueId = await ensureBookingIssueId();
+      const userMessage = await addMessage(session.id, 'user', content, issueId || session.currentIssueId);
       messagesRef.current = [...messagesRef.current, userMessage];
       learningTrackerRef.current.recordUser(content);
       setMessages(messagesRef.current);
-      moveToBooking();
+      await moveToBooking();
       return;
     }
     if (/清除|删除|清空.*(?:聊天|记录)|聊天记录.*清除/.test(content)) {
@@ -250,12 +273,21 @@ function ChatPage() {
       await wait(listeningDuration);
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, messages: messagesRef.current.map(({ role, content: text }) => ({ role, content: text })) }) });
+      const requestIssueId = session.currentIssueId;
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), messages: messagesRef.current.map(messagePayload) }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
+      if (result.analysis.current_issue_id !== requestIssueId) {
+        await moveMessageToIssue(session.id, userMessage.id, result.analysis.current_issue_id);
+        messagesRef.current = messagesRef.current.map((message) => message.id === userMessage.id ? { ...message, issueId: result.analysis.current_issue_id } : message);
+      }
+      const previousIssue = session.issues[result.analysis.current_issue_id];
+      const nextIssue: IssueLifecycle = { ...issueFromAnalysis(result.analysis, previousIssue?.started_at), booking_case_id: previousIssue?.booking_case_id || null, booking_submitted_at: previousIssue?.booking_submitted_at || null };
+      const nextIssues = { ...session.issues, [nextIssue.issue_id]: nextIssue };
+      await saveSessionLifecycle(session.id, { currentIssueId: nextIssue.issue_id, issues: nextIssues });
       await saveSessionUnderstanding(session.id, result.analysis);
-      setSession((current) => current ? { ...current, understanding: result.analysis } : current);
-      const assistant = await addMessage(session.id, 'assistant', result.reply);
+      setSession((current) => current ? { ...current, currentIssueId: nextIssue.issue_id, issues: nextIssues, understanding: result.analysis } : current);
+      const assistant = await addMessage(session.id, 'assistant', result.reply, nextIssue.issue_id);
       messagesRef.current = [...messagesRef.current, assistant];
       const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
       learningTrackerRef.current.recordAssistant(result.reply);
@@ -310,7 +342,7 @@ function ChatPage() {
       </div>
       <div className="chat-dock">
         <div className="chat-options">
-          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={moveToBooking}>免费预约真人聊聊</button></div>
+          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={moveToBooking}>免费预约真人聊聊 →</button></div>
           <div className="quick-prompt-list">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => useQuickPrompt(prompt)}>{prompt}</button>)}</div>
         </div>
         <section className="composer-card">
@@ -347,6 +379,10 @@ function BookingPage() {
     void sendLearningEvent({ baseUrl: apiBaseUrl, eventType, sessionId: getLearningSessionId(), metrics: bookingLearningTrackerRef.current.snapshot(), metadata: ratio === null ? undefined : { summary_modified_ratio: ratio } });
   }
 
+  function summaryPayload(currentSession: LocalSession | null, currentMessages: LocalMessage[]) {
+    return JSON.stringify({ sessionId: currentSession?.id, currentIssueId: currentSession?.currentIssueId, messages: currentMessages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) });
+  }
+
   useEffect(() => {
     void getOrCreateSession().then(async (mainSession) => {
       setSession(mainSession);
@@ -358,7 +394,7 @@ function BookingPage() {
         summaryRequestedRef.current = true;
         setLoadingSummary(true);
         try {
-          const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: mainSession.id, messages: storedMessages.map(({ role, content }) => ({ role, content })) }) });
+          const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: summaryPayload(mainSession, storedMessages) });
           setSummary(result.summary);
           generatedSummaryRef.current = result.summary;
           emitBookingLearning('summary_generated');
@@ -376,14 +412,14 @@ function BookingPage() {
   async function generateSummary() {
     if (!messages.length) return setError('当前对话还没有可整理的内容。');
     setError(''); setLoadingSummary(true);
-    try { const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: JSON.stringify({ sessionId: session?.id, messages: messages.map(({ role, content }) => ({ role, content })) }) }); setSummary(result.summary); generatedSummaryRef.current = result.summary; emitBookingLearning('summary_generated'); }
+    try { const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: summaryPayload(session, messages) }); setSummary(result.summary); generatedSummaryRef.current = result.summary; emitBookingLearning('summary_generated'); }
     catch (err) { setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。'); }
     finally { setLoadingSummary(false); }
   }
   async function submit() {
     if (!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting) return;
     setError(''); setSubmitting(true);
-    try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); const original = generatedSummaryRef.current.trim(); const edited = original && original !== summary.trim(); const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length); const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0; if (edited) emitBookingLearning('summary_edited', ratio); await api('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent }) }); location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
+    try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); const original = generatedSummaryRef.current.trim(); const edited = original && original !== summary.trim(); const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length); const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0; if (edited) emitBookingLearning('summary_edited', ratio); const result = await api<{ requestId: string; recordId?: string; status: string }>('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: session?.currentIssueId }) }); if (session) { const submittedAt = new Date().toISOString(); const snapshot: BookingCaseSnapshot = { booking_case_id: result.recordId || result.requestId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null }; await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot); } location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
   function goBack() { location.href = appPath('/'); }

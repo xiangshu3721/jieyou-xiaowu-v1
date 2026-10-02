@@ -46,6 +46,7 @@ export type SeverityLevel = 'LOW' | 'MODERATE' | 'MODERATE_HIGH' | 'HIGH' | 'UNK
 export type HandoffMode = 'NONE' | 'DIRECT_HANDOFF' | 'QUICK_HANDOFF';
 export type HumanIntentLevel = 'EXPLICIT' | 'NOT_EXPLICIT' | 'DECLINED';
 export type ValueLevel = 'HIGH' | 'MEDIUM' | 'LOW';
+export type IssueStatus = 'ACTIVE' | 'HANDOFF_OFFERED' | 'BOOKING_SUBMITTED' | 'CLOSED';
 
 export interface ProblemMap {
   main_issue: string | null;
@@ -72,6 +73,35 @@ export type SafetyStatus = 'NO_SIGNAL_DETECTED' | 'NEEDS_CLARIFICATION' | 'URGEN
 export interface ChatMessage {
   role: MessageRole;
   content: string;
+  id?: string;
+  issueId?: string;
+  createdAt?: string;
+}
+
+export interface IssueLifecycle {
+  issue_id: string;
+  status: IssueStatus;
+  started_at: string;
+  main_issue: string | null;
+  topic_tags: TopicCode[];
+  user_turn_count: number;
+  problem_clarity: number;
+  minimum_sufficient_judgment: boolean;
+  handoff_ready: boolean;
+  handoff_offered: boolean;
+  booking_case_id: string | null;
+  booking_submitted_at: string | null;
+}
+
+export interface BookingCaseSnapshot {
+  booking_case_id: string;
+  issue_id: string;
+  booking_summary: string;
+  nickname: string;
+  contact: string;
+  help_wanted: string;
+  submitted_at: string;
+  feishu_record_id: string | null;
 }
 
 export interface ConversationAnalysis {
@@ -127,6 +157,14 @@ export interface ConversationAnalysis {
   route: 'self_help' | 'human' | 'professional' | 'safety';
   safety: 'normal' | 'clarify' | 'urgent';
   reasons: string[];
+
+  /** V1.6 当前 Issue 生命周期控制；不等同于整段浏览器会话。 */
+  current_issue_id: string;
+  new_issue_detected: boolean;
+  new_issue_confidence: number;
+  user_turn_count: number;
+  issue_status: IssueStatus;
+  handoff_offered: boolean;
 }
 
 export interface ChatResponse {

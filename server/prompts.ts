@@ -17,12 +17,13 @@ const files = {
   safety: 'safety-rules.md',
   assessment: 'assessment-rules.md',
   naturalness: 'naturalness-rules.md',
+  issueLifecycle: 'issue-lifecycle-rules.md',
   summary: 'booking-summary.md',
   reviewer: 'conversation-reviewer.md',
 };
 
 export const prompts = {
-  chat: [files.system, files.conversation, files.naturalness, files.taxonomy, files.routing, files.safety, files.assessment].map(readRuleFile).join('\n\n'),
+  chat: [files.system, files.conversation, files.naturalness, files.issueLifecycle, files.taxonomy, files.routing, files.safety, files.assessment].map(readRuleFile).join('\n\n'),
   classifier: readRuleFile(files.taxonomy),
   router: readRuleFile(files.routing),
   safety: readRuleFile(files.safety),

@@ -7,9 +7,9 @@ type Case = { id: string; turns: string[]; expect: Record<string, unknown> };
 const cases = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'ai/test-cases.json'), 'utf8')) as Case[];
 
 describe('PRD 固定测试案例清单', () => {
-  it('维护完整的 T01-T15 案例', () => {
-    expect(cases.map((item) => item.id)).toEqual(Array.from({ length: 15 }, (_, index) => `T${String(index + 1).padStart(2, '0')}`));
-    expect(cases.filter((item) => item.turns.length >= 2).length).toBeGreaterThanOrEqual(8);
+  it('维护完整的 T01-T24 案例', () => {
+    expect(cases.map((item) => item.id)).toEqual(Array.from({ length: 24 }, (_, index) => `T${String(index + 1).padStart(2, '0')}`));
+    expect(cases.filter((item) => item.turns.length >= 2).length).toBeGreaterThanOrEqual(17);
   });
 
   it('规则层覆盖关键多轮案例', () => {
@@ -26,5 +26,10 @@ describe('PRD 固定测试案例清单', () => {
     expect(analyzeCase('T10').routing_state).toBe('HUMAN_SUPPORT');
     expect(analyzeCase('T11').routing_state).toBe('PROFESSIONAL_REFERRAL');
     expect(analyzeCase('T12').safety_status).toBe('URGENT');
+    expect(analyzeCase('T16').show_booking_button).toBe(false);
+    expect(analyzeCase('T17').show_booking_button).toBe(true);
+    expect(analyzeCase('T17').user_turn_count).toBe(3);
+    expect(analyzeCase('T20').new_issue_detected).toBe(true);
+    expect(analyzeCase('T21').new_issue_detected).toBe(false);
   });
 });

@@ -26,7 +26,13 @@ export interface ParsedAssistantOutput {
   reply: string;
 }
 
-const humanServiceCopy = '将会有专门的导师好好倾听你的诉求，放心，预约是免费的。';
+const legacyHumanServiceCopy = '将会有专门的导师好好倾听你的诉求，放心，预约是免费的。';
+const humanServiceCopies = [
+  '基于你刚才说的这些情况，事情可能有点复杂了。我想邀请你找一位合适的导师聊聊：预约是免费的，会有真人联系你，陪你把头绪慢慢理清，也一起看看怎样减轻眼下的压力。',
+  '你已经为这件事撑了很久，不必再一个人扛着。你可以预约一次免费的真人沟通，之后会有导师联系你，认真听你说，陪你把困扰好好梳理一下。',
+  '从你描述的情况看，继续自己消化可能会有些累。如果你愿意，可以预约免费的真人导师聊聊，ta 会陪你慢慢理清重点，找到更有力量的下一步。',
+  '这件事牵动的地方不少，找一个真正的人一起梳理，可能会更轻松一些。你可以先预约，服务是免费的，之后会有真人导师联系你，希望能陪你分担一点压力。',
+];
 
 const conversationStates = new Set<ConversationState>(['LISTENING', 'EMOTIONAL_SUPPORT', 'EXPLORATION', 'PROBLEM_SOLVING', 'HUMAN_SERVICE', 'SAFETY_SUPPORT']);
 const routingStates = new Set<RoutingState>(['AI_SELF_HELP', 'HUMAN_SUPPORT', 'PROFESSIONAL_REFERRAL', 'EMERGENCY_SUPPORT']);
@@ -53,6 +59,36 @@ function textList(value: unknown, maxItems = 5, maxLength = 220) {
 
 function optionalText(value: unknown, maxLength = 500) {
   return typeof value === 'string' && value.trim() ? value.trim().slice(0, maxLength) : null;
+}
+
+function escapeRegex(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function handoffCopyFor(analysis?: ConversationAnalysis) {
+  if (!analysis) return humanServiceCopies[0];
+  const seed = [
+    analysis.current_issue_id,
+    analysis.user_turn_count,
+    analysis.primary_topic,
+    analysis.problem_map.main_issue,
+    analysis.problem_map.scene_summary,
+  ].filter(Boolean).join('|');
+  const score = Array.from(seed).reduce((sum, character) => sum + character.charCodeAt(0), 0);
+  return humanServiceCopies[score % humanServiceCopies.length];
+}
+
+function replaceHandoffCopies(reply: string, analysis?: ConversationAnalysis) {
+  const selectedCopy = handoffCopyFor(analysis);
+  const knownCopies = [legacyHumanServiceCopy, ...humanServiceCopies]
+    .map(escapeRegex)
+    .join('|');
+  let keptCopy = false;
+  return reply.replace(new RegExp(knownCopies, 'g'), () => {
+    if (keptCopy) return '';
+    keptCopy = true;
+    return selectedCopy;
+  });
 }
 
 function jsonCandidate(raw: string) {
@@ -155,14 +191,13 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
   if (analysis?.show_booking_button && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis);
   }
-  const replaced = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, humanServiceCopy);
-  let keptCopy = false;
-  return replaced
-    .replace(new RegExp(humanServiceCopy.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), () => {
-      if (keptCopy) return '';
-      keptCopy = true;
-      return humanServiceCopy;
-    })
+  let normalized = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, handoffCopyFor(analysis));
+  normalized = replaceHandoffCopies(normalized, analysis);
+  if (analysis?.show_booking_button && !analysis.ask_question && !/预约.{0,12}免费|真人导师.{0,12}联系|免费预约真人聊聊/.test(normalized)) {
+    const trimmed = normalized.trim().replace(/[。！？!?]+$/g, '');
+    normalized = `${trimmed}${trimmed ? '。' : ''}${handoffCopyFor(analysis)}`;
+  }
+  return normalized
     .replace(/([。！？!?])\s*[。！？!?]+/g, '$1')
     .replace(/([。！？!?])\s*[，、；：,;:]/g, '$1');
 }
@@ -183,7 +218,8 @@ export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssi
       : model.conversation_state && conversationStates.has(model.conversation_state) ? model.conversation_state : baseline.conversation_state;
   const primaryTopic = model.primary_topic && topicCodes.has(model.primary_topic) ? model.primary_topic : baseline.primary_topic;
   const secondaryTopics = Array.from(new Set([...(model.secondary_topics || []), ...baseline.secondary_topics])).filter((topic) => topic !== primaryTopic && topicCodes.has(topic));
-  const userIntent = baseline.user_intent !== 'VENTING' ? baseline.user_intent : (model.user_intent && userIntents.has(model.user_intent) ? model.user_intent : baseline.user_intent);
+  // 用户意愿是业务控制字段，只接受服务端规则判断；模型不能把普通表达升级成真人意愿。
+  const userIntent = baseline.user_intent;
   const reasons = Array.from(new Set([...(baseline.reasons || []), model.routing_reason].filter((reason): reason is string => Boolean(reason))));
   return {
     ...baseline,
@@ -210,8 +246,7 @@ export function fallbackReply(analysis: ConversationAnalysis) {
   if (analysis.safety_status === 'URGENT') return emergencyReply;
   if (analysis.safety_status === 'NEEDS_CLARIFICATION') return safetyClarificationReply;
   if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) {
-    if (analysis.handoff_mode === 'DIRECT_HANDOFF') return '可以，那就直接找真人聊。';
-    return '这个事情找真人完整聊一次会更合适。';
+    return handoffCopyFor(analysis);
   }
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;

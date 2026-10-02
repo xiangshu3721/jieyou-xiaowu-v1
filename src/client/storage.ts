@@ -1,4 +1,4 @@
-import type { ConversationAnalysis } from '../shared.js';
+import type { BookingCaseSnapshot, ConversationAnalysis, IssueLifecycle, IssueStatus, TopicCode } from '../shared.js';
 
 export type LocalRole = 'user' | 'assistant';
 
@@ -8,6 +8,7 @@ export interface LocalMessage {
   role: LocalRole;
   content: string;
   createdAt: string;
+  issueId: string;
 }
 
 export interface LocalSession {
@@ -17,6 +18,9 @@ export interface LocalSession {
   updatedAt: string;
   profile?: LocalProfile;
   understanding?: ConversationAnalysis;
+  currentIssueId: string;
+  issues: Record<string, IssueLifecycle>;
+  bookingCases: Record<string, BookingCaseSnapshot>;
 }
 
 export interface LocalProfile {
@@ -25,8 +29,36 @@ export interface LocalProfile {
 }
 
 const DB_NAME = 'jieyou-xiaowu-v1';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const SINGLE_SESSION_ID = 'jieyou-main-session';
+
+function newIssueId() {
+  return globalThis.crypto?.randomUUID?.() || `issue-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
+}
+
+function newIssue(startedAt = new Date().toISOString(), issueId: string = newIssueId()): IssueLifecycle {
+  return {
+    issue_id: issueId,
+    status: 'ACTIVE',
+    started_at: startedAt,
+    main_issue: null,
+    topic_tags: [],
+    user_turn_count: 0,
+    problem_clarity: 0,
+    minimum_sufficient_judgment: false,
+    handoff_ready: false,
+    handoff_offered: false,
+    booking_case_id: null,
+    booking_submitted_at: null,
+  };
+}
+
+function normalizeSession(session: LocalSession): LocalSession {
+  const issueId = session.currentIssueId || Object.keys(session.issues || {})[0] || newIssue(new Date(session.createdAt).toISOString()).issue_id;
+  const existingIssues = session.issues || {};
+  const issue = existingIssues[issueId] || newIssue(session.createdAt, issueId);
+  return { ...session, currentIssueId: issueId, issues: { ...existingIssues, [issueId]: issue }, bookingCases: session.bookingCases || {} };
+}
 
 function id() {
   return globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -67,14 +99,15 @@ export async function getSession(sessionId = SINGLE_SESSION_ID) {
   const db = await openDb();
   const session = await request(db.transaction('sessions', 'readonly').objectStore('sessions').get(sessionId)) as LocalSession | undefined;
   db.close();
-  return session || null;
+  return session ? normalizeSession(session) : null;
 }
 
 export async function getOrCreateSession() {
   const existing = await getSession();
   if (existing) return existing;
   const now = new Date().toISOString();
-  const session: LocalSession = { id: SINGLE_SESSION_ID, title: '新的对话', createdAt: now, updatedAt: now };
+  const issue = newIssue(now);
+  const session: LocalSession = { id: SINGLE_SESSION_ID, title: '新的对话', createdAt: now, updatedAt: now, currentIssueId: issue.issue_id, issues: { [issue.issue_id]: issue }, bookingCases: {} };
   const db = await openDb();
   const transaction = db.transaction('sessions', 'readwrite');
   transaction.objectStore('sessions').put(session);
@@ -87,13 +120,24 @@ export async function listMessages(sessionId = SINGLE_SESSION_ID) {
   const db = await openDb();
   const messages = await request(db.transaction('messages', 'readonly').objectStore('messages').index('sessionId').getAll(sessionId)) as LocalMessage[];
   db.close();
-  return messages.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  const session = await getSession(sessionId);
+  const currentIssueId = session?.currentIssueId || 'issue-legacy';
+  const normalized = messages.map((message) => ({ ...message, issueId: message.issueId || currentIssueId }));
+  const legacyMessages = normalized.filter((message, index) => !messages[index]?.issueId);
+  if (legacyMessages.length) {
+    const migrationDb = await openDb();
+    const migration = migrationDb.transaction('messages', 'readwrite');
+    for (const message of legacyMessages) migration.objectStore('messages').put(message);
+    await transactionDone(migration);
+    migrationDb.close();
+  }
+  return normalized.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function addMessage(sessionId: string, role: LocalRole, content: string) {
+export async function addMessage(sessionId: string, role: LocalRole, content: string, issueId?: string) {
   const now = new Date().toISOString();
-  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now };
   const session = await getSession(sessionId);
+  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now, issueId: issueId || session?.currentIssueId || 'issue-legacy' };
   const db = await openDb();
   const transaction = db.transaction(['messages', 'sessions'], 'readwrite');
   transaction.objectStore('messages').put(message);
@@ -101,6 +145,66 @@ export async function addMessage(sessionId: string, role: LocalRole, content: st
   await transactionDone(transaction);
   db.close();
   return message;
+}
+
+export async function moveMessageToIssue(sessionId: string, messageId: string, issueId: string) {
+  const db = await openDb();
+  const transaction = db.transaction('messages', 'readwrite');
+  const store = transaction.objectStore('messages');
+  const message = await request(store.get(messageId)) as LocalMessage | undefined;
+  if (message && message.sessionId === sessionId) store.put({ ...message, issueId });
+  await transactionDone(transaction);
+  db.close();
+}
+
+export async function saveSessionLifecycle(sessionId: string, lifecycle: { currentIssueId: string; issues: Record<string, IssueLifecycle> }) {
+  const session = await getSession(sessionId);
+  if (!session) return;
+  const db = await openDb();
+  const transaction = db.transaction('sessions', 'readwrite');
+  transaction.objectStore('sessions').put({ ...session, ...lifecycle, updatedAt: new Date().toISOString() });
+  await transactionDone(transaction);
+  db.close();
+}
+
+export function issueFromAnalysis(analysis: ConversationAnalysis, startedAt = new Date().toISOString()): IssueLifecycle {
+  return {
+    issue_id: analysis.current_issue_id,
+    status: analysis.issue_status,
+    started_at: startedAt,
+    main_issue: analysis.problem_map.main_issue,
+    topic_tags: analysis.tags as TopicCode[],
+    user_turn_count: analysis.user_turn_count,
+    problem_clarity: analysis.problem_clarity,
+    minimum_sufficient_judgment: analysis.minimum_sufficient_judgment,
+    handoff_ready: analysis.handoff_ready,
+    handoff_offered: analysis.handoff_offered,
+    booking_case_id: null,
+    booking_submitted_at: null,
+  };
+}
+
+export async function markIssueBookingSubmitted(sessionId: string, issueId: string, snapshot: BookingCaseSnapshot) {
+  const session = await getSession(sessionId);
+  if (!session) return;
+  const existing = session.issues[issueId] || newIssue(snapshot.submitted_at, issueId);
+  const issue: IssueLifecycle = { ...existing, status: 'BOOKING_SUBMITTED', booking_case_id: snapshot.booking_case_id, booking_submitted_at: snapshot.submitted_at, handoff_offered: true };
+  await saveSessionLifecycle(sessionId, { currentIssueId: issueId, issues: { ...session.issues, [issueId]: issue } });
+  const updated = await getSession(sessionId);
+  if (!updated) return;
+  const db = await openDb();
+  const transaction = db.transaction('sessions', 'readwrite');
+  transaction.objectStore('sessions').put({ ...updated, bookingCases: { ...updated.bookingCases, [snapshot.booking_case_id]: snapshot }, updatedAt: new Date().toISOString() });
+  await transactionDone(transaction);
+  db.close();
+}
+
+export async function createFreshIssue(sessionId: string, startedAt = new Date().toISOString()) {
+  const session = await getSession(sessionId);
+  if (!session) return null;
+  const issue = newIssue(startedAt);
+  await saveSessionLifecycle(sessionId, { currentIssueId: issue.issue_id, issues: { ...session.issues, [issue.issue_id]: issue } });
+  return issue;
 }
 
 export async function saveSessionUnderstanding(sessionId: string, understanding: ConversationAnalysis) {
@@ -128,7 +232,8 @@ export async function clearLocalMessages() {
   const db = await openDb();
   const transaction = db.transaction(['messages', 'sessions'], 'readwrite');
   transaction.objectStore('messages').clear();
-  transaction.objectStore('sessions').put({ id: SINGLE_SESSION_ID, title: '新的对话', createdAt: now, updatedAt: now, understanding: undefined });
+  const issue = newIssue(now);
+  transaction.objectStore('sessions').put({ id: SINGLE_SESSION_ID, title: '新的对话', createdAt: now, updatedAt: now, understanding: undefined, currentIssueId: issue.issue_id, issues: { [issue.issue_id]: issue }, bookingCases: {} });
   await transactionDone(transaction);
   db.close();
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, classifyConcern, detectSafety, routeConcern } from './rules.js';
+import { analyzeConversation, classifyConcern, detectIssueSwitch, detectSafety, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('支持多标签分类，并保留当前主题优先顺序', () => {
@@ -154,14 +154,65 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.show_booking_button).toBe(false);
   });
 
-  it('V1.4 达到最低充分判断后快速交接，不继续追问完整背景', () => {
+  it('V1.6 新 Issue 未满三次有效表达时，即使信息看起来充分也不主动交接', () => {
     const analysis = analyzeConversation('最近三个月总是焦虑，晚上睡不着，白天没精神');
     expect(analysis.minimum_sufficient_judgment).toBe(true);
+    expect(analysis.user_turn_count).toBe(1);
+    expect(analysis.handoff_mode).toBe('NONE');
+    expect(analysis.routing).toBe('AI_SUPPORT');
+    expect(analysis.show_booking_button).toBe(false);
+  });
+
+  it('V1.6 至少三次有效表达且达到最低充分判断后才允许主动交接', () => {
+    const analysis = analyzeConversation(
+      '其实两边都有，晚上也睡不好，白天状态也受影响。',
+      '工作压力很大\n已经两三个月了，每天都不想上班',
+    );
+    expect(analysis.user_turn_count).toBe(3);
+    expect(analysis.minimum_sufficient_judgment).toBe(true);
     expect(analysis.handoff_mode).toBe('QUICK_HANDOFF');
-    expect(analysis.routing).toBe('HUMAN_MENTOR');
     expect(analysis.show_booking_button).toBe(true);
     expect(analysis.ask_question).toBe(false);
-    expect(analysis.next_question).toBeNull();
+  });
+
+  it('V1.6 HANDOFF_OFFERED 不阻塞后续聊天，也不重复推销', () => {
+    const analysis = analyzeConversation('我其实更担心以后一个人生活', '刚经历离婚，对未来很迷茫', {
+      issueId: 'issue-a',
+      userTurnCount: 4,
+      handoffOffered: true,
+      issueStatus: 'HANDOFF_OFFERED',
+      previousTopics: ['INTIMACY', 'EMOTION'],
+    });
+    expect(analysis.current_issue_id).toBe('issue-a');
+    expect(analysis.handoff_offered).toBe(true);
+    expect(analysis.show_booking_button).toBe(false);
+    expect(analysis.routing).toBe('AI_SUPPORT');
+  });
+
+  it('V1.6 用户再次明确要求真人时仍可直接进入预约', () => {
+    const analysis = analyzeConversation('那我还是想预约真人', '之前已经聊过一阵子了', {
+      issueId: 'issue-a',
+      userTurnCount: 5,
+      handoffOffered: true,
+      issueStatus: 'HANDOFF_OFFERED',
+    });
+    expect(analysis.handoff_mode).toBe('DIRECT_HANDOFF');
+    expect(analysis.show_booking_button).toBe(true);
+  });
+
+  it('V1.6 明显换成新的主要困扰时切换 Issue，并重新计数', () => {
+    const switched = detectIssueSwitch('刚离完婚，对未来特别迷茫', '最近工作压力很大，晚上也失眠', ['EMOTION', 'CAREER']);
+    expect(switched.detected).toBe(true);
+    const analysis = analyzeConversation('刚离完婚，对未来特别迷茫', '', { issueId: 'issue-b', userTurnCount: 1, newIssueDetected: true, newIssueConfidence: switched.confidence });
+    expect(analysis.new_issue_detected).toBe(true);
+    expect(analysis.current_issue_id).toBe('issue-b');
+    expect(analysis.user_turn_count).toBe(1);
+    expect(analysis.show_booking_button).toBe(false);
+  });
+
+  it('V1.6 当前问题的影响不被误切成新 Issue', () => {
+    const switched = detectIssueSwitch('所以我晚上也总失眠', '最近工作压力很大', ['EMOTION', 'CAREER']);
+    expect(switched.detected).toBe(false);
   });
 
   it('V1.4 信息仍不足且 AI 还有明显帮助价值时继续 AI 支持', () => {

@@ -92,13 +92,28 @@ describe('结构化 AI 输出校验', () => {
     expect(naturalReply('```json\n{"assistant_reply":"内部字段"}\n```')).toBeNull();
   });
 
-it('把旧的真人服务流程句替换为当前用户文案', () => {
-  expect(normalizeUserReply('提交后由运营人员在飞书里人工分配导师并联系你。')).toBe('将会有专门的导师好好倾听你的诉求，放心，预约是免费的。');
-});
+  it('把旧的真人服务流程句替换为温和的用户文案', () => {
+    const normalized = normalizeUserReply('提交后由运营人员在飞书里人工分配导师并联系你。');
+    expect(normalized).toMatch(/预约.*免费/);
+    expect(normalized).toMatch(/真人|导师/);
+    expect(normalized).not.toContain('人工分配');
+  });
 
-it('移除同一条回复中重复的真人服务文案', () => {
-  expect(normalizeUserReply('将会有专门的导师好好倾听你的诉求，放心，预约是免费的。你可以先填写信息。将会有专门的导师好好倾听你的诉求，放心，预约是免费的。。')).toBe('将会有专门的导师好好倾听你的诉求，放心，预约是免费的。你可以先填写信息。');
-});
+  it('真人交接文案会随当前 Issue 稳定变化，而不是每次完全相同', () => {
+    const replies = ['issue-a', 'issue-b', 'issue-c', 'issue-d'].map((issueId) => normalizeUserReply(
+      '我听到了。',
+      analyzeConversation('我想找真人导师聊聊', '', { issueId }),
+    ));
+    expect(new Set(replies).size).toBeGreaterThan(1);
+    replies.forEach((reply) => expect(reply).toMatch(/预约|真人|导师/));
+  });
+
+  it('移除同一条回复中重复的真人服务文案', () => {
+    const normalized = normalizeUserReply('将会有专门的导师好好倾听你的诉求，放心，预约是免费的。你可以先填写信息。将会有专门的导师好好倾听你的诉求，放心，预约是免费的。。');
+    expect((normalized.match(/预约/g) || []).length).toBe(1);
+    expect(normalized).toContain('你可以先填写信息。');
+    expect(normalized).not.toMatch(/。\s*。/);
+  });
 
   it('服务端规则覆盖模型对安全和真人路径的误判', () => {
     const baseline = analyzeConversation('我想找真人导师聊聊');

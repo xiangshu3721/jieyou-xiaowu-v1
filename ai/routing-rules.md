@@ -36,4 +36,4 @@
 
 只有 `OFFERED` 才能展示预约按钮。`show_booking_button=false` 时，普通回复不得提及真人、导师、预约、人工或分配。
 
-一旦 `DIRECT_HANDOFF` 或 `QUICK_HANDOFF` 成立，`ask_question=false`、`no_more_questions=true`。推荐话术只需一到两句，按钮文字统一为“免费预约真人聊聊”。
+一旦 `DIRECT_HANDOFF` 或 `QUICK_HANDOFF` 成立，`ask_question=false`、`no_more_questions=true`。推荐话术控制在一到三句，语气温柔具体：可以说明事情可能比较复杂、不必一个人扛着，告知预约免费以及会有真人导师联系并陪用户梳理；应准备多种自然表达，不能每次完全相同。按钮文字统一为“免费预约真人聊聊”。

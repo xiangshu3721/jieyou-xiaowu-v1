@@ -3,7 +3,8 @@ import type { ConversationAnalysis, AppointmentInput, ChatMessage } from '../src
 import { config, configurationStatus } from './config.js';
 import { callDeepSeek, DeepSeekUnavailableError } from './deepseek.js';
 import { createFeishuAppointment, FeishuUnavailableError, getFeishuAppointment } from './feishu.js';
-import { analyzeConversation, emergencyReply, safetyClarificationReply } from './rules.js';
+import { analyzeConversation, detectIssueSwitch, emergencyReply, safetyClarificationReply } from './rules.js';
+import { createIssueId, messagesForIssue, parseIssueContext, userContextText, userMessagesForIssue } from './issue.js';
 import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
@@ -35,7 +36,7 @@ function stringValue(value: unknown, max = 4_000) {
 
 function messagesValue(value: unknown): ChatMessage[] {
   if (!Array.isArray(value)) return [];
-  return value.filter((item): item is ChatMessage => Boolean(item && typeof item === 'object' && ((item as ChatMessage).role === 'user' || (item as ChatMessage).role === 'assistant') && typeof (item as ChatMessage).content === 'string')).slice(-40).map((item) => ({ role: item.role, content: item.content.slice(0, 4_000) }));
+  return value.filter((item): item is ChatMessage => Boolean(item && typeof item === 'object' && ((item as ChatMessage).role === 'user' || (item as ChatMessage).role === 'assistant') && typeof (item as ChatMessage).content === 'string')).slice(-40).map((item) => ({ role: item.role, content: item.content.slice(0, 4_000), id: typeof item.id === 'string' ? item.id.slice(0, 120) : undefined, issueId: typeof item.issueId === 'string' ? item.issueId.slice(0, 120) : undefined, createdAt: typeof item.createdAt === 'string' ? item.createdAt.slice(0, 40) : undefined }));
 }
 
 function conversationText(messages: ChatMessage[]) {
@@ -102,8 +103,16 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     const userMessages = messages.filter((item) => item.role === 'user');
     const latestText = userMessages.at(-1)?.content || '';
     if (!messages.length || !latestText) return send(response, 400, { error: '请先输入你想聊的内容' });
-    const contextText = messages.slice(0, -1).filter((message) => message.role === 'user').map((message) => `用户：${message.content}`).join('\n');
-    const baseline = analyzeConversation(latestText, contextText);
+    const requestedIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : undefined;
+    const issueContext = parseIssueContext(body.issue, requestedIssueId || 'issue-current');
+    const issueMessages = messagesForIssue(messages, issueContext.issue_id);
+    const currentUserMessages = userMessagesForIssue(messages, issueContext.issue_id);
+    const previousUserMessages = currentUserMessages.slice(0, -1);
+    const switchResult = detectIssueSwitch(latestText, userContextText(previousUserMessages), issueContext.topic_tags);
+    const activeIssueId = switchResult.detected ? createIssueId() : issueContext.issue_id;
+    const analysisMessages = switchResult.detected ? [{ role: 'user' as const, content: latestText }] : issueMessages;
+    const contextText = userContextText(analysisMessages.slice(0, -1));
+    const baseline = analyzeConversation(latestText, contextText, { issueId: activeIssueId, issueStatus: switchResult.detected ? 'ACTIVE' : issueContext.status, userTurnCount: switchResult.detected ? 1 : Math.max(1, currentUserMessages.length), handoffOffered: switchResult.detected ? false : issueContext.handoff_offered, previousTopics: issueContext.topic_tags, newIssueDetected: switchResult.detected, newIssueConfidence: switchResult.confidence });
     if (baseline.safety_status === 'URGENT') {
       return send(response, 200, { reply: emergencyReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
     }
@@ -112,7 +121,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     }
     try {
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
-      const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...messages]);
+      const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
@@ -126,9 +135,11 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   if (request.method === 'POST' && url.pathname === '/api/booking-summary') {
     const body = await readBody(request);
     const messages = messagesValue(body.messages);
-    if (!messages.some((item) => item.role === 'user')) return send(response, 400, { error: '没有可整理的聊天内容' });
+    const currentIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : '';
+    const scopedMessages = currentIssueId ? messagesForIssue(messages, currentIssueId) : messages;
+    if (!scopedMessages.some((item) => item.role === 'user')) return send(response, 400, { error: '没有可整理的聊天内容' });
     try {
-      const userOnlyText = conversationText(messages.filter((item) => item.role === 'user'));
+      const userOnlyText = conversationText(scopedMessages.filter((item) => item.role === 'user'));
       const summary = await callDeepSeek([
         { role: 'system', content: prompts.summary },
         { role: 'user', content: userOnlyText },
