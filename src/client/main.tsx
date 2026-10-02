@@ -7,6 +7,7 @@ import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const appBaseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
+const secureSpeechUrl = 'https://littlemo-d2gy2ecx0dd102163-1304965105.tcloudbaseapp.com/';
 
 function appPath(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -41,7 +42,7 @@ function Header({ onHome }: { onHome?: () => void }) {
 type SendingPhase = 'listening' | 'replying';
 
 type SpeechRecognitionResultLike = { isFinal: boolean; 0: { transcript: string } };
-type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike> };
+type SpeechRecognitionEventLike = { results: ArrayLike<SpeechRecognitionResultLike>; resultIndex?: number };
 type SpeechRecognitionLike = {
   lang: string;
   continuous: boolean;
@@ -64,9 +65,9 @@ function createSpeechRecognition() {
 
 function speechUnavailableMessage() {
   if (typeof window !== 'undefined' && !window.isSecureContext && !['localhost', '127.0.0.1'].includes(window.location.hostname)) {
-    return '语音输入需要安全连接，请通过 https://littlemo.icu 打开后再点击麦克风。';
+    return `语音输入需要 HTTPS，请打开 ${secureSpeechUrl} 后再点击麦克风。`;
   }
-  return '当前浏览器暂未开放网页语音识别，请更新 Chrome 或 Safari；也可以点击手机键盘上的麦克风听写。';
+  return '当前浏览器暂未开放网页语音识别；iPhone 请使用最新版 Safari，并在系统设置中开启 Siri 与听写，也可以点击手机键盘上的麦克风听写。';
 }
 
 function LoadingDots() { return <span className="loading-dots" aria-hidden="true"><i /><i /><i /></span>; }
@@ -110,6 +111,12 @@ function ChatPage() {
   const [recording, setRecording] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
+  const voiceRequestedRef = useRef(false);
+  const voiceRestartTimerRef = useRef<number | null>(null);
+  const voiceBaseTextRef = useRef('');
+  const voiceSeparatorRef = useRef('');
+  const voiceCommittedTextRef = useRef('');
+  const voiceInterimTextRef = useRef('');
   const messagesRef = useRef<LocalMessage[]>([]);
   const learningConsentRef = useRef(getLearningConsent());
   const [learningConsent, setLearningConsentState] = useState(learningConsentRef.current);
@@ -150,6 +157,111 @@ function ChatPage() {
     location.href = appPath('/booking');
   }
 
+  function renderVoiceText() {
+    const transcript = `${voiceCommittedTextRef.current}${voiceInterimTextRef.current}`;
+    const suffix = transcript ? `${voiceSeparatorRef.current}${transcript}` : '';
+    setInput(`${voiceBaseTextRef.current}${suffix}`);
+  }
+
+  function commitVoiceInterim() {
+    if (voiceInterimTextRef.current) {
+      voiceCommittedTextRef.current += voiceInterimTextRef.current;
+      voiceInterimTextRef.current = '';
+      renderVoiceText();
+    }
+  }
+
+  function clearVoiceRestartTimer() {
+    if (voiceRestartTimerRef.current !== null) {
+      window.clearTimeout(voiceRestartTimerRef.current);
+      voiceRestartTimerRef.current = null;
+    }
+  }
+
+  function stopVoiceInput() {
+    voiceRequestedRef.current = false;
+    clearVoiceRestartTimer();
+    const recognition = recognitionRef.current;
+    recognitionRef.current = null;
+    try { recognition?.stop(); } catch { /* The browser may already have ended recognition. */ }
+    commitVoiceInterim();
+    setRecording(false);
+  }
+
+  function scheduleVoiceRestart() {
+    if (!voiceRequestedRef.current || sending || voiceRestartTimerRef.current !== null) return;
+    voiceRestartTimerRef.current = window.setTimeout(() => {
+      voiceRestartTimerRef.current = null;
+      if (voiceRequestedRef.current && !sending) startVoiceRecognition(true);
+    }, 280);
+  }
+
+  function startVoiceRecognition(isRestart = false) {
+    if (!voiceRequestedRef.current || sending) return;
+    const recognition = createSpeechRecognition();
+    if (!recognition) {
+      voiceRequestedRef.current = false;
+      setRecording(false);
+      setError(speechUnavailableMessage());
+      return;
+    }
+    let fatalError = false;
+    let processedResultCount = 0;
+    recognition.lang = 'zh-CN';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onstart = () => { setError(''); setRecording(true); };
+    recognition.onresult = (event) => {
+      let interimText = '';
+      const resultIndex = Math.min(event.resultIndex ?? processedResultCount, event.results.length);
+      for (let index = resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result) continue;
+        if (result.isFinal) voiceCommittedTextRef.current += result[0].transcript;
+        else interimText += result[0].transcript;
+      }
+      processedResultCount = event.results.length;
+      voiceInterimTextRef.current = interimText;
+      renderVoiceText();
+    };
+    recognition.onerror = (event) => {
+      const errorCode = event.error || '';
+      if (errorCode === 'not-allowed' || errorCode === 'service-not-allowed' || errorCode === 'audio-capture' || errorCode === 'network') {
+        fatalError = true;
+        voiceRequestedRef.current = false;
+        clearVoiceRestartTimer();
+        setError(errorCode === 'not-allowed' || errorCode === 'service-not-allowed'
+          ? (window.isSecureContext ? '麦克风或语音识别权限未开启，请在浏览器设置中允许本网站使用麦克风。' : speechUnavailableMessage())
+          : '语音识别暂时不可用，请检查麦克风权限和网络后重试。');
+      } else if (errorCode !== 'aborted' && errorCode !== 'no-speech') {
+        setError('语音识别暂时中断，正在尝试继续听写。');
+      }
+    };
+    recognition.onend = () => {
+      commitVoiceInterim();
+      if (recognitionRef.current === recognition) recognitionRef.current = null;
+      if (voiceRequestedRef.current && !fatalError && !sending) {
+        setRecording(true);
+        scheduleVoiceRestart();
+      } else {
+        setRecording(false);
+      }
+    };
+    recognitionRef.current = recognition;
+    try {
+      recognition.start();
+    } catch {
+      recognitionRef.current = null;
+      if (isRestart) {
+        scheduleVoiceRestart();
+      } else {
+        voiceRequestedRef.current = false;
+        setRecording(false);
+        setError(speechUnavailableMessage());
+      }
+    }
+  }
+
   useEffect(() => {
     history.replaceState(null, '', appPath('/'));
     (async () => {
@@ -170,7 +282,9 @@ function ChatPage() {
   }, [messages.length, sending]);
 
   useEffect(() => () => {
-    recognitionRef.current?.stop();
+    voiceRequestedRef.current = false;
+    clearVoiceRestartTimer();
+    try { recognitionRef.current?.stop(); } catch { /* The browser may already have ended recognition. */ }
   }, []);
 
   useEffect(() => {
@@ -186,58 +300,25 @@ function ChatPage() {
 
   function toggleVoiceInput() {
     if (sending) return;
-    if (recording) {
-      recognitionRef.current?.stop();
-      return;
-    }
-    const recognition = createSpeechRecognition();
-    if (!recognition) {
-      setError(speechUnavailableMessage());
+    if (recording || voiceRequestedRef.current) {
+      stopVoiceInput();
       return;
     }
     const baseText = input.trim();
     const separator = baseText && !/[，。！？；：,.!?;:\s]$/.test(baseText) ? ' ' : '';
-    recognition.lang = 'zh-CN';
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.onstart = () => { setError(''); setRecording(true); };
-    recognition.onresult = (event) => {
-      let finalText = '';
-      let interimText = '';
-      for (let index = 0; index < event.results.length; index += 1) {
-        const result = event.results[index];
-        if (!result) continue;
-        if (result.isFinal) finalText += result[0].transcript;
-        else interimText += result[0].transcript;
-      }
-      const transcript = `${finalText}${interimText}`;
-      if (transcript) setInput(`${baseText}${separator}${transcript}`);
-    };
-    recognition.onerror = (event) => {
-      if (event.error !== 'aborted') setError(event.error === 'not-allowed' || event.error === 'service-not-allowed' ? (window.isSecureContext ? '麦克风或语音识别权限未开启，请在浏览器设置中允许本网站使用麦克风。' : speechUnavailableMessage()) : '语音识别暂时不可用，请重试或直接使用手机键盘听写。');
-      setRecording(false);
-      recognitionRef.current = null;
-    };
-    recognition.onend = () => {
-      setRecording(false);
-      recognitionRef.current = null;
-    };
-    recognitionRef.current = recognition;
-    try {
-      recognition.start();
-    } catch {
-      setRecording(false);
-      recognitionRef.current = null;
-      setError(speechUnavailableMessage());
-    }
+    voiceBaseTextRef.current = baseText;
+    voiceSeparatorRef.current = separator;
+    voiceCommittedTextRef.current = '';
+    voiceInterimTextRef.current = '';
+    voiceRequestedRef.current = true;
+    clearVoiceRestartTimer();
+    startVoiceRecognition();
   }
 
   async function send() {
     const content = input.trim();
     if (!content || !session || sending) return;
-    recognitionRef.current?.stop();
-    recognitionRef.current = null;
-    setRecording(false);
+    stopVoiceInput();
     if (wantsHumanBooking(content)) {
       setInput('');
       const issueId = await ensureBookingIssueId();
