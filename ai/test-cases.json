@@ -29,5 +29,11 @@
   {"id":"T28","title":"拒绝真人后继续 AI","turns":["这个事情找真人完整聊一次会更合适。","不找真人了，继续聊吧"],"expect":{"control_intent":"DECLINE_HANDOFF","handoff_state":"DECLINED","show_booking_button":false}},
   {"id":"T29","title":"新问题无显式换话题","turns":["工作焦虑已经聊过了。","我和我爸最近关系也特别差。"],"expect":{"newIssueDetected":true,"show_booking_button":false}},
   {"id":"T30","title":"旧 Issue 预约按钮与新 Issue 隔离","turns":["我想找真人导师聊聊。","换个话题","我最近还有工作上的烦恼。"],"expect":{"oldMessageButtonMayRemain":true,"newMessageButton":false}},
-  {"id":"T31","title":"回到当前话题不制造异常状态","turns":["换个话题","我们回到刚才的问题吧"],"expect":{"issue_action":"CONTINUE_CURRENT","noStateError":true}}
+  {"id":"T31","title":"回到当前话题不制造异常状态","turns":["换个话题","我们回到刚才的问题吧"],"expect":{"issue_action":"CONTINUE_CURRENT","noStateError":true}},
+  {"id":"T32","title":"数字短答绑定严重程度问题","turns":["最近总是焦虑。","如果用0到10分估计，现在大概是多少？","7"],"expect":{"knownFact":"severity_score=7","mustNotAskAgain":"severity_score"}},
+  {"id":"T33","title":"持续时间语义去重","turns":["这种状态大概持续多久了？","有好几年了。"],"expect":{"knownFact":"duration=好几年","mustNotAskAgain":"duration"}},
+  {"id":"T34","title":"没有高价值缺口时先承接","turns":["我就是觉得特别累。"],"expect":{"allowNoQuestion":true,"replyMustBeWarm":true}},
+  {"id":"T35","title":"情绪多轮不固定量化","turns":["我最近总是焦虑。","这种感觉已经持续很久了。","我想先有人听我说。"],"expect":{"noFixedQuestionSequence":true,"userIntent":"WANTS_COMFORT"}},
+  {"id":"T36","title":"职业多轮保留当前主题","turns":["我换了四份工作，每次最后都特别痛苦。","其实最难受的地方都差不多。"],"expect":{"primaryTopic":"CAREER","noRepeatedQuestion":true}},
+  {"id":"T37","title":"亲密关系多轮不编造归因","turns":["我感觉谁都靠不住。","我已经失望过很多次了。"],"expect":{"noUnconfirmedPsychologicalCause":true,"noForcedAssessment":true}}
 ]

@@ -3,7 +3,7 @@ import type { ConversationAnalysis, AppointmentInput, ChatMessage } from '../src
 import { config, configurationStatus } from './config.js';
 import { callDeepSeek, DeepSeekUnavailableError } from './deepseek.js';
 import { createFeishuAppointment, FeishuUnavailableError, getFeishuAppointment } from './feishu.js';
-import { analyzeConversation, detectSafety, emergencyReply, resetForAwaitingTopic, safetyClarificationReply } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, detectSafety, emergencyReply, resetForAwaitingTopic, safetyClarificationReply } from './rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from './issue.js';
 import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
@@ -127,7 +127,9 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC'
         ? 1
         : Math.max(1, currentUserMessages.length);
-    const rawBaseline = analyzeConversation(latestText, contextText, { issueId: resolution.current_issue_id, issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC' ? 'ACTIVE' : issueContext.status, userTurnCount, handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : issueContext.handoff_state === 'DECLINED' ? false : issueContext.handoff_offered, previousTopics: issueContext.topic_tags, newIssueDetected: resolution.new_issue_detected, newIssueConfidence: resolution.new_issue_confidence, controlIntent: resolution.control_intent });
+    const issueTopicTags = resolution.issue_action === 'CREATE_NEW' ? [] : issueContext.topic_tags;
+    const understanding = buildConversationUnderstanding(analysisMessages, issueTopicTags);
+    const rawBaseline = analyzeConversation(latestText, contextText, { issueId: resolution.current_issue_id, issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC' ? 'ACTIVE' : issueContext.status, userTurnCount, handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : issueContext.handoff_state === 'DECLINED' ? false : issueContext.handoff_offered, previousTopics: issueContext.topic_tags, issueTopicTags, newIssueDetected: resolution.new_issue_detected, newIssueConfidence: resolution.new_issue_confidence, controlIntent: resolution.control_intent, understanding });
     let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
     if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
     if (baseline.safety_status === 'URGENT') {

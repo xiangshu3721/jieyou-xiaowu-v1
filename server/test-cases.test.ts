@@ -7,9 +7,9 @@ type Case = { id: string; turns: string[]; expect: Record<string, unknown> };
 const cases = JSON.parse(fs.readFileSync(path.resolve(process.cwd(), 'ai/test-cases.json'), 'utf8')) as Case[];
 
 describe('PRD 固定测试案例清单', () => {
-  it('维护完整的 T01-T31 案例', () => {
-    expect(cases.map((item) => item.id)).toEqual(Array.from({ length: 31 }, (_, index) => `T${String(index + 1).padStart(2, '0')}`));
-    expect(cases.filter((item) => item.turns.length >= 2).length).toBeGreaterThanOrEqual(24);
+  it('维护完整的 T01-T37 案例', () => {
+    expect(cases.map((item) => item.id)).toEqual(Array.from({ length: 37 }, (_, index) => `T${String(index + 1).padStart(2, '0')}`));
+    expect(cases.filter((item) => item.turns.length >= 2).length).toBeGreaterThanOrEqual(30);
   });
 
   it('规则层覆盖关键多轮案例', () => {

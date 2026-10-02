@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, classifyConcern, detectIssueSwitch, detectSafety, routeConcern } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('支持多标签分类，并保留当前主题优先顺序', () => {
@@ -221,5 +221,46 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.minimum_sufficient_judgment).toBe(false);
     expect(analysis.routing).toBe('AI_SUPPORT');
     expect(analysis.show_booking_button).toBe(false);
+  });
+
+  it('V1.7 将短答绑定到上一条问题，并记住严重程度和持续时间', () => {
+    const messages = [
+      { role: 'user' as const, content: '最近总是焦虑' },
+      { role: 'assistant' as const, content: '如果用 0～10 分估计，现在的难受程度大概是多少？' },
+      { role: 'user' as const, content: '7' },
+      { role: 'assistant' as const, content: '这种状态大概持续多久了？' },
+      { role: 'user' as const, content: '有好几年了' },
+    ];
+    const understanding = buildConversationUnderstanding(messages);
+    expect(understanding.known_facts.severity_score?.value).toBe(7);
+    expect(understanding.known_facts.duration?.value).toContain('好几年');
+    expect(understanding.asked_questions).toEqual(expect.arrayContaining([
+      expect.objectContaining({ field: 'severity_score', answered: true }),
+      expect.objectContaining({ field: 'duration', answered: true }),
+    ]));
+    const analysis = analyzeConversation('有好几年了', '最近总是焦虑\n7', {
+      understanding,
+      userTurnCount: 3,
+    });
+    expect(analysis.problem_map.severity_score).toBe(7);
+    expect(analysis.problem_map.onset_duration).toContain('好几年');
+    expect(analysis.next_question).not.toMatch(/0-10|持续多久|什么时候开始/);
+    expect(analysis.primary_response_strategy).not.toBe('QUANTIFY');
+    expect(isDuplicateQuestion('如果用 0-10 分估计，现在的难受程度大概是多少？', analysis)).toBe(true);
+  });
+
+  it('V1.7 没有高价值缺口时可以承接，不强制问句收尾', () => {
+    const analysis = analyzeConversation('我就是觉得特别累');
+    expect(analysis.primary_response_strategy).toMatch(/LISTEN|MIRROR|EMPATHIZE/);
+    expect(analysis.ask_question).toBe(false);
+  });
+
+  it('V1.7 当前 Issue 的主题优先于后续泛化情绪词', () => {
+    const analysis = analyzeConversation('其实最难受的地方都差不多', '我换了四份工作，每次最后都特别痛苦', {
+      issueTopicTags: ['CAREER'],
+      previousTopics: ['CAREER'],
+      userTurnCount: 2,
+    });
+    expect(analysis.primary_topic).toBe('CAREER');
   });
 });

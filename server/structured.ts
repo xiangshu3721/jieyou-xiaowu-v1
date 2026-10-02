@@ -19,7 +19,7 @@ import type {
   UserIntent,
   ValueLevel,
 } from '../src/shared.js';
-import { analyzeConversation, emergencyReply, safetyClarificationReply } from './rules.js';
+import { analyzeConversation, emergencyReply, isDuplicateQuestion, questionField, safetyClarificationReply } from './rules.js';
 
 export interface ParsedAssistantOutput {
   analysis: Partial<ConversationAnalysis>;
@@ -185,6 +185,12 @@ export function naturalReply(raw: string) {
 }
 
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis) {
+  if (analysis) {
+    const duplicateField = questionField(reply);
+    if (duplicateField && isDuplicateQuestion(reply, analysis)) {
+      return warmContinuationFor(analysis, duplicateField);
+    }
+  }
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
     return fallbackReply(analysis);
   }
@@ -200,6 +206,20 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
   return normalized
     .replace(/([。！？!?])\s*[。！？!?]+/g, '$1')
     .replace(/([。！？!?])\s*[，、；：,;:]/g, '$1');
+}
+
+function warmContinuationFor(analysis: ConversationAnalysis, field: ReturnType<typeof questionField>) {
+  const fact = field ? analysis.known_facts[field]?.value : undefined;
+  if (field === 'severity_score' && typeof fact === 'number') return `好，你刚才说的${fact}分我记住了，不重复问这个。我们继续看看它最近最影响你的哪一部分。`;
+  if (field === 'duration' && typeof fact === 'string') return `嗯，${fact}了，这已经不是一阵子的波动。这个信息我记下了，我们接着围绕你现在最需要的地方聊。`;
+  if (field === 'frequency' && typeof fact === 'string') return `好，你说的发生频率我记住了。我们先不绕回去重复确认，接着看眼下怎样能帮你轻一点。`;
+  if (field === 'functional_impact' && fact !== undefined) return '好，你刚才提到的日常影响我已经记住了。我们不重复确认，继续把眼前最需要支持的地方理一理。';
+  if (field === 'functional_impact') {
+    const severity = analysis.known_facts.severity_score?.value;
+    const remembered = typeof severity === 'number' ? `刚才说的${severity}分我记住了。` : '刚才补充的情况我记住了。';
+    return `${remembered}先不用急着继续回答问题，你可以按自己的节奏，把最近最难受的那一部分说下去。`;
+  }
+  return '好，刚才你补充的这点我已经记住了。我们不重复问，继续沿着你真正想处理的部分往下聊。';
 }
 
 export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssistantOutput | null): ConversationAnalysis {
@@ -251,7 +271,7 @@ export function fallbackReply(analysis: ConversationAnalysis) {
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';
-  if (!analysis.ask_question && analysis.reply_length === 'SHORT') return '我先接住你刚才说的这部分，不急着把它解释清楚。我们可以先从眼前最影响你的地方慢慢看。';
+  if (!analysis.ask_question && analysis.reply_length === 'SHORT') return '我先听着，也接住你刚才说的这部分，不急着把它解释清楚。我们可以先从眼前最影响你的地方慢慢看。';
   if (analysis.information_gaps.length && analysis.next_question) return `我先听你把刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
   if (analysis.complexity === 'LIGHT') return '你现在描述的问题比较具体，我们可以先从一个最小、现实可行的动作开始，再看看它对你有没有帮助。';
   return '我先把目前的情况做个阶段性整理，再和你一起看一个更适合眼下的下一步。';

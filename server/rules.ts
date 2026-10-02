@@ -1,9 +1,14 @@
 import type {
   AssessmentRecommendation,
+  AskedQuestion,
+  ChatMessage,
   Complexity,
   ConversationAnalysis,
   ConversationControlIntent,
   ConversationState,
+  DialogueStrategy,
+  FactField,
+  KnownFact,
   IssueStatus,
   ProblemMap,
   RoutingState,
@@ -82,6 +87,13 @@ function userTextOnly(latestText: string, contextText: string) {
   return [...prior, latestText.trim()].filter(Boolean).join('\n').slice(-18_000);
 }
 
+export interface ConversationUnderstanding {
+  known_facts: Partial<Record<FactField, KnownFact>>;
+  asked_fields: FactField[];
+  unresolved_fields: FactField[];
+  asked_questions: AskedQuestion[];
+}
+
 export interface IssueAnalysisOptions {
   issueId?: string;
   issueStatus?: IssueStatus;
@@ -91,6 +103,8 @@ export interface IssueAnalysisOptions {
   newIssueDetected?: boolean;
   newIssueConfidence?: number;
   controlIntent?: ConversationControlIntent;
+  understanding?: ConversationUnderstanding;
+  issueTopicTags?: TopicCode[];
 }
 
 function userTurnCountFromContext(contextText: string) {
@@ -155,7 +169,7 @@ function firstMatch(text: string, pattern: RegExp) {
 }
 
 function extractDuration(text: string) {
-  const specific = firstMatch(text, /[0-9一二两三四五六七八九十]+\s*(?:年|个月|周|天)|半年|一年多|几个月|几周|很久|长期|一直以来/);
+  const specific = firstMatch(text, /[0-9一二两三四五六七八九十]+\s*(?:年|个月|周|天)|半年|一年多|几个月|几周|好几年|几年|数年|这些年|多年来|多年|一阵子|很久|长期|一直以来/);
   return specific || firstMatch(text, /最近一段时间|最近|这段时间/);
 }
 
@@ -229,16 +243,42 @@ function buildProblemMap(text: string, topics: TopicCode[], intent: UserIntent):
   };
 }
 
-function buildInformationGaps(problemMap: ProblemMap) {
+function factValue(understanding: ConversationUnderstanding | undefined, field: FactField) {
+  return understanding?.known_facts[field]?.value;
+}
+
+function applyKnownFacts(problemMap: ProblemMap, understanding?: ConversationUnderstanding) {
+  const duration = factValue(understanding, 'duration');
+  const frequency = factValue(understanding, 'frequency');
+  const severity = factValue(understanding, 'severity_score');
+  const functionalImpact = factValue(understanding, 'functional_impact');
+  const trigger = factValue(understanding, 'trigger');
+  const attempts = factValue(understanding, 'attempts');
+  const goal = factValue(understanding, 'user_goal');
+  if (typeof duration === 'string') problemMap.onset_duration = duration;
+  if (typeof frequency === 'string') problemMap.frequency = frequency;
+  if (typeof severity === 'number') problemMap.severity_score = severity;
+  if (typeof functionalImpact === 'string' && !problemMap.functional_impacts.length) problemMap.functional_impacts = [functionalImpact];
+  if (typeof trigger === 'string' && !problemMap.known_triggers.length) problemMap.known_triggers = [trigger];
+  if (Array.isArray(attempts) && attempts.length) problemMap.attempts = attempts.filter((item): item is string => typeof item === 'string');
+  if (typeof goal === 'string') problemMap.user_goal = goal;
+  return problemMap;
+}
+
+function isSpecificDuration(value: unknown): value is string {
+  return typeof value === 'string' && Boolean(value.trim()) && !/^(?:最近|最近一段时间|这段时间)$/.test(value.trim());
+}
+
+function buildInformationGaps(problemMap: ProblemMap, understanding?: ConversationUnderstanding) {
   const gaps: string[] = [];
-  if (problemMap.issue_types.includes('OTHER')) gaps.push('主要问题/主诉');
-  if (!problemMap.scene_summary) gaps.push('最近一次最典型的场景');
-  if (problemMap.severity_score === null) gaps.push(problemMap.functional_impacts.length ? '主观严重程度' : '严重程度与日常功能影响');
-  if (!problemMap.functional_impacts.length) gaps.push('日常功能影响');
-  if (!problemMap.onset_duration && !problemMap.frequency) gaps.push('持续时间或出现频率');
-  else if (!problemMap.onset_duration) gaps.push('持续时间');
-  else if (!problemMap.frequency) gaps.push('出现频率');
-  if (!problemMap.user_goal) gaps.push('用户希望先获得的帮助');
+  const asked = new Set(understanding?.asked_fields || []);
+  if (problemMap.issue_types.includes('OTHER') && !asked.has('main_issue')) gaps.push('主要问题/主诉');
+  if (!problemMap.scene_summary && !asked.has('scene')) gaps.push('最近一次最典型的场景');
+  if (problemMap.severity_score === null && !asked.has('severity_score')) gaps.push(problemMap.functional_impacts.length ? '主观严重程度' : '严重程度与日常功能影响');
+  if (!problemMap.functional_impacts.length && !asked.has('functional_impact')) gaps.push('日常功能影响');
+  if (!isSpecificDuration(problemMap.onset_duration) && !asked.has('duration')) gaps.push('持续时间');
+  if (!problemMap.frequency && !asked.has('frequency')) gaps.push('出现频率');
+  if (!problemMap.user_goal && !asked.has('user_goal')) gaps.push('用户希望先获得的帮助');
   return unique(gaps, 6);
 }
 
@@ -247,11 +287,140 @@ function chooseNextQuestion(gaps: string[]) {
   if (!gap) return null;
   if (gap.includes('功能')) return '它现在有没有影响睡眠、工作、关系或日常生活？';
   if (gap.includes('严重')) return '如果用 0-10 分估计，现在的难受程度大概是多少？';
-  if (gap.includes('持续') || gap.includes('频率')) return '这种状态大概持续多久了，是偶尔发生还是最近经常出现？';
+  if (gap.includes('持续')) return '这种状态大概持续多久了？';
+  if (gap.includes('频率')) return '这种情况一般多久会出现一次？';
   if (gap.includes('场景')) return '最近一次最典型的情况是什么？';
   if (gap.includes('主诉')) return '如果今天只先看一件事，你最想先解决什么？';
   if (gap.includes('帮助')) return '你希望这次先得到哪一种帮助：缓解当下、理清问题，还是找下一步？';
   return '你自己试过哪些办法？有哪一点稍微有用吗？';
+}
+
+function questionLike(text: string) {
+  return /[？?]|(?:吗|呢)[。！？!?]?$/.test(text.trim());
+}
+
+export function questionField(text: string): FactField | null {
+  const value = text.trim();
+  if (!questionLike(value)) return null;
+  if (/0\s*[-～到]\s*10|几分|严重程度|难受程度|痛苦程度|强度/.test(value)) return 'severity_score';
+  if (/持续多久|多长时间|从什么时候|什么时候开始|多久了|多久以来|几年|几个月|多年来/.test(value)) return 'duration';
+  if (/多久.*一次|多频繁|频率|每天.*发生|经常.*发生|多常发生/.test(value)) return 'frequency';
+  if (/影响.*(?:睡眠|工作|关系|日常|生活)|有没有影响|白天.*状态|功能影响/.test(value)) return 'functional_impact';
+  if (/什么.*导致|什么时候.*加重|诱因|触发/.test(value)) return 'trigger';
+  if (/试过哪些|尝试过|做过什么|什么办法/.test(value)) return 'attempts';
+  if (/希望.*帮助|想要.*帮助|最想|先解决什么|先处理什么/.test(value)) return 'user_goal';
+  if (/最近一次|最典型|具体发生了什么|什么情况/.test(value)) return 'scene';
+  if (/只先看一件事|主要问题|最困扰/.test(value)) return 'main_issue';
+  return null;
+}
+
+function semanticKey(field: FactField) {
+  return {
+    main_issue: 'primary_concern',
+    scene: 'recent_scene',
+    severity_score: 'subjective_severity',
+    duration: 'issue_duration',
+    frequency: 'issue_frequency',
+    functional_impact: 'functional_impact',
+    trigger: 'trigger_context',
+    attempts: 'previous_attempts',
+    user_goal: 'support_goal',
+  }[field];
+}
+
+function addFact(facts: Partial<Record<FactField, KnownFact>>, field: FactField, value: string | number | string[] | null | undefined) {
+  if (value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0)) return;
+  facts[field] = { value, source: 'user_explicit', confidence: 1 };
+}
+
+function standaloneSeverity(messages: ChatMessage[]) {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (message.role !== 'user' || !/^(?:10|[0-9])(?:\s*分)?$/.test(message.content.trim())) continue;
+    const previousAssistant = messages.slice(0, index).reverse().find((item) => item.role === 'assistant');
+    if (previousAssistant && /0\s*[-～到]\s*10|几分|严重程度|难受程度|强度/.test(previousAssistant.content)) return Number(message.content.match(/10|[0-9]/)?.[0]);
+  }
+  return null;
+}
+
+/** V1.7 在进入模型前从当前 Issue 建立事实和已问问题记忆。 */
+export function buildConversationUnderstanding(messages: ChatMessage[], issueTopicTags: TopicCode[] = []): ConversationUnderstanding {
+  const userMessages = messages.filter((message) => message.role === 'user');
+  const userText = userMessages.map((message) => message.content.trim()).filter(Boolean).join('\n').slice(-18_000);
+  const latestUserText = userMessages.at(-1)?.content || '';
+  const intent = detectIntent(latestUserText);
+  const topics = Array.from(new Set([...issueTopicTags.filter((topic) => topic !== 'OTHER'), ...classifyConcern(userText)]));
+  const problemMap = buildProblemMap(userText, topics, intent);
+  const facts: Partial<Record<FactField, KnownFact>> = {};
+  const latestExtracted = <T>(extractor: (text: string) => T | null) => {
+    for (const message of [...userMessages].reverse()) {
+      const value = extractor(message.content);
+      if (value !== null) return value;
+    }
+    return null;
+  };
+  addFact(facts, 'main_issue', problemMap.main_issue);
+  addFact(facts, 'scene', problemMap.scene_summary);
+  addFact(facts, 'severity_score', latestExtracted(extractSeverity) ?? standaloneSeverity(messages) ?? problemMap.severity_score);
+  const duration = latestExtracted(extractDuration) ?? problemMap.onset_duration;
+  addFact(facts, 'duration', isSpecificDuration(duration) ? duration : null);
+  addFact(facts, 'frequency', latestExtracted(extractFrequency) ?? problemMap.frequency);
+  addFact(facts, 'functional_impact', problemMap.functional_impacts.length ? problemMap.functional_impacts.join(', ') : null);
+  addFact(facts, 'trigger', problemMap.known_triggers.length ? problemMap.known_triggers.join(', ') : null);
+  addFact(facts, 'attempts', problemMap.attempts);
+  addFact(facts, 'user_goal', latestExtracted((text) => extractGoal(text, detectIntent(text))) ?? problemMap.user_goal);
+
+  const askedQuestions: AskedQuestion[] = [];
+  for (const message of messages.filter((item) => item.role === 'assistant')) {
+    const field = questionField(message.content);
+    if (!field || askedQuestions.some((item) => item.field === field)) continue;
+    askedQuestions.push({ field, semantic_key: semanticKey(field), question: message.content.trim().slice(-240), answered: facts[field] !== undefined });
+  }
+  const askedFields = askedQuestions.map((item) => item.field);
+  const unresolvedFields = (['main_issue', 'scene', 'severity_score', 'duration', 'frequency', 'functional_impact', 'trigger', 'attempts', 'user_goal'] as FactField[])
+    .filter((field) => facts[field] === undefined);
+  return { known_facts: facts, asked_fields: askedFields, unresolved_fields: unresolvedFields, asked_questions: askedQuestions };
+}
+
+export function isDuplicateQuestion(text: string, analysis: Pick<ConversationAnalysis, 'known_facts' | 'asked_questions'>) {
+  const field = questionField(text);
+  if (!field) return false;
+  return analysis.known_facts[field] !== undefined || analysis.asked_questions.some((item) => item.field === field && item.answered);
+}
+
+function fieldForNextQuestion(question: string | null) {
+  return question ? questionField(question.replace(/[。！？!?]$/, '') + '？') : null;
+}
+
+function questionValueFor(intent: UserIntent, question: string | null, problemMap: ProblemMap, userTurnCount: number) {
+  const field = fieldForNextQuestion(question);
+  if (!field) return 0;
+  if (intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') return 0.85;
+  if (field === 'severity_score' && problemMap.functional_impacts.length) return 0.8;
+  if (field === 'functional_impact' && problemMap.severity_score !== null) return 0.78;
+  if (userTurnCount > 1) return 0.68;
+  return 0.45;
+}
+
+export function selectDialogueStrategy(input: {
+  routing: TriageRouting;
+  intent: UserIntent;
+  assessment: AssessmentRecommendation;
+  supportFeedback: string | null;
+  nextQuestion: string | null;
+  questionValue: number;
+  problemMap: ProblemMap;
+}): DialogueStrategy {
+  if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
+  if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (input.assessment.needed) return 'ASSESSMENT';
+  if (input.supportFeedback) return 'CLARIFY_GOAL';
+  if (input.intent === 'WANTS_COMFORT') return 'EMPATHIZE';
+  if (input.intent === 'WANTS_ACTION' && !input.nextQuestion) return 'PROVIDE_HELP';
+  if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
+  if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
+  if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
+  return 'LISTEN';
 }
 
 function chooseAssessment(text: string, topics: TopicCode[], complexity: Complexity, userGoal: string | null): AssessmentRecommendation {
@@ -387,14 +556,20 @@ function legacyState(routing: TriageRouting, safety: SafetyStatus, intent: UserI
   return 'LISTENING';
 }
 
-function strategyFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, complexity: Complexity) {
+function strategyFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, complexity: Complexity, selected?: DialogueStrategy) {
   if (routing === 'SAFETY_SUPPORT') return '先确认现实安全并提供当地紧急求助方向，暂停普通建议、测评与商业推荐';
   if (routing === 'PROFESSIONAL_REFERRAL') return '说明普通成长支持边界，提供合适的专业求助方向，不把 AI 结论当作诊断';
   if (routing === 'HUMAN_MENTOR') return '先做阶段性镜像和前端导诊摘要，说明为什么真人更适合，不再进入 D3 深度探索';
   if (assessment.needed) return `短镜像后说明测评用途，推荐${assessment.recommended_tool}，明确它只是辅助参考，不是诊断`;
   if (intent === 'WANTS_COMFORT') return '具体回应用户已表达的处境，先陪伴和倾听，不急着给建议';
   if (gaps.length) return `短镜像后只推进一个最高价值缺口：${gaps[0]}`;
-  if (complexity === 'LIGHT') return '总结当前问题，给 1-3 个有针对性的轻量支持，并询问是否有帮助';
+  if (selected === 'EMPATHIZE') return '用具体、克制的语言接住用户，不急着追问或给结论';
+  if (selected === 'MIRROR') return '镜像用户已经说出的事实和感受，避免加入未经确认的解释';
+  if (selected === 'QUANTIFY') return `只确认一个会改变支持方式的信息：${gaps[0] || '当前状态的强度'}`;
+  if (selected === 'CLARIFY_FACT' || selected === 'CLARIFY_GOAL') return `只推进一个尚未确认且有实际价值的信息：${gaps[0] || '当前目标'}`;
+  if (selected === 'PROVIDE_HELP') return '直接给一个眼下可执行的支持，不用固定提问收尾';
+  if (selected === 'CONTINUE') return '承接用户刚补充的内容，继续围绕当前困扰自然回应，不重复已确认事实';
+  if (complexity === 'LIGHT') return '总结当前问题，给 1-3 个有针对性的轻量支持，不强行提问';
   return '阶段性总结当前判断，给出下一步支持选项，让用户自主选择';
 }
 
@@ -461,10 +636,11 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const handoffWasOffered = options.handoffOffered === true;
   const safety = detectSafety(text);
   const intent = detectIntent(text);
-  const topics = classifyConcern(allUserText);
-  const problemMap = buildProblemMap(allUserText, topics, intent);
+  const topics = Array.from(new Set([...(options.issueTopicTags || []).filter((topic) => topic !== 'OTHER'), ...classifyConcern(allUserText)]));
+  const understanding = options.understanding || buildConversationUnderstanding([{ role: 'user', content: allUserText }], options.issueTopicTags || []);
+  const problemMap = applyKnownFacts(buildProblemMap(allUserText, topics, intent), understanding);
   const complexity = determineComplexity(allUserText, topics, problemMap, safety);
-  const gaps = buildInformationGaps(problemMap);
+  const gaps = buildInformationGaps(problemMap, understanding);
   const assessmentCandidate = chooseAssessment(allUserText, topics, complexity, problemMap.user_goal);
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
@@ -484,7 +660,17 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
   const declinedHuman = declineHumanPatterns.some((pattern) => pattern.test(text));
   const handoffState = declinedHuman ? 'DECLINED' as const : handoffReady ? 'OFFERED' as const : handoffWasOffered ? 'READY' as const : 'NOT_READY' as const;
-  const askQuestion = !handoffReady && responseGoal !== 'HANDOFF' && responseGoal !== 'HELP' && responseGoal !== 'ASSESSMENT' && intent !== 'WANTS_END' && gaps.length > 0;
+  const nextQuestionCandidate = handoffReady ? null : chooseNextQuestion(gaps);
+  const questionValue = Number(questionValueFor(intent, nextQuestionCandidate, problemMap, userTurnCount).toFixed(2));
+  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap });
+  const askQuestion = !handoffReady
+    && responseGoal !== 'HANDOFF'
+    && responseGoal !== 'HELP'
+    && responseGoal !== 'ASSESSMENT'
+    && intent !== 'WANTS_END'
+    && Boolean(nextQuestionCandidate)
+    && ['CLARIFY_FACT', 'QUANTIFY', 'CLARIFY_GOAL'].includes(primaryResponseStrategy)
+    && questionValue >= 0.72;
   const legacyRoute = legacyRouting(routing);
   const reasons = [
     safety === 'URGENT' ? '检测到可信的即时危险表达' : '',
@@ -504,7 +690,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     diagnostic_sufficiency: sufficiency,
     routing,
     depth_level: depthFor(allUserText, complexity, routing, gaps),
-    next_question: handoffReady ? null : chooseNextQuestion(gaps),
+    next_question: nextQuestionCandidate,
     conversation_mode: responseGoal,
     response_goal: responseGoal,
     problem_clarity: sufficiency,
@@ -538,7 +724,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     booking_preference: declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' : intent === 'WANTS_HUMAN' ? 'ACCEPTED' : 'NOT_EXPRESSED',
     safety_status: safety,
     routing_reason: routingReason(routing, complexity, problemMap, intent, assessment),
-    reply_strategy: strategyFor(routing, intent, gaps, assessment, complexity),
+    reply_strategy: strategyFor(routing, intent, gaps, assessment, complexity, primaryResponseStrategy),
     tags: topics,
     route: routeForLegacy(routing),
     safety: safety === 'URGENT' ? 'urgent' : safety === 'NEEDS_CLARIFICATION' ? 'clarify' : 'normal',
@@ -550,6 +736,12 @@ export function analyzeConversation(latestText: string, contextText = '', option
     issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : issueStatus,
     handoff_offered: handoffWasOffered || handoffReady,
     control_intent: options.controlIntent,
+    known_facts: understanding.known_facts,
+    asked_fields: understanding.asked_fields,
+    unresolved_fields: understanding.unresolved_fields,
+    asked_questions: understanding.asked_questions,
+    primary_response_strategy: primaryResponseStrategy,
+    question_value: questionValue,
   };
 }
 
@@ -621,6 +813,12 @@ export function resetForAwaitingTopic(analysis: ConversationAnalysis, previousIs
     control_intent: 'SWITCH_TOPIC',
     issue_action: 'CREATE_NEW',
     previous_issue_id: previousIssueId,
+    known_facts: {},
+    asked_fields: [],
+    unresolved_fields: [],
+    asked_questions: [],
+    primary_response_strategy: 'LISTEN',
+    question_value: 0,
   };
 }
 

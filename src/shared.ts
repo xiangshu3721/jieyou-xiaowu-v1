@@ -71,6 +71,36 @@ export interface AssessmentRecommendation {
 
 export type BookingPreference = 'NOT_EXPRESSED' | 'INTERESTED' | 'ACCEPTED' | 'DECLINED';
 export type SafetyStatus = 'NO_SIGNAL_DETECTED' | 'NEEDS_CLARIFICATION' | 'URGENT';
+export type FactField = 'main_issue' | 'scene' | 'severity_score' | 'duration' | 'frequency' | 'functional_impact' | 'trigger' | 'attempts' | 'user_goal';
+export type FactSource = 'user_explicit' | 'user_confirmed';
+export type FactValue = string | number | boolean | string[];
+export type DialogueStrategy =
+  | 'LISTEN'
+  | 'MIRROR'
+  | 'EMPATHIZE'
+  | 'CLARIFY_FACT'
+  | 'QUANTIFY'
+  | 'CLARIFY_GOAL'
+  | 'REFRAME'
+  | 'PROVIDE_HELP'
+  | 'NORMALIZE'
+  | 'ASSESSMENT'
+  | 'SUMMARIZE'
+  | 'HANDOFF'
+  | 'CONTINUE';
+
+export interface KnownFact {
+  value: FactValue;
+  source: FactSource;
+  confidence: number;
+}
+
+export interface AskedQuestion {
+  field: FactField;
+  semantic_key: string;
+  question: string;
+  answered: boolean;
+}
 
 export interface ChatMessage {
   role: MessageRole;
@@ -171,6 +201,14 @@ export interface ConversationAnalysis {
   control_intent?: ConversationControlIntent;
   issue_action?: IssueAction;
   previous_issue_id?: string | null;
+
+  /** V1.7 当前 Issue 的事实记忆与提问质量控制字段。 */
+  known_facts: Partial<Record<FactField, KnownFact>>;
+  asked_fields: FactField[];
+  unresolved_fields: FactField[];
+  asked_questions: AskedQuestion[];
+  primary_response_strategy: DialogueStrategy;
+  question_value: number;
 }
 
 export interface ChatResponse {

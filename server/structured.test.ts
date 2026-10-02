@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding } from './rules.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
 
 describe('结构化 AI 输出校验', () => {
@@ -165,5 +165,20 @@ describe('结构化 AI 输出校验', () => {
     expect(merged.ask_question).toBe(false);
     expect(merged.no_more_questions).toBe(true);
     expect(normalizeUserReply('你愿意先说说持续多久了吗？', merged)).not.toMatch(/[？?]/);
+  });
+
+  it('V1.7 回复质量守门会拦截对已确认字段的重复提问', () => {
+    const messages = [
+      { role: 'user' as const, content: '最近总是焦虑' },
+      { role: 'assistant' as const, content: '如果用 0～10 分估计，现在的难受程度大概是多少？' },
+      { role: 'user' as const, content: '7' },
+    ];
+    const baseline = analyzeConversation('7', '最近总是焦虑', {
+      understanding: buildConversationUnderstanding(messages),
+      userTurnCount: 2,
+    });
+    const normalized = normalizeUserReply('那你现在的难受程度大概是几分？', baseline);
+    expect(normalized).not.toMatch(/[？?]/);
+    expect(normalized).toContain('记住');
   });
 });
