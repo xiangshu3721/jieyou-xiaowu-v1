@@ -1,6 +1,6 @@
 import type { AppointmentInput, ChatMessage } from '../src/shared.js';
-import { analyzeConversation, detectIssueSwitch, emergencyReply, safetyClarificationReply } from '../server/rules.js';
-import { createIssueId, messagesForIssue, parseIssueContext, userContextText, userMessagesForIssue } from '../server/issue.js';
+import { analyzeConversation, detectSafety, emergencyReply, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
+import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
@@ -324,12 +324,12 @@ export async function handleApi(request: Request, env: WorkerEnv) {
   if (limited) return limited;
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.6.0', ...configurationStatus(env) }, request);
+    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.6.1', ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/dev/rules') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.6.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
+    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.6.1' }, promptTexts: prompts, ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/learning/events') {
@@ -352,13 +352,13 @@ export async function handleApi(request: Request, env: WorkerEnv) {
 
   if (request.method === 'GET' && url.pathname === '/api/learning/dashboard') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    const result = await learningDashboard(learningStoreFor(env), env.PROMPT_VERSION || 'v1.6.0');
+    const result = await learningDashboard(learningStoreFor(env), env.PROMPT_VERSION || 'v1.6.1');
     return json(result.status, result.body, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/learning/insights/run') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    const result = await runLearningInsights(learningStoreFor(env), env.PROMPT_VERSION || 'v1.6.0');
+    const result = await runLearningInsights(learningStoreFor(env), env.PROMPT_VERSION || 'v1.6.1');
     return json(result.status, result.body, request);
   }
 
@@ -379,30 +379,48 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const issueContext = parseIssueContext(body.issue, requestedIssueId || 'issue-current');
       const issueMessages = messagesForIssue(messages, issueContext.issue_id);
       const currentUserMessages = userMessagesForIssue(messages, issueContext.issue_id);
-      const previousUserMessages = currentUserMessages.slice(0, -1);
-      const previousText = userContextText(previousUserMessages);
-      const switchResult = detectIssueSwitch(latestText, previousText, issueContext.topic_tags);
-      const activeIssueId = switchResult.detected ? createIssueId() : issueContext.issue_id;
-      const analysisMessages = switchResult.detected ? [{ role: 'user' as const, content: latestText }] : issueMessages;
-      const contextText = userContextText(analysisMessages.slice(0, -1));
-      const userTurnCount = switchResult.detected ? 1 : Math.max(1, currentUserMessages.length);
-      const baseline = analyzeConversation(latestText, contextText, {
-        issueId: activeIssueId,
-        issueStatus: switchResult.detected ? 'ACTIVE' : issueContext.status,
-        userTurnCount,
-        handoffOffered: switchResult.detected ? false : issueContext.handoff_offered,
+      const previousUserMessages = issueContext.status === 'AWAITING_TOPIC' ? [] : currentUserMessages.slice(0, -1);
+      const resolution = resolveCurrentIssue({
+        message: latestText,
+        currentIssueId: issueContext.issue_id,
+        currentIssue: issueContext,
+        previousMessages: previousUserMessages,
         previousTopics: issueContext.topic_tags,
-        newIssueDetected: switchResult.detected,
-        newIssueConfidence: switchResult.confidence,
+        safetyDetected: detectSafety(latestText) !== 'NO_SIGNAL_DETECTED',
       });
-      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.0', model: 'safety-rule' }, request);
-      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.0', model: 'safety-rule' }, request);
+      const analysisMessages = resolution.issue_action === 'CREATE_NEW'
+        ? (resolution.awaiting_topic ? [] : [{ role: 'user' as const, content: latestText }])
+        : issueContext.status === 'AWAITING_TOPIC'
+          ? [{ role: 'user' as const, content: latestText }]
+          : issueMessages;
+      const contextText = userContextText(analysisMessages.slice(0, -1));
+      const userTurnCount = resolution.awaiting_topic
+        ? 0
+        : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC'
+          ? 1
+          : Math.max(1, currentUserMessages.length);
+      const rawBaseline = analyzeConversation(latestText, contextText, {
+        issueId: resolution.current_issue_id,
+        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC' ? 'ACTIVE' : issueContext.status,
+        userTurnCount,
+        handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : issueContext.handoff_state === 'DECLINED' ? false : issueContext.handoff_offered,
+        previousTopics: issueContext.topic_tags,
+        newIssueDetected: resolution.new_issue_detected,
+        newIssueConfidence: resolution.new_issue_confidence,
+        controlIntent: resolution.control_intent,
+      });
+      let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
+      if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
+      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.1', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.1', model: 'safety-rule' }, request);
+      if (resolution.awaiting_topic) return json(200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.1', model: 'control-rule' }, request);
+      if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.6.1', model: 'control-rule' }, request);
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
-      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.6.0', model: apiConfig(env).deepseek.model }, request);
+      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.6.1', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
@@ -417,7 +435,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const scopedMessages = currentIssueId ? messagesForIssue(messages, currentIssueId) : messages;
       if (!scopedMessages.some((item) => item.role === 'user')) return json(400, { error: '没有可整理的聊天内容' }, request);
       const summary = await callDeepSeek(env, [{ role: 'system', content: prompts.summary }, { role: 'user', content: conversationText(scopedMessages.filter((item) => item.role === 'user')) }], 0.2);
-      return json(200, { summary, currentIssueId: currentIssueId || undefined, promptVersion: env.PROMPT_VERSION || 'v1.6.0' }, request);
+      return json(200, { summary, currentIssueId: currentIssueId || undefined, promptVersion: env.PROMPT_VERSION || 'v1.6.1' }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError ? error.message : '摘要暂时生成失败';
       return json(502, { error: message, code: 'SUMMARY_UNAVAILABLE' }, request);

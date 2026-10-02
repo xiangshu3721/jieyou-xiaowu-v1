@@ -3,8 +3,8 @@ import type { ConversationAnalysis, AppointmentInput, ChatMessage } from '../src
 import { config, configurationStatus } from './config.js';
 import { callDeepSeek, DeepSeekUnavailableError } from './deepseek.js';
 import { createFeishuAppointment, FeishuUnavailableError, getFeishuAppointment } from './feishu.js';
-import { analyzeConversation, detectIssueSwitch, emergencyReply, safetyClarificationReply } from './rules.js';
-import { createIssueId, messagesForIssue, parseIssueContext, userContextText, userMessagesForIssue } from './issue.js';
+import { analyzeConversation, detectSafety, emergencyReply, resetForAwaitingTopic, safetyClarificationReply } from './rules.js';
+import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from './issue.js';
 import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
@@ -107,17 +107,40 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     const issueContext = parseIssueContext(body.issue, requestedIssueId || 'issue-current');
     const issueMessages = messagesForIssue(messages, issueContext.issue_id);
     const currentUserMessages = userMessagesForIssue(messages, issueContext.issue_id);
-    const previousUserMessages = currentUserMessages.slice(0, -1);
-    const switchResult = detectIssueSwitch(latestText, userContextText(previousUserMessages), issueContext.topic_tags);
-    const activeIssueId = switchResult.detected ? createIssueId() : issueContext.issue_id;
-    const analysisMessages = switchResult.detected ? [{ role: 'user' as const, content: latestText }] : issueMessages;
+    const previousUserMessages = issueContext.status === 'AWAITING_TOPIC' ? [] : currentUserMessages.slice(0, -1);
+    const resolution = resolveCurrentIssue({
+      message: latestText,
+      currentIssueId: issueContext.issue_id,
+      currentIssue: issueContext,
+      previousMessages: previousUserMessages,
+      previousTopics: issueContext.topic_tags,
+      safetyDetected: detectSafety(latestText) !== 'NO_SIGNAL_DETECTED',
+    });
+    const analysisMessages = resolution.issue_action === 'CREATE_NEW'
+      ? (resolution.awaiting_topic ? [] : [{ role: 'user' as const, content: latestText }])
+      : issueContext.status === 'AWAITING_TOPIC'
+        ? [{ role: 'user' as const, content: latestText }]
+        : issueMessages;
     const contextText = userContextText(analysisMessages.slice(0, -1));
-    const baseline = analyzeConversation(latestText, contextText, { issueId: activeIssueId, issueStatus: switchResult.detected ? 'ACTIVE' : issueContext.status, userTurnCount: switchResult.detected ? 1 : Math.max(1, currentUserMessages.length), handoffOffered: switchResult.detected ? false : issueContext.handoff_offered, previousTopics: issueContext.topic_tags, newIssueDetected: switchResult.detected, newIssueConfidence: switchResult.confidence });
+    const userTurnCount = resolution.awaiting_topic
+      ? 0
+      : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC'
+        ? 1
+        : Math.max(1, currentUserMessages.length);
+    const rawBaseline = analyzeConversation(latestText, contextText, { issueId: resolution.current_issue_id, issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC' ? 'ACTIVE' : issueContext.status, userTurnCount, handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : issueContext.handoff_state === 'DECLINED' ? false : issueContext.handoff_offered, previousTopics: issueContext.topic_tags, newIssueDetected: resolution.new_issue_detected, newIssueConfidence: resolution.new_issue_confidence, controlIntent: resolution.control_intent });
+    let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
+    if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
     if (baseline.safety_status === 'URGENT') {
       return send(response, 200, { reply: emergencyReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
     }
     if (baseline.safety_status === 'NEEDS_CLARIFICATION') {
       return send(response, 200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
+    }
+    if (resolution.awaiting_topic) {
+      return send(response, 200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
+    }
+    if (resolution.control_intent === 'DECLINE_HANDOFF') {
+      return send(response, 200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
     }
     try {
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;

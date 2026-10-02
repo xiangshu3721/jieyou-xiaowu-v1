@@ -22,5 +22,12 @@
   {"id":"T21","title":"问题影响不误切 Issue","turns":["最近工作压力很大。","所以我晚上也总失眠。"],"expect":{"newIssueDetected":false}},
   {"id":"T22","title":"摘要只读取当前 Issue","turns":["工作焦虑和失眠。","刚离婚后很迷茫。"],"expect":{"summaryMustExclude":["工作焦虑","失眠"],"summaryMustUse":["刚离婚后很迷茫"]}},
   {"id":"T23","title":"预约取消不产生边界","turns":["我打开了预约，但先不提交。","我还想继续聊。"],"expect":{"issueStatus":"ACTIVE","bookingBoundary":false}},
-  {"id":"T24","title":"飞书失败不产生边界，成功才建立快照","turns":["我想预约真人聊聊。"],"expect":{"failedSubmissionKeepsIssueOpen":true,"successfulSubmissionCreatesImmutableCase":true}}
+  {"id":"T24","title":"飞书失败不产生边界，成功才建立快照","turns":["我想预约真人聊聊。"],"expect":{"failedSubmissionKeepsIssueOpen":true,"successfulSubmissionCreatesImmutableCase":true}},
+  {"id":"T25","title":"已推荐真人后明确换话题","turns":["工作压力很大，已经持续很久，晚上也睡不好。","算了跟你聊点别的吧"],"expect":{"control_intent":"SWITCH_TOPIC","issue_action":"CREATE_NEW","replyMustNotMentionHuman":true}},
+  {"id":"T26","title":"换话题消息带有新困扰","turns":["工作压力很大。","这个先不聊了，我最近还有个情感关系的烦恼。"],"expect":{"control_intent":"NEW_ISSUE","user_turn_count":1,"show_booking_button":false}},
+  {"id":"T27","title":"新话题前两轮不继承真人导流","turns":["工作压力很大，已经持续很久，晚上也睡不好。","算了跟你聊点别的吧","我最近和我爸关系也特别差。"],"expect":{"newIssueHandoffOffered":false,"newIssueShowBookingButton":false}},
+  {"id":"T28","title":"拒绝真人后继续 AI","turns":["这个事情找真人完整聊一次会更合适。","不找真人了，继续聊吧"],"expect":{"control_intent":"DECLINE_HANDOFF","handoff_state":"DECLINED","show_booking_button":false}},
+  {"id":"T29","title":"新问题无显式换话题","turns":["工作焦虑已经聊过了。","我和我爸最近关系也特别差。"],"expect":{"newIssueDetected":true,"show_booking_button":false}},
+  {"id":"T30","title":"旧 Issue 预约按钮与新 Issue 隔离","turns":["我想找真人导师聊聊。","换个话题","我最近还有工作上的烦恼。"],"expect":{"oldMessageButtonMayRemain":true,"newMessageButton":false}},
+  {"id":"T31","title":"回到当前话题不制造异常状态","turns":["换个话题","我们回到刚才的问题吧"],"expect":{"issue_action":"CONTINUE_CURRENT","noStateError":true}}
 ]

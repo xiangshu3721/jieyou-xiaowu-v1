@@ -1,4 +1,4 @@
-import type { BookingCaseSnapshot, ConversationAnalysis, IssueLifecycle, IssueStatus, TopicCode } from '../shared.js';
+import type { BookingCaseSnapshot, ConversationAnalysis, IssueLifecycle, TopicCode } from '../shared.js';
 
 export type LocalRole = 'user' | 'assistant';
 
@@ -9,6 +9,7 @@ export interface LocalMessage {
   content: string;
   createdAt: string;
   issueId: string;
+  bookingCta?: boolean;
 }
 
 export interface LocalSession {
@@ -48,6 +49,7 @@ function newIssue(startedAt = new Date().toISOString(), issueId: string = newIss
     minimum_sufficient_judgment: false,
     handoff_ready: false,
     handoff_offered: false,
+    handoff_state: 'NOT_READY',
     booking_case_id: null,
     booking_submitted_at: null,
   };
@@ -57,7 +59,11 @@ function normalizeSession(session: LocalSession): LocalSession {
   const issueId = session.currentIssueId || Object.keys(session.issues || {})[0] || newIssue(new Date(session.createdAt).toISOString()).issue_id;
   const existingIssues = session.issues || {};
   const issue = existingIssues[issueId] || newIssue(session.createdAt, issueId);
-  return { ...session, currentIssueId: issueId, issues: { ...existingIssues, [issueId]: issue }, bookingCases: session.bookingCases || {} };
+  const normalizedIssues = Object.fromEntries(Object.entries({ ...existingIssues, [issueId]: issue }).map(([id, item]) => [id, {
+    ...item,
+    handoff_state: item.handoff_state || (item.handoff_offered ? 'OFFERED' : 'NOT_READY'),
+  }])) as Record<string, IssueLifecycle>;
+  return { ...session, currentIssueId: issueId, issues: normalizedIssues, bookingCases: session.bookingCases || {} };
 }
 
 function id() {
@@ -134,10 +140,10 @@ export async function listMessages(sessionId = SINGLE_SESSION_ID) {
   return normalized.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function addMessage(sessionId: string, role: LocalRole, content: string, issueId?: string) {
+export async function addMessage(sessionId: string, role: LocalRole, content: string, issueId?: string, options: { bookingCta?: boolean } = {}) {
   const now = new Date().toISOString();
   const session = await getSession(sessionId);
-  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now, issueId: issueId || session?.currentIssueId || 'issue-legacy' };
+  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now, issueId: issueId || session?.currentIssueId || 'issue-legacy', ...(options.bookingCta === undefined ? {} : { bookingCta: options.bookingCta }) };
   const db = await openDb();
   const transaction = db.transaction(['messages', 'sessions'], 'readwrite');
   transaction.objectStore('messages').put(message);
@@ -179,6 +185,7 @@ export function issueFromAnalysis(analysis: ConversationAnalysis, startedAt = ne
     minimum_sufficient_judgment: analysis.minimum_sufficient_judgment,
     handoff_ready: analysis.handoff_ready,
     handoff_offered: analysis.handoff_offered,
+    handoff_state: analysis.handoff_state,
     booking_case_id: null,
     booking_submitted_at: null,
   };
@@ -188,7 +195,7 @@ export async function markIssueBookingSubmitted(sessionId: string, issueId: stri
   const session = await getSession(sessionId);
   if (!session) return;
   const existing = session.issues[issueId] || newIssue(snapshot.submitted_at, issueId);
-  const issue: IssueLifecycle = { ...existing, status: 'BOOKING_SUBMITTED', booking_case_id: snapshot.booking_case_id, booking_submitted_at: snapshot.submitted_at, handoff_offered: true };
+  const issue: IssueLifecycle = { ...existing, status: 'BOOKING_SUBMITTED', booking_case_id: snapshot.booking_case_id, booking_submitted_at: snapshot.submitted_at, handoff_offered: true, handoff_state: 'ACCEPTED' };
   await saveSessionLifecycle(sessionId, { currentIssueId: issueId, issues: { ...session.issues, [issueId]: issue } });
   const updated = await getSession(sessionId);
   if (!updated) return;

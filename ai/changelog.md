@@ -1,5 +1,12 @@
 # AI 规则版本记录
 
+## v1.6.1 · 多话题切换与 Handoff 状态污染修复
+
+- 新增 `Conversation Control Intent` 和 `Current Issue Resolver`，先处理换话题、拒绝真人和新困扰，再进入当前 Issue 导诊。
+- 明确换话题会暂停旧 Issue；新 Issue 不继承旧 Issue 的 Handoff、预约按钮或诊断充分度。
+- 增加 `AWAITING_TOPIC` 和 `PAUSED` 生命周期状态，拒绝真人后继续 AI 支持且不重复推销。
+- 预约 CTA 绑定 assistant 消息所属 Issue，旧消息按钮可保留，新 Issue 不会被旧状态污染。
+
 ## v1.6.0 · Issue 生命周期与预约数据边界
 
 - 新增当前 Issue 生命周期：新困扰独立计数，主动真人交接至少经过 3 次有效表达且满足最低充分判断。

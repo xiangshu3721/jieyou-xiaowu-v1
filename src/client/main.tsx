@@ -125,8 +125,8 @@ function ChatPage() {
   function issuePayload(currentSession: LocalSession | null = session) {
     if (!currentSession) return undefined;
     const issue = currentSession.issues[currentSession.currentIssueId];
-    if (!issue) return { issue_id: currentSession.currentIssueId, status: 'ACTIVE' as const, topic_tags: [], handoff_offered: false, booking_case_id: null };
-    return { issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags, handoff_offered: issue.handoff_offered, booking_case_id: issue.booking_case_id };
+    if (!issue) return { issue_id: currentSession.currentIssueId, status: 'ACTIVE' as const, topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' as const, booking_case_id: null };
+    return { issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags, handoff_offered: issue.handoff_offered, handoff_state: issue.handoff_state, booking_case_id: issue.booking_case_id };
   }
 
   function messagePayload(message: LocalMessage) {
@@ -283,11 +283,15 @@ function ChatPage() {
       }
       const previousIssue = session.issues[result.analysis.current_issue_id];
       const nextIssue: IssueLifecycle = { ...issueFromAnalysis(result.analysis, previousIssue?.started_at), booking_case_id: previousIssue?.booking_case_id || null, booking_submitted_at: previousIssue?.booking_submitted_at || null };
-      const nextIssues = { ...session.issues, [nextIssue.issue_id]: nextIssue };
+      const nextIssues = { ...session.issues };
+      if (result.analysis.previous_issue_id && nextIssues[result.analysis.previous_issue_id] && nextIssues[result.analysis.previous_issue_id].status !== 'BOOKING_SUBMITTED') {
+        nextIssues[result.analysis.previous_issue_id] = { ...nextIssues[result.analysis.previous_issue_id], status: 'PAUSED' };
+      }
+      nextIssues[nextIssue.issue_id] = nextIssue;
       await saveSessionLifecycle(session.id, { currentIssueId: nextIssue.issue_id, issues: nextIssues });
       await saveSessionUnderstanding(session.id, result.analysis);
       setSession((current) => current ? { ...current, currentIssueId: nextIssue.issue_id, issues: nextIssues, understanding: result.analysis } : current);
-      const assistant = await addMessage(session.id, 'assistant', result.reply, nextIssue.issue_id);
+      const assistant = await addMessage(session.id, 'assistant', result.reply, nextIssue.issue_id, { bookingCta: result.analysis.show_booking_button });
       messagesRef.current = [...messagesRef.current, assistant];
       const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
       learningTrackerRef.current.recordAssistant(result.reply);
@@ -335,7 +339,7 @@ function ChatPage() {
           <p>情绪、情感、工作、家庭等困扰，都可以问我，我会陪着你一起</p>
         </section>
         {messages.length > 0 && <section className="message-stream" aria-live="polite">
-          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && hasHumanServiceCta(message.content) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
+          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}

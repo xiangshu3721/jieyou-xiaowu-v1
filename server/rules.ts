@@ -2,6 +2,7 @@ import type {
   AssessmentRecommendation,
   Complexity,
   ConversationAnalysis,
+  ConversationControlIntent,
   ConversationState,
   IssueStatus,
   ProblemMap,
@@ -16,7 +17,7 @@ const topicRules: Array<[TopicCode, string[]]> = [
   ['EMOTION', ['焦虑', '内耗', '孤独', '压力', '低落', '崩溃', '疲惫', '情绪', '睡不着', '失眠', '委屈', '难受', '哭']],
   ['CAREER', ['工作', '职场', '职业', '求职', '转型', '创业', '事业', '同事', '领导', '辞职', '项目', '面试']],
   ['MONEY', ['收入', '钱', '金钱', '财务', '债务', '房贷', '消费', '赚钱', '经济压力', '借贷']],
-  ['INTIMACY', ['恋爱', '伴侣', '对象', '婚姻', '结婚', '分手', '暧昧', '亲密关系', '回消息', '被抛弃']],
+  ['INTIMACY', ['恋爱', '感情', '情感关系', '伴侣', '对象', '婚姻', '结婚', '分手', '暧昧', '亲密关系', '回消息', '被抛弃']],
   ['FAMILY', ['父母', '爸爸', '妈妈', '家人', '家庭', '原生家庭', '童年', '家暴', '边界']],
   ['PARENTING', ['孩子', '亲子', '教育', '育儿', '女儿', '儿子', '上学', '养育']],
   ['SELF_KNOWLEDGE', ['自我', '成长', '价值感', '意义', '认识自己', '自我怀疑', '人格']],
@@ -89,6 +90,7 @@ export interface IssueAnalysisOptions {
   previousTopics?: TopicCode[];
   newIssueDetected?: boolean;
   newIssueConfidence?: number;
+  controlIntent?: ConversationControlIntent;
 }
 
 function userTurnCountFromContext(contextText: string) {
@@ -115,8 +117,8 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
     || (/(?:辞职|换工作|求职)/.test(latest) && previousTopicSet.has('CAREER'))
     || (/(?:债务|房贷)/.test(latest) && previousTopicSet.has('MONEY'));
   const strongNewDomain = strongNewTopic && !strongTopicAlreadyInIssue;
-  if (explicitSwitch && (novelTopics.length > 0 || strongNewDomain)) return { detected: true, confidence: 0.98 };
-  if ((novelTopics.length > 0 || strongNewDomain) && !continuationSignals) return { detected: true, confidence: 0.82 };
+  if (explicitSwitch) return { detected: true, confidence: 0.98 };
+  if ((novelTopics.length > 0 || strongNewDomain) && (strongNewDomain || !continuationSignals)) return { detected: true, confidence: 0.82 };
   return { detected: false, confidence: explicitSwitch ? 0.35 : 0.12 };
 }
 
@@ -547,6 +549,78 @@ export function analyzeConversation(latestText: string, contextText = '', option
     user_turn_count: userTurnCount,
     issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : issueStatus,
     handoff_offered: handoffWasOffered || handoffReady,
+    control_intent: options.controlIntent,
+  };
+}
+
+export function resetForAwaitingTopic(analysis: ConversationAnalysis, previousIssueId: string | null): ConversationAnalysis {
+  return {
+    ...analysis,
+    problem_map: {
+      main_issue: null,
+      issue_types: [],
+      scene_summary: null,
+      onset_duration: null,
+      frequency: null,
+      severity_score: null,
+      functional_impacts: [],
+      known_triggers: [],
+      attempts: [],
+      user_goal: null,
+    },
+    information_gaps: [],
+    assessment: { needed: false, recommended_tool: null, reason: null },
+    complexity: 'LIGHT',
+    diagnostic_sufficiency: 0,
+    routing: 'AI_SUPPORT',
+    depth_level: 'D0',
+    next_question: null,
+    conversation_mode: 'LISTEN',
+    response_goal: 'LISTEN',
+    problem_clarity: 0,
+    severity_level: 'UNKNOWN',
+    ai_help_value: 1,
+    human_help_value: 0,
+    handoff_state: 'NOT_READY',
+    handoff_mode: 'NONE',
+    minimum_sufficient_judgment: false,
+    human_intent: 'NOT_EXPLICIT',
+    ai_can_help_now: true,
+    ai_further_value: 'HIGH',
+    human_help_level: 'LOW',
+    reply_length: 'SHORT',
+    ask_question: false,
+    no_more_questions: true,
+    show_booking_button: false,
+    booking_button_text: null,
+    booking_summary_ready: false,
+    handoff_ready: false,
+    conversation_state: 'LISTENING',
+    primary_topic: 'OTHER',
+    secondary_topics: [],
+    user_intent: 'UNKNOWN',
+    confirmed_facts: [],
+    confirmed_goal: null,
+    tentative_hypotheses: [],
+    support_provided: [],
+    support_feedback: null,
+    routing_state: 'AI_SELF_HELP',
+    booking_preference: 'NOT_EXPRESSED',
+    safety_status: 'NO_SIGNAL_DETECTED',
+    routing_reason: '用户想换个话题，等待新的困扰',
+    reply_strategy: '自然邀请用户开始新的话题',
+    tags: [],
+    route: 'self_help',
+    safety: 'normal',
+    reasons: [],
+    new_issue_detected: true,
+    new_issue_confidence: 1,
+    user_turn_count: 0,
+    issue_status: 'AWAITING_TOPIC',
+    handoff_offered: false,
+    control_intent: 'SWITCH_TOPIC',
+    issue_action: 'CREATE_NEW',
+    previous_issue_id: previousIssueId,
   };
 }
 

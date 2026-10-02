@@ -46,7 +46,9 @@ export type SeverityLevel = 'LOW' | 'MODERATE' | 'MODERATE_HIGH' | 'HIGH' | 'UNK
 export type HandoffMode = 'NONE' | 'DIRECT_HANDOFF' | 'QUICK_HANDOFF';
 export type HumanIntentLevel = 'EXPLICIT' | 'NOT_EXPLICIT' | 'DECLINED';
 export type ValueLevel = 'HIGH' | 'MEDIUM' | 'LOW';
-export type IssueStatus = 'ACTIVE' | 'HANDOFF_OFFERED' | 'BOOKING_SUBMITTED' | 'CLOSED';
+export type IssueStatus = 'ACTIVE' | 'HANDOFF_OFFERED' | 'BOOKING_SUBMITTED' | 'PAUSED' | 'AWAITING_TOPIC' | 'CLOSED';
+export type ConversationControlIntent = 'SWITCH_TOPIC' | 'CONTINUE_CURRENT_TOPIC' | 'DECLINE_HANDOFF' | 'ACCEPT_HANDOFF' | 'NEW_ISSUE' | 'CLOSE_TOPIC' | 'GENERAL_CHAT';
+export type IssueAction = 'CREATE_NEW' | 'CONTINUE_CURRENT';
 
 export interface ProblemMap {
   main_issue: string | null;
@@ -89,6 +91,7 @@ export interface IssueLifecycle {
   minimum_sufficient_judgment: boolean;
   handoff_ready: boolean;
   handoff_offered: boolean;
+  handoff_state: HumanHandoffState;
   booking_case_id: string | null;
   booking_submitted_at: string | null;
 }
@@ -165,6 +168,9 @@ export interface ConversationAnalysis {
   user_turn_count: number;
   issue_status: IssueStatus;
   handoff_offered: boolean;
+  control_intent?: ConversationControlIntent;
+  issue_action?: IssueAction;
+  previous_issue_id?: string | null;
 }
 
 export interface ChatResponse {

@@ -26,7 +26,7 @@ const value = (key: string, fallback = '') => process.env[key] || fallback;
 export const config = {
   rootDir,
   port: Number(value('PORT', '8787')),
-  promptVersion: value('PROMPT_VERSION', 'v1.6.0'),
+  promptVersion: value('PROMPT_VERSION', 'v1.6.1'),
   deepseek: {
     apiKey: value('DEEPSEEK_API_KEY'),
     model: value('DEEPSEEK_MODEL', 'deepseek-chat'),
