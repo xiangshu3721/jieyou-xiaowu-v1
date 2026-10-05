@@ -5,10 +5,10 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const envId = 'littlemo-d2gy2ecx0dd102163';
+const envId = 'root-journey-prod-d4d7pzd0a8f805';
 const functionName = 'jieyou-http-api';
 const servicePath = 'jieyou-http-api';
-const serviceUrl = 'https://littlemo-d2gy2ecx0dd102163-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api';
+const serviceUrl = 'https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api';
 const functionDir = path.join(root, 'cloudbase/functions/api');
 const requiredKeys = [
   'DEEPSEEK_API_KEY',
@@ -19,7 +19,6 @@ const requiredKeys = [
   'FEISHU_APP_TOKEN',
   'FEISHU_TABLE_ID',
   'FEISHU_BASE_URL',
-  'CLOUDBASE_APIKEY',
   'DEV_TOKEN',
 ];
 
@@ -62,7 +61,10 @@ const missing = requiredKeys.filter((key) => !values[key]);
 if (missing.length) throw new Error(`.env.local 缺少 CloudBase 生产变量：${missing.join(', ')}`);
 
 const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, values[key]]));
-envVariables.CLOUDBASE_ENV_ID = values.CLOUDBASE_ENV_ID || envId;
+// root-journey-prod currently has no PostgreSQL. Do not send the old
+// littlemo environment API key to the new environment; learning storage
+// remains unavailable until a root-scoped key and database are configured.
+envVariables.CLOUDBASE_ENV_ID = envId;
 if (values.PROMPT_VERSION) envVariables.PROMPT_VERSION = values.PROMPT_VERSION;
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'jieyou-cloudbase-'));
@@ -93,12 +95,12 @@ try {
   functionArgs.push('--json');
   const deployOutput = await runCapture(tcb, functionArgs, tempDir);
   process.stdout.write(deployOutput);
-  const servicesOutput = await runCapture(tcb, ['service', 'list', '--json'], root);
+  const servicesOutput = await runCapture(tcb, ['service', 'list', '--env-id', envId, '--json'], root);
   const servicesJsonStart = servicesOutput.indexOf('{');
   const services = servicesJsonStart >= 0 ? JSON.parse(servicesOutput.slice(servicesJsonStart)) : { data: [] };
   const hasService = (services.data || []).some((item) => item.path === `/${servicePath}` && item.name === functionName);
   if (!hasService) {
-    await run(tcb, ['service', 'create', '--service-path', servicePath, '--function', functionName, '--json'], root);
+    await run(tcb, ['service', 'create', '--env-id', envId, '--service-path', servicePath, '--function', functionName, '--json'], root);
   }
   const apiBase = serviceUrl;
   await run('npm', ['exec', '--', 'vite', 'build'], root, { ...process.env, VITE_API_BASE_URL: apiBase });

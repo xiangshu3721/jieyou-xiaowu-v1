@@ -7,7 +7,7 @@ import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const appBaseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '');
-const secureSpeechUrl = 'https://littlemo-d2gy2ecx0dd102163-1304965105.tcloudbaseapp.com/';
+const secureSpeechUrl = 'https://root-journey-prod-d4d7pzd0a8f805-1304965105.tcloudbaseapp.com/';
 
 function appPath(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
@@ -37,6 +37,48 @@ function Header({ onHome }: { onHome?: () => void }) {
     <button className="brand brand-centered" onClick={onHome}>解忧小屋<span>先说说心事</span></button>
     <span className="mini-program-mark" aria-hidden="true"><b>•••</b><i /></span>
   </header>;
+}
+
+function HomePage() {
+  function openChat() {
+    location.href = appPath('/chat');
+  }
+
+  return <div className="app-shell home-shell">
+    <main className="home-page">
+      <header className="home-nav">
+        <div className="home-brand">
+          <span className="home-brand-mark" aria-hidden="true">解<br />忧</span>
+          <span className="home-brand-copy"><strong>解忧小屋</strong><small>先说说心事</small></span>
+        </div>
+        <span className="home-nav-note">AI 倾听 · 温和陪伴</span>
+      </header>
+
+      <section className="home-hero">
+        <div className="home-copy">
+          <p className="home-eyebrow"><span aria-hidden="true" /> 一个可以慢慢说话的地方</p>
+          <h1>先照顾好自己的心，<br /><em>再往前走。</em></h1>
+          <p className="home-intro">有些困扰不必急着想明白。你可以从最近的一件小事说起，我会陪你把心里的结，慢慢理出一点头绪。</p>
+          <button className="home-cta" type="button" onClick={openChat}>开启解忧小屋 <span aria-hidden="true">→</span></button>
+          <p className="home-note">不必准备答案&nbsp; · &nbsp;对话仅保存在当前浏览器</p>
+        </div>
+
+        <div className="home-scene" aria-hidden="true">
+          <div className="home-scene-halo" />
+          <div className="home-scene-card">
+            <div className="home-scene-badge">解<br />忧</div>
+            <p className="home-scene-kicker">先说说心事</p>
+            <p className="home-scene-quote">“最近，有点累。”<br /><span>从这一句开始，也很好。</span></p>
+            <div className="home-scene-tags"><span>AI 倾听</span><span>温和陪伴</span></div>
+          </div>
+          <span className="home-float-note home-float-note-one">给自己一点空间</span>
+          <span className="home-float-note home-float-note-two">慢慢来，也没关系</span>
+        </div>
+      </section>
+
+      <footer className="home-footer"><span>情绪 · 情感 · 工作 · 家庭</span><span>随时回来，继续说</span></footer>
+    </main>
+  </div>;
 }
 
 type SendingPhase = 'listening' | 'replying';
@@ -263,7 +305,7 @@ function ChatPage() {
   }
 
   useEffect(() => {
-    history.replaceState(null, '', appPath('/'));
+    history.replaceState(null, '', appPath('/chat'));
     (async () => {
       const mainSession = await getOrCreateSession();
       setSession(mainSession);
@@ -434,7 +476,7 @@ function ChatPage() {
           <textarea id="chat-input" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="自由表达你的困惑，别有压力" rows={3} />
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
-        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><span>对话仅保存在当前浏览器</span></div>
+        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span><a className="asva-entry" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a></div></div>
         <label className="learning-consent"><input type="checkbox" checked={learningConsent} onChange={(event) => changeLearningConsent(event.target.checked)} /><span>允许匿名使用本次对话帮助改进解忧小屋</span></label>
         {learningConsent && <button className="learning-delete" type="button" onClick={() => void clearCurrentConversation()}>撤回授权并删除本次学习数据</button>}
       </div>
@@ -507,9 +549,9 @@ function BookingPage() {
     try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); const original = generatedSummaryRef.current.trim(); const edited = original && original !== summary.trim(); const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length); const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0; if (edited) emitBookingLearning('summary_edited', ratio); const result = await api<{ requestId: string; recordId?: string; status: string }>('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: session?.currentIssueId }) }); if (session) { const submittedAt = new Date().toISOString(); const snapshot: BookingCaseSnapshot = { booking_case_id: result.recordId || result.requestId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null }; await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot); } location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
-  function goBack() { location.href = appPath('/'); }
+  function goBack() { location.href = appPath('/chat'); }
 
-  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>把想获得的帮助<br /><em>说得更清楚一点。</em></h1><p>我们会把你确认后的信息交给运营人员，由人工在飞书中分配合适的导师并联系你。</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 会根据你明确说过的内容自动整理，你可以直接修改、删除或重新填写。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
+  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>越详细，<br /><em>越容易被支持</em></h1><p>别着急，慢慢写，我们会安排导师尽快来帮你的</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 会根据你明确说过的内容自动整理，你可以直接修改、删除或重新填写。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
 }
 
 function Field({ label, value, onChange, onBlur, placeholder }: { label: string; value: string; onChange: (value: string) => void; onBlur?: () => void; placeholder: string }) { return <div className="field"><label>{label}</label><input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} placeholder={placeholder} /></div>; }
@@ -520,7 +562,7 @@ function ResultPage() {
   const [error, setError] = useState('');
   useEffect(() => { if (!requestId) return; void api<typeof status>(`/api/appointments/${encodeURIComponent(requestId)}/status`).then(setStatus).catch((err) => setError(err instanceof Error ? err.message : '暂时无法查询状态')); }, [requestId]);
   const submitted = status?.status === 'submitted' || status?.status === '待分配' || status?.status === 'assigned' || status?.status === 'contacted' || status?.status === 'received';
-  return <div className="app-shell"><main className="result-page"><div className={`result-icon ${submitted ? 'ok' : 'pending'}`}>{submitted ? '✓' : '…'}</div><p className="eyebrow">预约状态</p><h1>{submitted ? '预约信息已真实提交。' : '正在确认提交状态。'}</h1><p className="result-copy">{submitted ? '后续由运营人员在飞书中人工分配导师并联系你。这里不会自动匹配，也不会要求你重复描述。' : '系统正在确认飞书写入结果，请保留下面的预约编号。'}</p>{requestId && <div className="request-number"><span>预约编号</span><strong>{requestId}</strong></div>}{status?.assignedMentor && <p className="status-detail">已分配导师：{status.assignedMentor}</p>}{status?.result && <p className="status-detail">接待信息：{status.result}</p>}{error && <div className="inline-error" role="alert">{error}</div>}<div className="result-actions"><button className="primary-button" onClick={() => { location.href = appPath('/'); }}>回到解忧小屋</button></div></main></div>;
+  return <div className="app-shell"><main className="result-page"><div className={`result-icon ${submitted ? 'ok' : 'pending'}`}>{submitted ? '✓' : '…'}</div><p className="eyebrow">预约状态</p><h1>{submitted ? '预约信息已真实提交。' : '正在确认提交状态。'}</h1><p className="result-copy">{submitted ? '后续由运营人员在飞书中人工分配导师并联系你。这里不会自动匹配，也不会要求你重复描述。' : '系统正在确认飞书写入结果，请保留下面的预约编号。'}</p>{requestId && <div className="request-number"><span>预约编号</span><strong>{requestId}</strong></div>}{status?.assignedMentor && <p className="status-detail">已分配导师：{status.assignedMentor}</p>}{status?.result && <p className="status-detail">接待信息：{status.result}</p>}{error && <div className="inline-error" role="alert">{error}</div>}<div className="result-actions"><button className="primary-button" onClick={() => { location.href = appPath('/chat'); }}>回到解忧小屋</button></div></main></div>;
 }
 
 function DevPage() {
@@ -572,6 +614,6 @@ function LearningPage() {
   return <div className="app-shell"><Header onHome={() => { location.href = appPath('/'); }} /><main className="dev-page learning-page"><div className="page-heading"><p className="eyebrow">V1.5A 学习数据中心</p><h1>从真实反馈里，<br /><em>慢慢变得更好。</em></h1><p>这里仅查看匿名结构化指标、用户授权后的脱敏复盘和导师反馈。候选规则必须人工审核，不会自动改线上规则。</p></div><section className="dev-card"><label>后台口令<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="DEV_TOKEN" /></label><div className="learning-actions"><button className="primary-button" onClick={() => void loadDashboard()}>读取学习看板</button><button className="secondary-button" onClick={() => void runInsights()} disabled={!dashboard}>运行近期洞察</button></div>{dashboard && <><div className="learning-meta">数据模式：{dashboard.data_mode} · Prompt：{dashboard.prompt_version} · 生成于：{new Date(dashboard.generated_at).toLocaleString()}</div><div className="dev-grid learning-grid">{Object.entries(dashboard.totals).map(([key, value]) => <div key={key}><span>{({ sessions: '会话数', average_turn_count: '平均轮数', average_question_count: '平均提问数', repeated_question_rate: '重复提问率', user_abandon_rate: '中途离开率', handoff_rate: '交接率', booking_click_rate: '预约点击率', summary_edit_rate: '摘要修改率', assessment_completion_rate: '测评完成率', reviewer_count: '复盘数', mentor_feedback_count: '导师反馈数' } as Record<string, string>)[key] || key}</span><strong>{typeof value === 'number' && key.endsWith('rate') ? `${Math.round(value * 100)}%` : value}</strong></div>)}</div></>}</section>{dashboard && <section className="dev-card learning-list"><h2>近期洞察</h2>{dashboard.recent_insights.length ? dashboard.recent_insights.map((insight) => <article key={insight.insight_id}><strong>{insight.observation}</strong><p>样本 {insight.sample_size} · 建议：{insight.candidate_action}</p></article>) : <p className="learning-empty">目前样本不足，暂不生成洞察。</p>}<h2>候选规则</h2>{dashboard.candidate_rules.length ? dashboard.candidate_rules.map((rule) => <article key={rule.candidate_id}><strong>{rule.status}</strong><p>{rule.observed_problem}</p><p>拟议：{rule.proposed_change}</p><small>回归：{rule.required_tests.join('、')}</small></article>) : <p className="learning-empty">还没有待人工审核的候选规则。</p>}</section>}<section className="dev-card"><h2>导师反馈</h2><div className="learning-form-grid"><label>预约编号<input value={requestId} onChange={(event) => setRequestId(event.target.value)} placeholder="例如预约编号" /></label><label>AI 判断<select value={feedback.judgment_accuracy} onChange={(event) => setFeedback({ ...feedback, judgment_accuracy: event.target.value })}><option value="ACCURATE">准确</option><option value="PARTIAL">部分准确</option><option value="INACCURATE">不准确</option></select></label><label>摘要是否有帮助<select value={feedback.summary_helpfulness} onChange={(event) => setFeedback({ ...feedback, summary_helpfulness: event.target.value })}><option value="HELPFUL">有帮助</option><option value="NEUTRAL">一般</option><option value="NOT_HELPFUL">没帮助</option></select></label><label>交接时机<select value={feedback.handoff_timing} onChange={(event) => setFeedback({ ...feedback, handoff_timing: event.target.value })}><option value="APPROPRIATE">合适</option><option value="TOO_EARLY">太早</option><option value="TOO_LATE">太晚</option></select></label><label>AI 是否还能继续<select value={feedback.ai_could_continue} onChange={(event) => setFeedback({ ...feedback, ai_could_continue: event.target.value })}><option value="NO">不能</option><option value="YES">可以</option><option value="UNCERTAIN">不确定</option></select></label></div><label className="learning-check"><input type="checkbox" checked={feedback.missed_core_problem} onChange={(event) => setFeedback({ ...feedback, missed_core_problem: event.target.checked })} />AI 是否漏掉了核心问题</label><label>标签（用逗号分隔）<input value={feedback.tags} onChange={(event) => setFeedback({ ...feedback, tags: event.target.value })} placeholder="例如：摘要准确、交接太早" /></label><label>备注<textarea value={feedback.note} onChange={(event) => setFeedback({ ...feedback, note: event.target.value })} rows={3} placeholder="只记录必要的复盘信息" /></label><button className="primary-button" disabled={!requestId.trim()} onClick={() => void saveFeedback()}>保存导师反馈</button></section>{message && <div className="test-result">{message}</div>}{error && <div className="inline-error" role="alert">{error}</div>}</main></div>;
 }
 
-function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; return <ChatPage />; }
+function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; if (path === '/chat') return <ChatPage />; return <HomePage />; }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
