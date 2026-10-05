@@ -57,7 +57,7 @@ function HomePage() {
       <section className="home-hero">
         <div className="home-copy">
           <p className="home-eyebrow"><span aria-hidden="true" /> 一个可以慢慢说话的地方</p>
-          <h1>先照顾好自己的心，<br /><em>再往前走。</em></h1>
+          <h1><span className="home-heading-line">先照顾好自己的心，</span><br /><em>再往前走。</em></h1>
           <p className="home-intro">有些困扰不必急着想明白。你可以从最近的一件小事说起，我会陪你把心里的结，慢慢理出一点头绪。</p>
           <button className="home-cta" type="button" onClick={openChat}>开启解忧小屋 <span aria-hidden="true">→</span></button>
           <p className="home-note">不必准备答案&nbsp; · &nbsp;对话仅保存在当前浏览器</p>

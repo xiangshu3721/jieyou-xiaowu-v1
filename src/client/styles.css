@@ -65,7 +65,8 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .home-copy { max-width: 570px; }
 .home-eyebrow { display: flex; align-items: center; gap: 9px; margin: 0 0 20px; color: #6b907e; font-size: 13px; letter-spacing: .12em; }
 .home-eyebrow span { width: 26px; height: 1px; background: #8ab29d; }
-.home-copy h1 { margin: 0; color: #28483e; font-family: Georgia, "Songti SC", serif; font-size: clamp(44px, 5.8vw, 76px); font-weight: 400; letter-spacing: -.08em; line-height: 1.12; }
+.home-copy h1 { margin: 0; color: #28483e; font-family: Georgia, "Songti SC", serif; font-size: clamp(42px, 4.8vw, 64px); font-weight: 400; letter-spacing: -.08em; line-height: 1.12; }
+.home-heading-line { white-space: nowrap; }
 .home-copy h1 em { color: #4f8777; font-style: normal; }
 .home-intro { max-width: 31em; margin: 25px 0 30px; color: #5f756c; font-size: 16px; line-height: 1.9; }
 .home-cta { display: inline-flex; align-items: center; gap: 18px; padding: 14px 22px 14px 24px; border: 1px solid #356c5b; border-radius: 999px; background: #356c5b; color: #fff; font-size: 15px; box-shadow: 0 12px 24px rgba(53, 108, 91, .16); transition: transform .18s, background .18s, box-shadow .18s; }
@@ -95,7 +96,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .home-nav-note { font-size: 10px; letter-spacing: .04em; }
   .home-hero { display: block; min-height: auto; padding: 62px 8px 38px; }
   .home-eyebrow { margin-bottom: 17px; font-size: 11px; }
-  .home-copy h1 { font-size: clamp(39px, 11vw, 56px); line-height: 1.17; }
+  .home-copy h1 { font-size: clamp(36px, 10vw, 52px); line-height: 1.17; letter-spacing: -.1em; }
   .home-intro { margin: 20px 0 24px; font-size: 14px; line-height: 1.8; }
   .home-cta { padding: 13px 19px 13px 21px; font-size: 14px; }
   .home-note { font-size: 10px; }
