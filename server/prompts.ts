@@ -20,6 +20,8 @@ const files = {
   issueLifecycle: 'issue-lifecycle-rules.md',
   summary: 'booking-summary.md',
   reviewer: 'conversation-reviewer.md',
+  growthEvent: 'growth-event-extractor.md',
+  growthInsight: 'growth-insight.md',
 };
 
 export const prompts = {
@@ -29,9 +31,11 @@ export const prompts = {
   safety: readRuleFile(files.safety),
   summary: readRuleFile(files.summary),
   reviewer: readRuleFile(files.reviewer),
+  growthEvent: readRuleFile(files.growthEvent),
+  growthInsight: readRuleFile(files.growthInsight),
 };
 
 export const promptMetadata = {
   version: config.promptVersion,
-  files: [...Object.values(files).map((name) => path.join('ai', name)), path.join('ai', 'test-cases.json'), path.join('ai', 'changelog.md')],
+  files: [...Object.values(files).map((name) => path.join('ai', name)), path.join('ai', 'test-cases.json'), path.join('ai', 'growth-test-cases.json'), path.join('ai', 'changelog.md')],
 };

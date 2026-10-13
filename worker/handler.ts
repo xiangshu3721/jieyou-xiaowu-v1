@@ -4,6 +4,8 @@ import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueCon
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
+import { createCloudBaseGrowthStore } from './growth-store.js';
+import { clearGrowthWatch, deleteGrowthMemory, generateGrowthSnapshot, recordGrowthEvent, recordGrowthFeedback, recentGrowth, saveGrowthWatch } from '../server/growth-service.js';
 import { promptMetadata, prompts } from './prompts.js';
 
 export interface WorkerEnv {
@@ -20,6 +22,8 @@ export interface WorkerEnv {
   CLOUDBASE_APIKEY?: string;
   CLOUDBASE_ENV_ID?: string;
   CLOUDBASE_API_ENDPOINT?: string;
+  GROWTH_TABLE_PREFIX?: string;
+  LEARNING_ENABLED?: string;
   DB?: D1Database;
 }
 
@@ -47,6 +51,7 @@ const jsonHeaders = {
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
 let feishuTokenCache: { token: string; expiresAt: number } | null = null;
 let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseLearningStore> } | null = null;
+let growthStoreCache: { key: string; store: ReturnType<typeof createCloudBaseGrowthStore> } | null = null;
 
 function json(status: number, body: unknown, request?: Request) {
   const origin = request?.headers.get('Origin');
@@ -116,16 +121,26 @@ function configurationStatus(env: WorkerEnv) {
     deepseekConfigured: Boolean(config.deepseek.apiKey),
     feishuConfigured: Boolean(config.feishu.appId && config.feishu.appSecret && config.feishu.appToken && config.feishu.tableId),
     d1Configured: Boolean(env.DB),
-    learningConfigured: Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
+    learningConfigured: env.LEARNING_ENABLED !== 'false' && Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
+    growthConfigured: Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
     devConfigured: Boolean(env.DEV_TOKEN),
   };
 }
 
 function learningStoreFor(env: WorkerEnv) {
+  if (env.LEARNING_ENABLED === 'false') return null;
   const key = `${env.CLOUDBASE_ENV_ID || ''}:${env.CLOUDBASE_APIKEY || ''}`;
   if (learningStoreCache?.key === key) return learningStoreCache.store;
   const store = createCloudBaseLearningStore(env);
   learningStoreCache = { key, store };
+  return store;
+}
+
+function growthStoreFor(env: WorkerEnv) {
+  const key = `${env.CLOUDBASE_ENV_ID || ''}:${env.CLOUDBASE_APIKEY || ''}:${env.GROWTH_TABLE_PREFIX || ''}`;
+  if (growthStoreCache?.key === key) return growthStoreCache.store;
+  const store = createCloudBaseGrowthStore(env);
+  growthStoreCache = { key, store };
   return store;
 }
 
@@ -134,7 +149,7 @@ function clientKey(request: Request) {
 }
 
 function rateLimit(request: Request, pathname: string) {
-  if (!['/api/chat', '/api/booking-summary', '/api/appointments', '/api/learning/events', '/api/learning/review'].includes(pathname)) return null;
+  if (!['/api/chat', '/api/booking-summary', '/api/appointments', '/api/learning/events', '/api/learning/review', '/api/growth/events', '/api/growth/generate'].includes(pathname)) return null;
   const key = `${clientKey(request)}:${pathname}`;
   const now = Date.now();
   const current = requestCounts.get(key);
@@ -324,12 +339,12 @@ export async function handleApi(request: Request, env: WorkerEnv) {
   if (limited) return limited;
 
   if (request.method === 'GET' && url.pathname === '/api/health') {
-    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.7.0', ...configurationStatus(env) }, request);
+    return json(200, { ok: true, service: 'jieyou-xiaowu-v1', promptVersion: env.PROMPT_VERSION || 'v1.9.0', ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'GET' && url.pathname === '/api/dev/rules') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.7.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
+    return json(200, { promptMetadata: { ...promptMetadata, version: env.PROMPT_VERSION || 'v1.9.0' }, promptTexts: prompts, ...configurationStatus(env) }, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/learning/events') {
@@ -352,13 +367,13 @@ export async function handleApi(request: Request, env: WorkerEnv) {
 
   if (request.method === 'GET' && url.pathname === '/api/learning/dashboard') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    const result = await learningDashboard(learningStoreFor(env), env.PROMPT_VERSION || 'v1.7.0');
+    const result = await learningDashboard(learningStoreFor(env), env.PROMPT_VERSION || 'v1.9.0');
     return json(result.status, result.body, request);
   }
 
   if (request.method === 'POST' && url.pathname === '/api/learning/insights/run') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
-    const result = await runLearningInsights(learningStoreFor(env), env.PROMPT_VERSION || 'v1.7.0');
+    const result = await runLearningInsights(learningStoreFor(env), env.PROMPT_VERSION || 'v1.9.0');
     return json(result.status, result.body, request);
   }
 
@@ -366,6 +381,60 @@ export async function handleApi(request: Request, env: WorkerEnv) {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
     const body = await readBody(request);
     const result = await recordMentorFeedback(body, learningStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/growth/events') {
+    const body = await readBody(request);
+    const result = await recordGrowthEvent(body, growthStoreFor(env), (messages, temperature) => callDeepSeek(env, messages, temperature), prompts.growthEvent);
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/recent') {
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: url.searchParams.get('consent') === 'true' }, growthStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/admin') {
+    if (!isDevAuthorized(request, env)) return json(401, { error: '需要内部调试口令' }, request);
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: true }, growthStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/growth/generate') {
+    const body = await readBody(request);
+    const result = await generateGrowthSnapshot(body, growthStoreFor(env), (messages, temperature) => callDeepSeek(env, messages, temperature), prompts.growthInsight);
+    return json(result.status, result.body, request);
+  }
+
+  const growthFeedbackMatch = url.pathname.match(/^\/api\/growth\/insights\/([^/]+)\/feedback$/);
+  if (request.method === 'POST' && growthFeedbackMatch) {
+    const body = await readBody(request);
+    const result = await recordGrowthFeedback({ ...body, snapshotId: body.snapshotId || decodeURIComponent(growthFeedbackMatch[1]) }, growthStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/growth/watch') {
+    const body = await readBody(request);
+    const result = await saveGrowthWatch(body, growthStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/watch/active') {
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: url.searchParams.get('consent') === 'true' }, growthStoreFor(env));
+    if (result.status !== 200) return json(result.status, result.body, request);
+    return json(200, { ok: true, watch: (result.body as { watch?: unknown }).watch || null }, request);
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/growth/watch') {
+    const body = await readBody(request);
+    const result = await clearGrowthWatch(body, growthStoreFor(env));
+    return json(result.status, result.body, request);
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/growth/memory') {
+    const body = await readBody(request);
+    const result = await deleteGrowthMemory(body, growthStoreFor(env));
     return json(result.status, result.body, request);
   }
 
@@ -415,16 +484,26 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       });
       let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
       if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
-      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.7.0', model: 'safety-rule' }, request);
-      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.7.0', model: 'safety-rule' }, request);
-      if (resolution.awaiting_topic) return json(200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.7.0', model: 'control-rule' }, request);
-      if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.7.0', model: 'control-rule' }, request);
-      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
+      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
+      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
+      if (resolution.awaiting_topic) return json(200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
+      if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
+      let watchGuidance = '';
+      if (body.growthConsent === true && typeof body.growthId === 'string') {
+        const growthStore = growthStoreFor(env);
+        const watch = growthStore ? await growthStore.getActiveWatch(body.growthId.trim()) : null;
+        if (watch) {
+          const source = `${watch.title}${watch.description}`;
+          const relevant = source.split(/[，。；、：\s,.;:!?！？]+/).map((item) => item.trim()).filter((item) => item.length >= 2).some((item) => latestText.includes(item)) || (source.includes('焦虑') && /焦虑|紧张|担心/.test(latestText)) || (source.includes('睡') && /睡|失眠|熬夜/.test(latestText));
+          if (relevant) watchGuidance = `\n用户曾选择本周一起留意“${watch.title}”。只有在当前内容确实相关时，才自然地轻轻带到这个观察方向，不要提“观察项”或后台记忆，也不要强行引导。`;
+        }
+      }
+      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
-      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.7.0', model: apiConfig(env).deepseek.model }, request);
+      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
@@ -439,7 +518,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const scopedMessages = currentIssueId ? messagesForIssue(messages, currentIssueId) : messages;
       if (!scopedMessages.some((item) => item.role === 'user')) return json(400, { error: '没有可整理的聊天内容' }, request);
       const summary = await callDeepSeek(env, [{ role: 'system', content: prompts.summary }, { role: 'user', content: conversationText(scopedMessages.filter((item) => item.role === 'user')) }], 0.2);
-      return json(200, { summary, currentIssueId: currentIssueId || undefined, promptVersion: env.PROMPT_VERSION || 'v1.7.0' }, request);
+      return json(200, { summary, currentIssueId: currentIssueId || undefined, promptVersion: env.PROMPT_VERSION || 'v1.9.0' }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError ? error.message : '摘要暂时生成失败';
       return json(502, { error: message, code: 'SUMMARY_UNAVAILABLE' }, request);

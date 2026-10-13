@@ -5,22 +5,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const envId = 'root-journey-prod-d4d7pzd0a8f805';
-const functionName = 'jieyou-http-api';
-const servicePath = 'jieyou-http-api';
-const serviceUrl = 'https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api';
 const functionDir = path.join(root, 'cloudbase/functions/api');
-const requiredKeys = [
-  'DEEPSEEK_API_KEY',
-  'DEEPSEEK_MODEL',
-  'DEEPSEEK_BASE_URL',
-  'FEISHU_APP_ID',
-  'FEISHU_APP_SECRET',
-  'FEISHU_APP_TOKEN',
-  'FEISHU_TABLE_ID',
-  'FEISHU_BASE_URL',
-  'DEV_TOKEN',
-];
 
 function parseEnv(text) {
   const values = {};
@@ -57,15 +42,46 @@ function runCapture(command, args, cwd) {
 
 const envPath = path.join(root, '.env.local');
 const values = parseEnv(await readFile(envPath, 'utf8'));
-const missing = requiredKeys.filter((key) => !values[key]);
+function value(key, fallback = '') {
+  return process.env[key] || values[key] || fallback;
+}
+
+const envId = value('DEPLOY_ENV_ID', value('CLOUDBASE_ENV_ID', 'root-journey-prod-d4d7pzd0a8f805'));
+const functionName = value('DEPLOY_FUNCTION_NAME', 'jieyou-http-api');
+const servicePath = value('DEPLOY_SERVICE_PATH', functionName);
+const serviceDomain = value('DEPLOY_API_DOMAIN', `${envId}-1304965105.ap-shanghai.app.tcloudbase.com`);
+const serviceUrl = value('DEPLOY_API_BASE_URL', `https://${serviceDomain}/${servicePath}`);
+const hostingPath = value('DEPLOY_HOSTING_PATH');
+const feishuEnabled = value('DEPLOY_ENABLE_FEISHU', 'true') !== 'false';
+const requiredKeys = [
+  'DEEPSEEK_API_KEY',
+  'DEEPSEEK_MODEL',
+  'DEEPSEEK_BASE_URL',
+  'FEISHU_BASE_URL',
+  'DEV_TOKEN',
+  'CLOUDBASE_APIKEY',
+];
+if (feishuEnabled) requiredKeys.splice(3, 0, 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_APP_TOKEN', 'FEISHU_TABLE_ID');
+const missing = requiredKeys.filter((key) => !value(key));
 if (missing.length) throw new Error(`.env.local 缺少 CloudBase 生产变量：${missing.join(', ')}`);
 
-const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, values[key]]));
-// root-journey-prod currently has no PostgreSQL. Do not send the old
-// littlemo environment API key to the new environment; learning storage
-// remains unavailable until a root-scoped key and database are configured.
+const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, value(key)]));
 envVariables.CLOUDBASE_ENV_ID = envId;
-if (values.PROMPT_VERSION) envVariables.PROMPT_VERSION = values.PROMPT_VERSION;
+envVariables.LEARNING_ENABLED = value('DEPLOY_ENABLE_LEARNING', 'true') === 'false' ? 'false' : 'true';
+if (value('DEPLOY_GROWTH_TABLE_PREFIX')) envVariables.GROWTH_TABLE_PREFIX = value('DEPLOY_GROWTH_TABLE_PREFIX');
+if (value('PROMPT_VERSION')) envVariables.PROMPT_VERSION = value('PROMPT_VERSION');
+
+function tokenAudience(token) {
+  try {
+    const payload = JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+    return payload.aud || payload.project_id || '';
+  } catch {
+    return '';
+  }
+}
+
+const audience = tokenAudience(envVariables.CLOUDBASE_APIKEY);
+if (audience && audience !== envId) throw new Error(`CLOUDBASE_APIKEY 不属于目标环境 ${envId}`);
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'jieyou-cloudbase-'));
 try {
@@ -103,11 +119,19 @@ try {
     await run(tcb, ['service', 'create', '--env-id', envId, '--service-path', servicePath, '--function', functionName, '--json'], root);
   }
   const apiBase = serviceUrl;
-  await run('npm', ['exec', '--', 'vite', 'build'], root, { ...process.env, VITE_API_BASE_URL: apiBase });
+  await run('npm', ['run', 'build:pages'], root, {
+    ...process.env,
+    VITE_API_BASE_URL: apiBase,
+    VITE_PAGES_BASE: value('DEPLOY_PAGES_BASE', '/'),
+    VITE_GROWTH_NAMESPACE: value('DEPLOY_GROWTH_NAMESPACE', 'prod'),
+  });
   // CloudBase static hosting needs a fallback document for direct SPA routes.
   // Keep this as a generated artifact; never commit it as a second app entry.
   await copyFile(path.join(root, 'dist/index.html'), path.join(root, 'dist/404.html'));
-  await run(tcb, ['hosting', 'deploy', path.join(root, 'dist'), '--env-id', envId, '--verify', '--safe', '--json'], root);
+  const hostingArgs = ['hosting', 'deploy', path.join(root, 'dist')];
+  if (hostingPath) hostingArgs.push(hostingPath);
+  hostingArgs.push('--env-id', envId, '--verify', '--safe', '--json');
+  await run(tcb, hostingArgs, root);
   console.log(`CloudBase API base: ${apiBase}`);
 } finally {
   await rm(tempDir, { recursive: true, force: true });

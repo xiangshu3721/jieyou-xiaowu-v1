@@ -8,6 +8,8 @@ import naturalnessRules from '../ai/naturalness-rules.md?raw';
 import issueLifecycleRules from '../ai/issue-lifecycle-rules.md?raw';
 import bookingSummary from '../ai/booking-summary.md?raw';
 import conversationReviewer from '../ai/conversation-reviewer.md?raw';
+import growthEvent from '../ai/growth-event-extractor.md?raw';
+import growthInsight from '../ai/growth-insight.md?raw';
 
 const trim = (value: string) => value.trim();
 
@@ -18,6 +20,8 @@ export const prompts = {
   safety: trim(safetyRules),
   summary: trim(bookingSummary),
   reviewer: trim(conversationReviewer),
+  growthEvent: trim(growthEvent),
+  growthInsight: trim(growthInsight),
 };
 
 export const promptMetadata = {
@@ -32,7 +36,10 @@ export const promptMetadata = {
     'ai/issue-lifecycle-rules.md',
     'ai/booking-summary.md',
     'ai/conversation-reviewer.md',
+    'ai/growth-event-extractor.md',
+    'ai/growth-insight.md',
     'ai/test-cases.json',
+    'ai/growth-test-cases.json',
     'ai/changelog.md',
   ],
 };

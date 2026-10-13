@@ -1,0 +1,12 @@
+[
+  {"id":"TEST01","title":"默认不开启长期记录","turns":["我最近有点累。","先不用记录我的变化。"],"expect":{"growthConsent":"OFF","chatStillWorks":true}},
+  {"id":"TEST02","title":"少量对话不生成镜像","turns":["最近工作有点忙。","嗯，还好。"],"expect":{"snapshot":"INSUFFICIENT"}},
+  {"id":"TEST03","title":"三条结构化事件生成五卡快照","turns":["工作压力很大。","最近睡眠也受影响。","我想重新安排边界。"],"expect":{"cards":5}},
+  {"id":"TEST04","title":"同一主线合并","turns":["下班后还在想工作。","第二天也会反复想。"],"expect":{"duplicateEvent":"MERGED"}},
+  {"id":"TEST05","title":"跨话题保留多领域","turns":["工作压力让我很累。","和家人的沟通也有点难。"],"expect":{"topics":"MULTI"}},
+  {"id":"TEST06","title":"用户说不太像我","turns":["我最近开始看见自己的一个模式。","但这个回看不太像我。"],"expect":{"feedback":"INACCURATE"}},
+  {"id":"TEST07","title":"本周观察项","turns":["我想留意下班后的状态。","这周帮我观察。"],"expect":{"watch":"ACTIVE"}},
+  {"id":"TEST08","title":"观察项只在相关话题使用","turns":["我这周想留意下班后的状态。","今天又在下班后反复想工作。"],"expect":{"watchHint":"RELEVANT_ONLY"}},
+  {"id":"TEST09","title":"关闭后不再生成新事件","turns":["我先关闭长期记录。","今天又发生了一件事。"],"expect":{"newEvent":"BLOCKED"}},
+  {"id":"TEST10","title":"清空成长记忆不影响聊天","turns":["我想把最近的我清空。","我还想继续聊天。"],"expect":{"growthMemory":"DELETED","chat":"PRESERVED"}}
+]

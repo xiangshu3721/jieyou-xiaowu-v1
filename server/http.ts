@@ -10,9 +10,12 @@ import { getAppointmentState, saveAppointmentState } from './state.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
 import { FileLearningStore } from './learning-store.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from './learning-service.js';
+import { FileGrowthStore } from './growth-store.js';
+import { clearGrowthWatch, deleteGrowthMemory, generateGrowthSnapshot, recordGrowthEvent, recordGrowthFeedback, recentGrowth, saveGrowthWatch } from './growth-service.js';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 const learningStore = new FileLearningStore();
+const growthStore = new FileGrowthStore();
 
 function send(response: http.ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { ...jsonHeaders, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token', 'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS' });
@@ -97,6 +100,61 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     return send(response, result.status, result.body);
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/growth/events') {
+    const body = await readBody(request);
+    const result = await recordGrowthEvent(body, growthStore, callDeepSeek, prompts.growthEvent);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/recent') {
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: url.searchParams.get('consent') === 'true' }, growthStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/admin') {
+    if (!isDevAuthorized(request)) return send(response, 401, { error: '需要内部调试口令' });
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: true }, growthStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/growth/generate') {
+    const body = await readBody(request);
+    const result = await generateGrowthSnapshot(body, growthStore, callDeepSeek, prompts.growthInsight);
+    return send(response, result.status, result.body);
+  }
+
+  const growthFeedbackMatch = url.pathname.match(/^\/api\/growth\/insights\/([^/]+)\/feedback$/);
+  if (request.method === 'POST' && growthFeedbackMatch) {
+    const body = await readBody(request);
+    const result = await recordGrowthFeedback({ ...body, snapshotId: body.snapshotId || decodeURIComponent(growthFeedbackMatch[1]) }, growthStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/growth/watch') {
+    const body = await readBody(request);
+    const result = await saveGrowthWatch(body, growthStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'GET' && url.pathname === '/api/growth/watch/active') {
+    const result = await recentGrowth({ growthId: url.searchParams.get('growthId') || '', consent: url.searchParams.get('consent') === 'true' }, growthStore);
+    if (result.status !== 200) return send(response, result.status, result.body);
+    const body = result.body as { watch?: unknown };
+    return send(response, 200, { ok: true, watch: body.watch || null });
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/growth/watch') {
+    const body = await readBody(request);
+    const result = await clearGrowthWatch(body, growthStore);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'DELETE' && url.pathname === '/api/growth/memory') {
+    const body = await readBody(request);
+    const result = await deleteGrowthMemory(body, growthStore);
+    return send(response, result.status, result.body);
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/chat') {
     const body = await readBody(request);
     const messages = messagesValue(body.messages);
@@ -145,7 +203,16 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       return send(response, 200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
     }
     try {
-      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}`;
+      let watchGuidance = '';
+      if (body.growthConsent === true && typeof body.growthId === 'string') {
+        const watch = await growthStore.getActiveWatch(body.growthId.trim());
+        if (watch) {
+          const source = `${watch.title}${watch.description}`;
+          const relevant = source.split(/[，。；、：\s,.;:!?！？]+/).map((item) => item.trim()).filter((item) => item.length >= 2).some((item) => latestText.includes(item)) || (source.includes('焦虑') && /焦虑|紧张|担心/.test(latestText)) || (source.includes('睡') && /睡|失眠|熬夜/.test(latestText));
+          if (relevant) watchGuidance = `\n用户曾选择本周一起留意“${watch.title}”。只有在当前内容确实相关时，才自然地轻轻带到这个观察方向，不要提“观察项”或后台记忆，也不要强行引导。`;
+        }
+      }
+      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
       const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);

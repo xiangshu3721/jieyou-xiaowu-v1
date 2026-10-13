@@ -1,8 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import type { BookingCaseSnapshot, ChatResponse, IssueLifecycle } from '../shared.js';
+import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
 import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
 import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview, setLearningConsent } from './learning.js';
+import { getGrowthConsent, getGrowthId, sendGrowthEvent, setGrowthConsent } from './growth.js';
+import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -61,6 +63,7 @@ function HomePage() {
           <p className="home-intro">有些困扰不必急着想明白。你可以从最近的一件小事说起，我会陪你把心里的结，慢慢理出一点头绪。</p>
           <button className="home-cta" type="button" onClick={openChat}>开启解忧小屋 <span aria-hidden="true">→</span></button>
           <p className="home-note">不必准备答案&nbsp; · &nbsp;对话仅保存在当前浏览器</p>
+          <a className="home-growth-link" href={appPath('/growth')}>看看最近的我 <span aria-hidden="true">→</span></a>
         </div>
 
         <div className="home-scene" aria-hidden="true">
@@ -165,10 +168,26 @@ function ChatPage() {
   const learningSessionIdRef = useRef(getLearningSessionId());
   const learningTrackerRef = useRef(new LearningMetricsTracker());
   const learningFinalizedRef = useRef(false);
+  const growthConsentRef = useRef(getGrowthConsent());
+  const [growthConsent, setGrowthConsentState] = useState(growthConsentRef.current);
+  const growthIdRef = useRef(getGrowthId());
+  const sessionIdRef = useRef('jieyou-main-session');
+  const growthAnalysisRef = useRef<ConversationAnalysis | null>(null);
+  const growthSentRef = useRef(new Set<string>());
 
   function emitLearningEvent(eventType: string, metadata?: Record<string, string | number | boolean | null>, keepalive = false) {
     if (!learningConsentRef.current) return;
     void sendLearningEvent({ baseUrl: apiBaseUrl, eventType, sessionId: learningSessionIdRef.current, metrics: learningTrackerRef.current.snapshot(), metadata, keepalive });
+  }
+
+  function maybeRecordGrowthEvent(analysis: ConversationAnalysis, issueId: string, keepalive = false) {
+    if (!growthConsentRef.current || !messagesRef.current.some((message) => message.role === 'user')) return;
+    const enough = analysis.minimum_sufficient_judgment || Boolean(analysis.confirmed_goal) || analysis.problem_clarity >= 0.55 || messagesRef.current.filter((message) => message.role === 'user').length >= 3;
+    if (!enough) return;
+    const key = `${issueId}:${analysis.problem_map.main_issue || analysis.primary_topic}`;
+    if (growthSentRef.current.has(key)) return;
+    growthSentRef.current.add(key);
+    void sendGrowthEvent({ baseUrl: apiBaseUrl, growthId: growthIdRef.current, sessionId: sessionIdRef.current, issueId, messages: messagesRef.current.map(messagePayload), analysis, keepalive });
   }
 
   function issuePayload(currentSession: LocalSession | null = session) {
@@ -309,6 +328,7 @@ function ChatPage() {
     (async () => {
       const mainSession = await getOrCreateSession();
       setSession(mainSession);
+      sessionIdRef.current = mainSession.id;
       const storedMessages = await listMessages(mainSession.id);
       messagesRef.current = storedMessages;
       learningTrackerRef.current.resetFromMessages(storedMessages);
@@ -338,6 +358,15 @@ function ChatPage() {
     };
     window.addEventListener('pagehide', finalizeLearning);
     return () => window.removeEventListener('pagehide', finalizeLearning);
+  }, []);
+
+  useEffect(() => {
+    const finalizeGrowth = () => {
+      const analysis = growthAnalysisRef.current;
+      if (analysis) maybeRecordGrowthEvent(analysis, analysis.current_issue_id, true);
+    };
+    window.addEventListener('pagehide', finalizeGrowth);
+    return () => window.removeEventListener('pagehide', finalizeGrowth);
   }, []);
 
   function toggleVoiceInput() {
@@ -397,7 +426,7 @@ function ChatPage() {
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
       const requestIssueId = session.currentIssueId;
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), messages: messagesRef.current.map(messagePayload) }) });
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
       if (result.analysis.current_issue_id !== requestIssueId) {
@@ -419,6 +448,8 @@ function ChatPage() {
       const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
       learningTrackerRef.current.recordAssistant(result.reply);
       learningTrackerRef.current.recordAnalysis(result.analysis);
+      growthAnalysisRef.current = result.analysis;
+      maybeRecordGrowthEvent(result.analysis, nextIssue.issue_id);
       if (result.analysis.show_booking_button && !hadBookingButton) emitLearningEvent('booking_cta_shown', { route: result.analysis.routing });
       emitLearningEvent('chat_turn', { state: result.analysis.conversation_state, route: result.analysis.routing, topic: result.analysis.primary_topic });
       setMessages(messagesRef.current);
@@ -449,6 +480,12 @@ function ChatPage() {
     if (value) emitLearningEvent('learning_consent_updated', { consent: true });
   }
 
+  function changeGrowthConsent(value: boolean) {
+    growthConsentRef.current = value;
+    setGrowthConsentState(value);
+    setGrowthConsent(value);
+  }
+
   function useQuickPrompt(prompt: string) { setInput(prompt); }
 
   return <div className="app-shell">
@@ -476,8 +513,9 @@ function ChatPage() {
           <textarea id="chat-input" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="自由表达你的困惑，别有压力" rows={3} />
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
-        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span><a className="asva-entry" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a></div></div>
+        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span><a className="growth-entry" href={appPath('/growth')}>最近的我</a><a className="asva-entry" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a></div></div>
         <label className="learning-consent"><input type="checkbox" checked={learningConsent} onChange={(event) => changeLearningConsent(event.target.checked)} /><span>允许匿名使用本次对话帮助改进解忧小屋</span></label>
+        <label className="growth-consent"><input type="checkbox" checked={growthConsent} onChange={(event) => changeGrowthConsent(event.target.checked)} /><span>允许记录“最近的我”成长变化（可随时清空）</span></label>
         {learningConsent && <button className="learning-delete" type="button" onClick={() => void clearCurrentConversation()}>撤回授权并删除本次学习数据</button>}
       </div>
     </main>
@@ -614,6 +652,6 @@ function LearningPage() {
   return <div className="app-shell"><Header onHome={() => { location.href = appPath('/'); }} /><main className="dev-page learning-page"><div className="page-heading"><p className="eyebrow">V1.5A 学习数据中心</p><h1>从真实反馈里，<br /><em>慢慢变得更好。</em></h1><p>这里仅查看匿名结构化指标、用户授权后的脱敏复盘和导师反馈。候选规则必须人工审核，不会自动改线上规则。</p></div><section className="dev-card"><label>后台口令<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="DEV_TOKEN" /></label><div className="learning-actions"><button className="primary-button" onClick={() => void loadDashboard()}>读取学习看板</button><button className="secondary-button" onClick={() => void runInsights()} disabled={!dashboard}>运行近期洞察</button></div>{dashboard && <><div className="learning-meta">数据模式：{dashboard.data_mode} · Prompt：{dashboard.prompt_version} · 生成于：{new Date(dashboard.generated_at).toLocaleString()}</div><div className="dev-grid learning-grid">{Object.entries(dashboard.totals).map(([key, value]) => <div key={key}><span>{({ sessions: '会话数', average_turn_count: '平均轮数', average_question_count: '平均提问数', repeated_question_rate: '重复提问率', user_abandon_rate: '中途离开率', handoff_rate: '交接率', booking_click_rate: '预约点击率', summary_edit_rate: '摘要修改率', assessment_completion_rate: '测评完成率', reviewer_count: '复盘数', mentor_feedback_count: '导师反馈数' } as Record<string, string>)[key] || key}</span><strong>{typeof value === 'number' && key.endsWith('rate') ? `${Math.round(value * 100)}%` : value}</strong></div>)}</div></>}</section>{dashboard && <section className="dev-card learning-list"><h2>近期洞察</h2>{dashboard.recent_insights.length ? dashboard.recent_insights.map((insight) => <article key={insight.insight_id}><strong>{insight.observation}</strong><p>样本 {insight.sample_size} · 建议：{insight.candidate_action}</p></article>) : <p className="learning-empty">目前样本不足，暂不生成洞察。</p>}<h2>候选规则</h2>{dashboard.candidate_rules.length ? dashboard.candidate_rules.map((rule) => <article key={rule.candidate_id}><strong>{rule.status}</strong><p>{rule.observed_problem}</p><p>拟议：{rule.proposed_change}</p><small>回归：{rule.required_tests.join('、')}</small></article>) : <p className="learning-empty">还没有待人工审核的候选规则。</p>}</section>}<section className="dev-card"><h2>导师反馈</h2><div className="learning-form-grid"><label>预约编号<input value={requestId} onChange={(event) => setRequestId(event.target.value)} placeholder="例如预约编号" /></label><label>AI 判断<select value={feedback.judgment_accuracy} onChange={(event) => setFeedback({ ...feedback, judgment_accuracy: event.target.value })}><option value="ACCURATE">准确</option><option value="PARTIAL">部分准确</option><option value="INACCURATE">不准确</option></select></label><label>摘要是否有帮助<select value={feedback.summary_helpfulness} onChange={(event) => setFeedback({ ...feedback, summary_helpfulness: event.target.value })}><option value="HELPFUL">有帮助</option><option value="NEUTRAL">一般</option><option value="NOT_HELPFUL">没帮助</option></select></label><label>交接时机<select value={feedback.handoff_timing} onChange={(event) => setFeedback({ ...feedback, handoff_timing: event.target.value })}><option value="APPROPRIATE">合适</option><option value="TOO_EARLY">太早</option><option value="TOO_LATE">太晚</option></select></label><label>AI 是否还能继续<select value={feedback.ai_could_continue} onChange={(event) => setFeedback({ ...feedback, ai_could_continue: event.target.value })}><option value="NO">不能</option><option value="YES">可以</option><option value="UNCERTAIN">不确定</option></select></label></div><label className="learning-check"><input type="checkbox" checked={feedback.missed_core_problem} onChange={(event) => setFeedback({ ...feedback, missed_core_problem: event.target.checked })} />AI 是否漏掉了核心问题</label><label>标签（用逗号分隔）<input value={feedback.tags} onChange={(event) => setFeedback({ ...feedback, tags: event.target.value })} placeholder="例如：摘要准确、交接太早" /></label><label>备注<textarea value={feedback.note} onChange={(event) => setFeedback({ ...feedback, note: event.target.value })} rows={3} placeholder="只记录必要的复盘信息" /></label><button className="primary-button" disabled={!requestId.trim()} onClick={() => void saveFeedback()}>保存导师反馈</button></section>{message && <div className="test-result">{message}</div>}{error && <div className="inline-error" role="alert">{error}</div>}</main></div>;
 }
 
-function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; if (path === '/chat') return <ChatPage />; return <HomePage />; }
+function App() { const path = location.pathname; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; if (path === '/admin/growth') return <GrowthAdminPage />; if (path === '/growth') return <GrowthPage />; if (path === '/chat') return <ChatPage />; return <HomePage />; }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

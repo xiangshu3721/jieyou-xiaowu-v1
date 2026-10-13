@@ -236,3 +236,68 @@ export interface AppointmentStatus {
   note?: string;
   updatedAt: string;
 }
+
+/** V1.9「最近的我」只保存经过整理的成长事件，不保存完整聊天记录。 */
+export type GrowthPeriod = '30d' | '90d';
+export type GrowthEventCategory = 'THEME' | 'CHANGE' | 'PATTERN' | 'STRENGTH' | 'NEXT_STEP';
+export type GrowthCardKey = 'MAIN_THEME' | 'CHANGE' | 'PATTERN' | 'STRENGTH' | 'NEXT_FOCUS';
+
+export interface GrowthEvent {
+  event_id: string;
+  growth_id: string;
+  created_at: string;
+  observed_at: string;
+  issue_id: string | null;
+  category: GrowthEventCategory;
+  topic: TopicCode | 'OTHER';
+  title: string;
+  summary: string;
+  user_words: string | null;
+  evidence: string[];
+  change_direction: 'IMPROVING' | 'STABLE' | 'FLUCTUATING' | 'NEEDS_SUPPORT' | 'UNKNOWN';
+  strength: string | null;
+  next_step: string | null;
+  impact: 'LOW' | 'MEDIUM' | 'HIGH';
+  stable_key: string;
+  seen_count: number;
+  last_seen_at: string;
+}
+
+export interface GrowthInsightCard {
+  key: GrowthCardKey;
+  title: string;
+  content: string;
+  evidence_event_ids: string[];
+  confidence: 'LOW' | 'MEDIUM' | 'HIGH';
+}
+
+export interface GrowthSnapshot {
+  snapshot_id: string;
+  growth_id: string;
+  period: GrowthPeriod;
+  generated_at: string;
+  event_ids: string[];
+  cards: GrowthInsightCard[];
+  watch_recommendation: string | null;
+  feedback?: 'ACCURATE' | 'INACCURATE' | null;
+}
+
+export interface GrowthWatchItem {
+  watch_id: string;
+  growth_id: string;
+  created_at: string;
+  expires_at: string;
+  title: string;
+  description: string;
+  source_snapshot_id: string | null;
+  status: 'ACTIVE' | 'COMPLETED' | 'EXPIRED';
+}
+
+export interface GrowthFeedback {
+  feedback_id: string;
+  growth_id: string;
+  snapshot_id: string;
+  card_key: GrowthCardKey | null;
+  feedback: 'ACCURATE' | 'INACCURATE';
+  created_at: string;
+}
