@@ -2,8 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
 import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
-import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview, setLearningConsent } from './learning.js';
-import { getGrowthConsent, getGrowthId, sendGrowthEvent, setGrowthConsent } from './growth.js';
+import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview } from './learning.js';
+import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import './styles.css';
 
@@ -14,7 +14,7 @@ const secureSpeechUrl = 'https://root-journey-prod-d4d7pzd0a8f805-1304965105.tcl
 function appPath(path: string) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   if (appBaseUrl !== '/') return `${appBaseUrl}/#${normalizedPath}`;
-  return `${appBaseUrl}${normalizedPath}` || '/';
+  return normalizedPath;
 }
 
 function api<T>(path: string, init?: RequestInit) {
@@ -170,7 +170,6 @@ function ChatPage() {
   const learningTrackerRef = useRef(new LearningMetricsTracker());
   const learningFinalizedRef = useRef(false);
   const growthConsentRef = useRef(getGrowthConsent());
-  const [growthConsent, setGrowthConsentState] = useState(growthConsentRef.current);
   const growthIdRef = useRef(getGrowthId());
   const sessionIdRef = useRef('jieyou-main-session');
   const growthAnalysisRef = useRef<ConversationAnalysis | null>(null);
@@ -474,26 +473,21 @@ function ChatPage() {
     setError('');
   }
 
-  function changeLearningConsent(value: boolean) {
-    learningConsentRef.current = value;
-    setLearningConsentState(value);
-    setLearningConsent(value);
-    if (value) emitLearningEvent('learning_consent_updated', { consent: true });
-  }
-
-  function changeGrowthConsent(value: boolean) {
-    growthConsentRef.current = value;
-    setGrowthConsentState(value);
-    setGrowthConsent(value);
-  }
-
   function useQuickPrompt(prompt: string) { setInput(prompt); }
 
   return <div className="app-shell">
     <main className={`chat-page ${scrolled ? 'is-scrolled' : ''}`}>
       <div ref={chatScrollRef} className={`chat-scroll ${messages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
-        <div className="compact-header" aria-hidden={!scrolled}><div className="compact-avatar">解<br />忧</div><strong>解忧小屋</strong></div>
+        <div className="compact-header" aria-hidden={!scrolled}>
+          <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于 ASVA <span aria-hidden="true">↗</span></a>
+          <div className="compact-header-brand"><div className="compact-avatar">解<br />忧</div><strong>解忧小屋</strong></div>
+          <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>
+        </div>
         <section className="welcome-card">
+          <div className="chat-resource-links" aria-label="更多入口">
+            <a className="resource-button" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a>
+            <a className="resource-button" href={appPath('/growth')}>最近的我</a>
+          </div>
           <div className="avatar-badge"><div className="avatar-core">解<br />忧</div><span>·</span></div>
           <h1>Hi，我是解忧小屋</h1>
           <div className="welcome-tags"><span>AI 倾听</span><span>温和陪伴</span></div>
@@ -514,9 +508,7 @@ function ChatPage() {
           <textarea id="chat-input" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="自由表达你的困惑，别有压力" rows={3} />
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
-        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span><a className="growth-entry" href={appPath('/growth')}>最近的我</a><a className="asva-entry" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a></div></div>
-        <label className="learning-consent"><input type="checkbox" checked={learningConsent} onChange={(event) => changeLearningConsent(event.target.checked)} /><span>允许匿名使用本次对话帮助改进解忧小屋</span></label>
-        <label className="growth-consent"><input type="checkbox" checked={growthConsent} onChange={(event) => changeGrowthConsent(event.target.checked)} /><span>允许记录“最近的我”成长变化（可随时清空）</span></label>
+        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span></div></div>
         {learningConsent && <button className="learning-delete" type="button" onClick={() => void clearCurrentConversation()}>撤回授权并删除本次学习数据</button>}
       </div>
     </main>
