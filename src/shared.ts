@@ -225,6 +225,9 @@ export interface AppointmentInput {
   concern: string;
   desiredHelp: string;
   consent: boolean;
+  issueId?: string;
+  bookingCaseId?: string;
+  sourceEnvironment?: string;
 }
 
 export interface AppointmentStatus {

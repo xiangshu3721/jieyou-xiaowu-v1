@@ -17,6 +17,8 @@ export interface WorkerEnv {
   FEISHU_APP_TOKEN?: string;
   FEISHU_TABLE_ID?: string;
   FEISHU_BASE_URL?: string;
+  APPOINTMENT_INCLUDE_METADATA?: string;
+  APPOINTMENT_SOURCE_ENVIRONMENT?: string;
   PROMPT_VERSION?: string;
   DEV_TOKEN?: string;
   CLOUDBASE_APIKEY?: string;
@@ -54,12 +56,10 @@ let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseL
 let growthStoreCache: { key: string; store: ReturnType<typeof createCloudBaseGrowthStore> } | null = null;
 
 function json(status: number, body: unknown, request?: Request) {
-  const origin = request?.headers.get('Origin');
   return new Response(JSON.stringify(body), {
     status,
     headers: {
       ...jsonHeaders,
-      'Access-Control-Allow-Origin': origin || '*',
       'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token',
       'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS',
     },
@@ -215,16 +215,23 @@ async function getTenantToken(env: WorkerEnv) {
   }
 }
 
-function fieldsFor(input: AppointmentInput) {
-  return {
+function fieldsFor(input: AppointmentInput, includeMetadata = false) {
+  const fields: Record<string, string | number> = {
     预约编号: input.requestId,
     昵称: input.nickname,
     '微信 / 联系方式': input.contact,
     当前困扰描述: input.concern,
     希望获得什么帮助: input.desiredHelp,
-    提交时间: new Date().toISOString(),
+    提交时间: includeMetadata ? Date.now() : new Date().toISOString(),
     处理状态: '待分配',
   };
+  if (includeMetadata) {
+    fields['Source Environment'] = input.sourceEnvironment || 'staging';
+    fields['Request ID'] = input.requestId;
+    fields['Issue ID'] = input.issueId || '';
+    fields['Booking Case ID'] = input.bookingCaseId || input.requestId;
+  }
+  return fields;
 }
 
 async function createFeishuAppointment(env: WorkerEnv, input: AppointmentInput) {
@@ -235,7 +242,7 @@ async function createFeishuAppointment(env: WorkerEnv, input: AppointmentInput) 
     const response = await fetch(`${config.baseUrl}/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ fields: fieldsFor(input) }),
+      body: JSON.stringify({ fields: fieldsFor(input, env.APPOINTMENT_INCLUDE_METADATA === 'true') }),
       signal: timeout.signal,
     });
     const payload = await response.json().catch(() => null) as { code?: number; msg?: string; data?: { record?: { record_id?: string } } } | null;
@@ -535,31 +542,34 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         concern: stringValue(body.concern, 1_000),
         desiredHelp: stringValue(body.desiredHelp, 500),
         consent: body.consent === true,
+        issueId: stringValue(body.issueId, 120) || undefined,
+        bookingCaseId: stringValue(body.bookingCaseId, 120) || undefined,
+        sourceEnvironment: env.APPOINTMENT_SOURCE_ENVIRONMENT || 'production',
       };
       if (!input.requestId || !input.nickname || !input.contact || !input.concern || !input.desiredHelp || !input.consent) return json(400, { error: '请完整填写预约信息并确认信息使用说明' }, request);
       if (!env.DB) {
         const existing = await findFeishuAppointmentByRequestId(env, input.requestId);
-        if (existing) return json(200, { ok: true, requestId: input.requestId, recordId: existing.recordId, status: 'submitted', idempotent: true }, request);
+        if (existing) return json(200, { ok: true, requestId: input.requestId, recordId: existing.recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted', idempotent: true }, request);
         try {
           const recordId = await createFeishuAppointment(env, input);
-          return json(200, { ok: true, requestId: input.requestId, recordId, status: 'submitted' }, request);
+          return json(200, { ok: true, requestId: input.requestId, recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted' }, request);
         } catch (error) {
           // 网络超时后先回查，避免用户重试时再次创建同一预约。
           try {
             const recovered = await findFeishuAppointmentByRequestId(env, input.requestId);
-            if (recovered) return json(200, { ok: true, requestId: input.requestId, recordId: recovered.recordId, status: 'submitted', idempotent: true }, request);
+            if (recovered) return json(200, { ok: true, requestId: input.requestId, recordId: recovered.recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted', idempotent: true }, request);
           } catch { /* 回查失败时返回原始写入错误 */ }
           const message = error instanceof ExternalServiceError ? error.message : '预约写入失败，请稍后重试';
           return json(502, { error: message, code: 'FEISHU_UNAVAILABLE', requestId: input.requestId }, request);
         }
       }
       const claim = await claimAppointment(env.DB, input.requestId);
-      if (!claim.claimed && claim.state?.status === 'submitted' && claim.state.recordId) return json(200, { ok: true, requestId: input.requestId, recordId: claim.state.recordId, status: 'submitted', idempotent: true }, request);
+      if (!claim.claimed && claim.state?.status === 'submitted' && claim.state.recordId) return json(200, { ok: true, requestId: input.requestId, recordId: claim.state.recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted', idempotent: true }, request);
       if (!claim.claimed) return json(409, { error: '这次预约正在提交中，请稍候查看结果', code: 'APPOINTMENT_IN_PROGRESS', requestId: input.requestId }, request);
       try {
         const recordId = await createFeishuAppointment(env, input);
         await saveAppointmentState(env.DB, { requestId: input.requestId, status: 'submitted', recordId, createdAt: claim.state?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString() });
-        return json(200, { ok: true, requestId: input.requestId, recordId, status: 'submitted' }, request);
+        return json(200, { ok: true, requestId: input.requestId, recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted' }, request);
       } catch (error) {
         const message = error instanceof ExternalServiceError ? error.message : '预约写入失败，请稍后重试';
         await saveAppointmentState(env.DB, { requestId: input.requestId, status: 'failed', createdAt: claim.state?.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString(), error: message });

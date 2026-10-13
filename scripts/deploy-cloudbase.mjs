@@ -69,6 +69,8 @@ const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, value(ke
 envVariables.CLOUDBASE_ENV_ID = envId;
 envVariables.LEARNING_ENABLED = value('DEPLOY_ENABLE_LEARNING', 'true') === 'false' ? 'false' : 'true';
 if (value('DEPLOY_GROWTH_TABLE_PREFIX')) envVariables.GROWTH_TABLE_PREFIX = value('DEPLOY_GROWTH_TABLE_PREFIX');
+if (value('DEPLOY_APPOINTMENT_INCLUDE_METADATA')) envVariables.APPOINTMENT_INCLUDE_METADATA = value('DEPLOY_APPOINTMENT_INCLUDE_METADATA');
+if (value('DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT')) envVariables.APPOINTMENT_SOURCE_ENVIRONMENT = value('DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT');
 if (value('PROMPT_VERSION')) envVariables.PROMPT_VERSION = value('PROMPT_VERSION');
 
 function tokenAudience(token) {
