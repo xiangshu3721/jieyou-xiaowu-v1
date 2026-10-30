@@ -12,6 +12,8 @@
     "test": "vitest run",
     "verify:staging": "node scripts/verify-staging-safety.mjs",
     "verify:staging-build": "node scripts/verify-staging-build.mjs",
+    "verify:production-build": "node scripts/verify-production-build.mjs",
+    "verify:release-control": "node scripts/verify-release-control.mjs",
     "e2e:check": "node --import tsx scripts/e2e-check.ts",
     "e2e:real": "node --import tsx scripts/e2e-real.ts",
     "cf:dev": "wrangler dev",
