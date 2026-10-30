@@ -1,0 +1,57 @@
+name: Quality Gate
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node 20.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Verify staging deployment guards
+        run: npm run verify:staging
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and handler contract tests
+        run: npm test -- --reporter=dot
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Build CloudBase bundle
+        run: npm run build:cloudbase
+
+      - name: Build staging Pages artifact
+        run: npm run build:pages
+        env:
+          VITE_API_BASE_URL: https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging
+          VITE_PAGES_BASE: /v19-staging/
+          VITE_ENABLE_GROWTH: 'false'
+          VITE_INCLUDE_CNAME: 'false'
+
+      - name: Check build artifacts and staging safety
+        run: npm run verify:staging-build
+        env:
+          STAGING_API_URL: https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging
