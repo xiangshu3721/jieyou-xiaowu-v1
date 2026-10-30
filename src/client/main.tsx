@@ -9,6 +9,7 @@ import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
 const appBaseUrl = (import.meta.env.BASE_URL || '/').replace(/\/$/, '') || '/';
+const growthEnabled = import.meta.env.VITE_ENABLE_GROWTH !== 'false';
 const secureSpeechUrl = 'https://root-journey-prod-d4d7pzd0a8f805-1304965105.tcloudbaseapp.com/';
 
 function appPath(path: string) {
@@ -64,7 +65,7 @@ function HomePage() {
           <p className="home-intro">有些困扰不必急着想明白。你可以从最近的一件小事说起，我会陪你把心里的结，慢慢理出一点头绪。</p>
           <button className="home-cta" type="button" onClick={openChat}>开启解忧小屋 <span aria-hidden="true">→</span></button>
           <p className="home-note">不必准备答案&nbsp; · &nbsp;对话仅保存在当前浏览器</p>
-          <a className="home-growth-link" href={appPath('/growth')}>看看最近的我 <span aria-hidden="true">→</span></a>
+          {growthEnabled && <a className="home-growth-link" href={appPath('/growth')}>看看最近的我 <span aria-hidden="true">→</span></a>}
         </div>
 
         <div className="home-scene" aria-hidden="true">
@@ -181,7 +182,7 @@ function ChatPage() {
   }
 
   function maybeRecordGrowthEvent(analysis: ConversationAnalysis, issueId: string, keepalive = false) {
-    if (!growthConsentRef.current || !messagesRef.current.some((message) => message.role === 'user')) return;
+    if (!growthEnabled || !growthConsentRef.current || !messagesRef.current.some((message) => message.role === 'user')) return;
     const enough = analysis.minimum_sufficient_judgment || Boolean(analysis.confirmed_goal) || analysis.problem_clarity >= 0.55 || messagesRef.current.filter((message) => message.role === 'user').length >= 3;
     if (!enough) return;
     const key = `${issueId}:${analysis.problem_map.main_issue || analysis.primary_topic}`;
@@ -481,12 +482,12 @@ function ChatPage() {
         <div className="compact-header" aria-hidden={!scrolled}>
           <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于 ASVA <span aria-hidden="true">↗</span></a>
           <div className="compact-header-brand"><div className="compact-avatar">解<br />忧</div><strong>解忧小屋</strong></div>
-          <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>
+          {growthEnabled && <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
         </div>
         <section className="welcome-card">
           <div className="chat-resource-links" aria-label="更多入口">
             <a className="resource-button" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a>
-            <a className="resource-button" href={appPath('/growth')}>最近的我</a>
+            {growthEnabled && <a className="resource-button" href={appPath('/growth')}>最近的我</a>}
           </div>
           <div className="avatar-badge"><div className="avatar-core">解<br />忧</div><span>·</span></div>
           <h1>Hi，我是解忧小屋</h1>
@@ -645,6 +646,6 @@ function LearningPage() {
   return <div className="app-shell"><Header onHome={() => { location.href = appPath('/'); }} /><main className="dev-page learning-page"><div className="page-heading"><p className="eyebrow">V1.5A 学习数据中心</p><h1>从真实反馈里，<br /><em>慢慢变得更好。</em></h1><p>这里仅查看匿名结构化指标、用户授权后的脱敏复盘和导师反馈。候选规则必须人工审核，不会自动改线上规则。</p></div><section className="dev-card"><label>后台口令<input type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder="DEV_TOKEN" /></label><div className="learning-actions"><button className="primary-button" onClick={() => void loadDashboard()}>读取学习看板</button><button className="secondary-button" onClick={() => void runInsights()} disabled={!dashboard}>运行近期洞察</button></div>{dashboard && <><div className="learning-meta">数据模式：{dashboard.data_mode} · Prompt：{dashboard.prompt_version} · 生成于：{new Date(dashboard.generated_at).toLocaleString()}</div><div className="dev-grid learning-grid">{Object.entries(dashboard.totals).map(([key, value]) => <div key={key}><span>{({ sessions: '会话数', average_turn_count: '平均轮数', average_question_count: '平均提问数', repeated_question_rate: '重复提问率', user_abandon_rate: '中途离开率', handoff_rate: '交接率', booking_click_rate: '预约点击率', summary_edit_rate: '摘要修改率', assessment_completion_rate: '测评完成率', reviewer_count: '复盘数', mentor_feedback_count: '导师反馈数' } as Record<string, string>)[key] || key}</span><strong>{typeof value === 'number' && key.endsWith('rate') ? `${Math.round(value * 100)}%` : value}</strong></div>)}</div></>}</section>{dashboard && <section className="dev-card learning-list"><h2>近期洞察</h2>{dashboard.recent_insights.length ? dashboard.recent_insights.map((insight) => <article key={insight.insight_id}><strong>{insight.observation}</strong><p>样本 {insight.sample_size} · 建议：{insight.candidate_action}</p></article>) : <p className="learning-empty">目前样本不足，暂不生成洞察。</p>}<h2>候选规则</h2>{dashboard.candidate_rules.length ? dashboard.candidate_rules.map((rule) => <article key={rule.candidate_id}><strong>{rule.status}</strong><p>{rule.observed_problem}</p><p>拟议：{rule.proposed_change}</p><small>回归：{rule.required_tests.join('、')}</small></article>) : <p className="learning-empty">还没有待人工审核的候选规则。</p>}</section>}<section className="dev-card"><h2>导师反馈</h2><div className="learning-form-grid"><label>预约编号<input value={requestId} onChange={(event) => setRequestId(event.target.value)} placeholder="例如预约编号" /></label><label>AI 判断<select value={feedback.judgment_accuracy} onChange={(event) => setFeedback({ ...feedback, judgment_accuracy: event.target.value })}><option value="ACCURATE">准确</option><option value="PARTIAL">部分准确</option><option value="INACCURATE">不准确</option></select></label><label>摘要是否有帮助<select value={feedback.summary_helpfulness} onChange={(event) => setFeedback({ ...feedback, summary_helpfulness: event.target.value })}><option value="HELPFUL">有帮助</option><option value="NEUTRAL">一般</option><option value="NOT_HELPFUL">没帮助</option></select></label><label>交接时机<select value={feedback.handoff_timing} onChange={(event) => setFeedback({ ...feedback, handoff_timing: event.target.value })}><option value="APPROPRIATE">合适</option><option value="TOO_EARLY">太早</option><option value="TOO_LATE">太晚</option></select></label><label>AI 是否还能继续<select value={feedback.ai_could_continue} onChange={(event) => setFeedback({ ...feedback, ai_could_continue: event.target.value })}><option value="NO">不能</option><option value="YES">可以</option><option value="UNCERTAIN">不确定</option></select></label></div><label className="learning-check"><input type="checkbox" checked={feedback.missed_core_problem} onChange={(event) => setFeedback({ ...feedback, missed_core_problem: event.target.checked })} />AI 是否漏掉了核心问题</label><label>标签（用逗号分隔）<input value={feedback.tags} onChange={(event) => setFeedback({ ...feedback, tags: event.target.value })} placeholder="例如：摘要准确、交接太早" /></label><label>备注<textarea value={feedback.note} onChange={(event) => setFeedback({ ...feedback, note: event.target.value })} rows={3} placeholder="只记录必要的复盘信息" /></label><button className="primary-button" disabled={!requestId.trim()} onClick={() => void saveFeedback()}>保存导师反馈</button></section>{message && <div className="test-result">{message}</div>}{error && <div className="inline-error" role="alert">{error}</div>}</main></div>;
 }
 
-function App() { const hashPath = location.hash.startsWith('#/') ? location.hash.slice(1) : ''; const rawPath = hashPath || location.pathname; const path = appBaseUrl !== '/' && rawPath.startsWith(appBaseUrl) ? rawPath.slice(appBaseUrl.length) || '/' : rawPath; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; if (path === '/admin/growth') return <GrowthAdminPage />; if (path === '/growth') return <GrowthPage />; if (path === '/chat') return <ChatPage />; return <HomePage />; }
+function App() { const hashPath = location.hash.startsWith('#/') ? location.hash.slice(1) : ''; const rawPath = hashPath || location.pathname; const path = appBaseUrl !== '/' && rawPath.startsWith(appBaseUrl) ? rawPath.slice(appBaseUrl.length) || '/' : rawPath; if (path === '/booking') return <BookingPage />; if (path === '/booking/result') return <ResultPage />; if (path === '/dev') return <DevPage />; if (path === '/admin/learning') return <LearningPage />; if (path === '/admin/growth' && growthEnabled) return <GrowthAdminPage />; if (path === '/growth' && growthEnabled) return <GrowthPage />; if (path === '/chat') return <ChatPage />; return <HomePage />; }
 
 createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

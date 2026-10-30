@@ -46,13 +46,33 @@ function value(key, fallback = '') {
   return process.env[key] || values[key] || fallback;
 }
 
-const envId = value('DEPLOY_ENV_ID', value('CLOUDBASE_ENV_ID', 'root-journey-prod-d4d7pzd0a8f805'));
-const functionName = value('DEPLOY_FUNCTION_NAME', 'jieyou-http-api');
-const servicePath = value('DEPLOY_SERVICE_PATH', functionName);
-const serviceDomain = value('DEPLOY_API_DOMAIN', `${envId}-1304965105.ap-shanghai.app.tcloudbase.com`);
-const serviceUrl = value('DEPLOY_API_BASE_URL', `https://${serviceDomain}/${servicePath}`);
-const hostingPath = value('DEPLOY_HOSTING_PATH');
-const feishuEnabled = value('DEPLOY_ENABLE_FEISHU', 'true') !== 'false';
+const deploymentEnvironment = value('DEPLOY_ENVIRONMENT');
+if (!['staging', 'production'].includes(deploymentEnvironment)) {
+  throw new Error('必须显式设置 DEPLOY_ENVIRONMENT=staging 或 DEPLOY_ENVIRONMENT=production');
+}
+const isStaging = deploymentEnvironment === 'staging';
+const requiredDeployValue = (key) => {
+  const result = value(key);
+  if (!result) throw new Error(`${deploymentEnvironment} 部署缺少显式配置：${key}`);
+  return result;
+};
+const sourceKey = (key) => isStaging ? `STAGING_${key}` : key;
+const runtimeValue = (key, fallback = '') => value(sourceKey(key), fallback);
+
+const envId = isStaging
+  ? requiredDeployValue('DEPLOY_ENV_ID')
+  : value('DEPLOY_ENV_ID', value('CLOUDBASE_ENV_ID', 'root-journey-prod-d4d7pzd0a8f805'));
+const functionName = isStaging ? requiredDeployValue('DEPLOY_FUNCTION_NAME') : value('DEPLOY_FUNCTION_NAME', 'jieyou-http-api');
+const servicePath = isStaging ? requiredDeployValue('DEPLOY_SERVICE_PATH') : value('DEPLOY_SERVICE_PATH', functionName);
+const serviceDomain = isStaging
+  ? requiredDeployValue('DEPLOY_API_DOMAIN')
+  : value('DEPLOY_API_DOMAIN', `${envId}-1304965105.ap-shanghai.app.tcloudbase.com`);
+const serviceUrl = isStaging
+  ? requiredDeployValue('DEPLOY_API_BASE_URL')
+  : value('DEPLOY_API_BASE_URL', `https://${serviceDomain}/${servicePath}`);
+const hostingPath = isStaging ? requiredDeployValue('DEPLOY_HOSTING_PATH') : value('DEPLOY_HOSTING_PATH');
+const feishuEnabledValue = isStaging ? requiredDeployValue('DEPLOY_ENABLE_FEISHU') : value('DEPLOY_ENABLE_FEISHU', 'true');
+const feishuEnabled = feishuEnabledValue !== 'false';
 const requiredKeys = [
   'DEEPSEEK_API_KEY',
   'DEEPSEEK_MODEL',
@@ -62,12 +82,15 @@ const requiredKeys = [
   'CLOUDBASE_APIKEY',
 ];
 if (feishuEnabled) requiredKeys.splice(3, 0, 'FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_APP_TOKEN', 'FEISHU_TABLE_ID');
-const missing = requiredKeys.filter((key) => !value(key));
-if (missing.length) throw new Error(`.env.local 缺少 CloudBase 生产变量：${missing.join(', ')}`);
+const missing = requiredKeys.filter((key) => !runtimeValue(key));
+if (missing.length) throw new Error(`${deploymentEnvironment} 配置缺少必要变量：${missing.map(sourceKey).join(', ')}`);
 
-const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, value(key)]));
+const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, runtimeValue(key)]));
 envVariables.CLOUDBASE_ENV_ID = envId;
-envVariables.LEARNING_ENABLED = value('DEPLOY_ENABLE_LEARNING', 'true') === 'false' ? 'false' : 'true';
+const learningEnabledValue = value('DEPLOY_ENABLE_LEARNING', isStaging ? '' : 'true');
+const growthEnabledValue = value('DEPLOY_ENABLE_GROWTH', isStaging ? '' : 'true');
+envVariables.LEARNING_ENABLED = learningEnabledValue === 'false' ? 'false' : 'true';
+envVariables.GROWTH_ENABLED = growthEnabledValue === 'false' ? 'false' : 'true';
 if (value('DEPLOY_GROWTH_TABLE_PREFIX')) envVariables.GROWTH_TABLE_PREFIX = value('DEPLOY_GROWTH_TABLE_PREFIX');
 if (value('DEPLOY_APPOINTMENT_INCLUDE_METADATA')) envVariables.APPOINTMENT_INCLUDE_METADATA = value('DEPLOY_APPOINTMENT_INCLUDE_METADATA');
 if (value('DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT')) envVariables.APPOINTMENT_SOURCE_ENVIRONMENT = value('DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT');
@@ -84,6 +107,37 @@ function tokenAudience(token) {
 
 const audience = tokenAudience(envVariables.CLOUDBASE_APIKEY);
 if (audience && audience !== envId) throw new Error(`CLOUDBASE_APIKEY 不属于目标环境 ${envId}`);
+
+if (isStaging) {
+  if (feishuEnabledValue !== 'true') throw new Error('staging 必须显式设置 DEPLOY_ENABLE_FEISHU=true');
+  if (functionName !== 'jieyou-v19-staging' || servicePath !== 'jieyou-v19-staging') throw new Error('staging 必须使用 jieyou-v19-staging 函数和 service path');
+  if (serviceUrl !== `https://${serviceDomain}/${servicePath}` || serviceUrl.includes('/jieyou-http-api')) throw new Error('staging API URL 必须精确绑定 staging service path');
+  if (hostingPath !== 'v19-staging') throw new Error('staging 必须使用 DEPLOY_HOSTING_PATH=v19-staging');
+  if (value('DEPLOY_PAGES_BASE') !== '/v19-staging/') throw new Error('staging 必须使用 DEPLOY_PAGES_BASE=/v19-staging/');
+  if (value('DEPLOY_ENABLE_LEARNING') !== 'false') throw new Error('staging 必须显式设置 DEPLOY_ENABLE_LEARNING=false');
+  if (value('DEPLOY_ENABLE_GROWTH') !== 'false') throw new Error('staging 必须显式设置 DEPLOY_ENABLE_GROWTH=false');
+  if (value('DEPLOY_GROWTH_NAMESPACE') !== 'staging') throw new Error('staging 必须显式设置 DEPLOY_GROWTH_NAMESPACE=staging');
+  if (value('DEPLOY_GROWTH_TABLE_PREFIX') !== 'stg_jieyou_v19_growth_') throw new Error('staging 必须显式设置 DEPLOY_GROWTH_TABLE_PREFIX=stg_jieyou_v19_growth_');
+  if (value('DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT') !== 'staging') throw new Error('staging 必须显式设置 DEPLOY_APPOINTMENT_SOURCE_ENVIRONMENT=staging');
+  if (value('DEPLOY_APPOINTMENT_INCLUDE_METADATA') !== 'true') throw new Error('staging 必须显式设置 DEPLOY_APPOINTMENT_INCLUDE_METADATA=true');
+  if (runtimeValue('FEISHU_APP_TOKEN') === requiredDeployValue('PRODUCTION_FEISHU_APP_TOKEN')) throw new Error('staging 飞书 Base 不得与 production 相同');
+}
+
+console.log(JSON.stringify({
+  deploymentEnvironment,
+  envId,
+  functionName,
+  servicePath,
+  serviceDomain,
+  serviceUrl,
+  hostingPath: hostingPath || '/',
+  feishuEnabled,
+  feishuCredentialsConfigured: Boolean(runtimeValue('FEISHU_APP_ID') && runtimeValue('FEISHU_APP_SECRET') && runtimeValue('FEISHU_APP_TOKEN') && runtimeValue('FEISHU_TABLE_ID')),
+  learningEnabled: envVariables.LEARNING_ENABLED === 'true',
+  growthEnabled: envVariables.GROWTH_ENABLED === 'true',
+  growthNamespace: value('DEPLOY_GROWTH_NAMESPACE', isStaging ? 'staging' : 'prod'),
+  growthTablePrefix: value('DEPLOY_GROWTH_TABLE_PREFIX', '(default)'),
+}, null, 2));
 
 const tempDir = await mkdtemp(path.join(os.tmpdir(), 'jieyou-cloudbase-'));
 try {
@@ -126,6 +180,8 @@ try {
     VITE_API_BASE_URL: apiBase,
     VITE_PAGES_BASE: value('DEPLOY_PAGES_BASE', '/'),
     VITE_GROWTH_NAMESPACE: value('DEPLOY_GROWTH_NAMESPACE', 'prod'),
+    VITE_ENABLE_GROWTH: growthEnabledValue === 'false' ? 'false' : 'true',
+    VITE_INCLUDE_CNAME: isStaging ? 'false' : 'true',
   });
   // CloudBase static hosting needs a fallback document for direct SPA routes.
   // Keep this as a generated artifact; never commit it as a second app entry.

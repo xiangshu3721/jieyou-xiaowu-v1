@@ -25,6 +25,7 @@ export interface WorkerEnv {
   CLOUDBASE_ENV_ID?: string;
   CLOUDBASE_API_ENDPOINT?: string;
   GROWTH_TABLE_PREFIX?: string;
+  GROWTH_ENABLED?: string;
   LEARNING_ENABLED?: string;
   DB?: D1Database;
 }
@@ -122,7 +123,7 @@ function configurationStatus(env: WorkerEnv) {
     feishuConfigured: Boolean(config.feishu.appId && config.feishu.appSecret && config.feishu.appToken && config.feishu.tableId),
     d1Configured: Boolean(env.DB),
     learningConfigured: env.LEARNING_ENABLED !== 'false' && Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
-    growthConfigured: Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
+    growthConfigured: env.GROWTH_ENABLED !== 'false' && Boolean(env.CLOUDBASE_APIKEY && env.CLOUDBASE_ENV_ID),
     devConfigured: Boolean(env.DEV_TOKEN),
   };
 }
@@ -137,6 +138,7 @@ function learningStoreFor(env: WorkerEnv) {
 }
 
 function growthStoreFor(env: WorkerEnv) {
+  if (env.GROWTH_ENABLED === 'false') return null;
   const key = `${env.CLOUDBASE_ENV_ID || ''}:${env.CLOUDBASE_APIKEY || ''}:${env.GROWTH_TABLE_PREFIX || ''}`;
   if (growthStoreCache?.key === key) return growthStoreCache.store;
   const store = createCloudBaseGrowthStore(env);
