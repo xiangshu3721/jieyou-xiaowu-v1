@@ -27,7 +27,9 @@ const requiredReleaseControls = [
   'npm run verify:production-build',
   'actions/deploy-pages@v4',
   'VITE_API_BASE_URL: https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api',
-  "VITE_INCLUDE_CNAME: 'true'",
+  'VITE_PAGES_BASE: /jieyou-xiaowu-v1/',
+  "VITE_ENABLE_GROWTH: 'false'",
+  "VITE_INCLUDE_CNAME: 'false'",
 ];
 const missingReleaseControls = requiredReleaseControls.filter((value) => !releaseWorkflow.includes(value));
 const hasPushTrigger = /\n\s+push:\s*/.test(releaseWorkflow);

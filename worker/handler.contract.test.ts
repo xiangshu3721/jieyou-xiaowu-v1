@@ -51,6 +51,13 @@ describe('worker handler API 契约', () => {
     vi.restoreAllMocks();
   });
 
+  it('OPTIONS 预检返回无响应体的 204', async () => {
+    const response = await handleApi(request('/api/chat', 'OPTIONS'), baseEnv);
+
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
+  });
+
   it('health 返回配置状态，并保持 Growth/Learning 关闭', async () => {
     const response = await handleApi(request('/api/health'), baseEnv);
     const body = await json(response);

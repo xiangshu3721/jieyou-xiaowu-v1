@@ -7,8 +7,8 @@ export default defineConfig(({ mode }) => {
   const isCloudflareBuild = mode === 'cloudflare';
   return {
       plugins: [react(), ...(isCloudflareBuild ? [cloudflare()] : [])],
-    // GitHub Pages is served from the custom-domain root in production.
-    // Keep an override available for a repository-subpath preview.
+    // GitHub Pages is served from the repository subpath in production.
+    // Keep the base path explicit so the official github.io entry works.
     base: mode === 'pages' ? (env.VITE_PAGES_BASE || '/') : '/',
     server: {
       port: Number(env.VITE_PORT || '5174'),

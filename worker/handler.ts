@@ -57,7 +57,7 @@ let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseL
 let growthStoreCache: { key: string; store: ReturnType<typeof createCloudBaseGrowthStore> } | null = null;
 
 function json(status: number, body: unknown, request?: Request) {
-  return new Response(JSON.stringify(body), {
+  return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
     headers: {
       ...jsonHeaders,
