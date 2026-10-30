@@ -10,12 +10,15 @@ async function required(file) {
   await access(path.join(dist, file));
 }
 
-await Promise.all([required('index.html'), required('404.html'), required('CNAME')]);
+await Promise.all([required('index.html'), required('404.html')]);
 const files = await readdir(dist, { recursive: true });
 const text = (await Promise.all(files.filter((file) => /\.(html|js|css)$/.test(file)).map((file) => readFile(path.join(dist, file), 'utf8')))).join('\n');
 const violations = [];
 if (!text.includes(apiUrl)) violations.push('missing-production-api-url');
 if (text.includes('/jieyou-v19-staging')) violations.push('staging-api-present');
+if (files.includes('CNAME')) violations.push('cname-present');
+if (text.includes('www.littlemo.icu')) violations.push('legacy-custom-domain-present');
+if (text.includes('看看最近的我')) violations.push('growth-entry-present');
 for (const name of ['FEISHU_APP_TOKEN', 'FEISHU_APP_SECRET', 'DEEPSEEK_API_KEY', 'CLOUDBASE_APIKEY']) {
   if (text.includes(name)) violations.push(`secret-name-present:${name}`);
 }
@@ -26,6 +29,8 @@ console.log(JSON.stringify({
   filesChecked: files.length,
   productionApiPresent: true,
   stagingApiAbsent: true,
-  cnamePresent: true,
+  cnameAbsent: true,
+  legacyCustomDomainAbsent: true,
+  growthEntryAbsent: true,
   secretNamesAbsent: true,
 }, null, 2));
