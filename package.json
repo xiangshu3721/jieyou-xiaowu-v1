@@ -10,6 +10,10 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "verify:staging": "node scripts/verify-staging-safety.mjs",
+    "verify:staging-build": "node scripts/verify-staging-build.mjs",
+    "verify:production-build": "node scripts/verify-production-build.mjs",
+    "verify:release-control": "node scripts/verify-release-control.mjs",
     "e2e:check": "node --import tsx scripts/e2e-check.ts",
     "e2e:real": "node --import tsx scripts/e2e-real.ts",
     "cf:dev": "wrangler dev",
@@ -26,6 +30,7 @@
   "devDependencies": {
     "@cloudflare/vite-plugin": "^1.62.2",
     "@cloudflare/workers-types": "^5.20260930.2",
+    "@types/node": "^20.19.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",

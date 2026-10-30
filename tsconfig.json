@@ -9,7 +9,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "allowImportingTsExtensions": true,
-    "types": ["vite/client", "@cloudflare/workers-types"]
+    "types": ["node", "vite/client", "@cloudflare/workers-types"]
   },
   "include": ["src", "server", "worker", "cloudbase", "scripts", "migrations", "vite.config.ts", "vitest.config.ts"]
 }

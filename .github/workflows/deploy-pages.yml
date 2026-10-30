@@ -1,9 +1,22 @@
-name: Deploy GitHub Pages
+name: Release Production Pages
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
+    inputs:
+      release_sha:
+        description: '经过验收的 40 位 Git commit SHA；只允许发布该精确提交'
+        required: true
+        type: string
+      backend_version:
+        description: '后端已受控发布并完成 Smoke Test 后，Production /api/health 的 promptVersion'
+        required: true
+        type: string
+      backend_smoke_confirmed:
+        description: '确认后端已完成 health 与接口 Smoke Test'
+        required: true
+        type: choice
+        options:
+          - CONFIRMED
 
 permissions:
   contents: read
@@ -11,29 +24,97 @@ permissions:
   id-token: write
 
 concurrency:
-  group: pages
-  cancel-in-progress: true
+  group: production-pages
+  cancel-in-progress: false
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha }}
+          fetch-depth: 0
+
+      - name: Validate exact release SHA
+        id: release
+        env:
+          EXPECTED_SHA: ${{ inputs.release_sha }}
+        run: |
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "release_sha 必须是完整 40 位 commit SHA"
+            exit 1
+          fi
+          ACTUAL_SHA="$(git rev-parse HEAD)"
+          if [[ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]]; then
+            echo "checkout SHA 与输入不一致"
+            exit 1
+          fi
+          VERSION="$(git describe --tags --always --exact-match 2>/dev/null || git describe --tags --always)"
+          echo "release_sha=$ACTUAL_SHA" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Production Pages release"
+            echo "- Version: $VERSION"
+            echo "- Commit SHA: $ACTUAL_SHA"
+            echo "- Trigger: workflow_dispatch"
+            echo "- Backend deployment: not performed by this workflow"
+          } >> "$GITHUB_STEP_SUMMARY"
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 20.19.0
           cache: npm
       - name: Install dependencies
         run: npm ci
+
+      - name: Verify release control
+        run: npm run verify:release-control
+
+      - name: Verify staging deployment guards
+        run: npm run verify:staging
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and handler contract tests
+        run: npm test -- --reporter=dot
+
       - name: Build frontend
+        run: npm run build
+
+      - name: Build CloudBase bundle
+        run: npm run build:cloudbase
+
+      - name: Verify prepared Production backend
+        env:
+          BACKEND_VERSION: ${{ inputs.backend_version }}
+          BACKEND_SMOKE_CONFIRMED: ${{ inputs.backend_smoke_confirmed }}
+          PRODUCTION_HEALTH_URL: https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api/api/health
+        run: |
+          if [[ "$BACKEND_SMOKE_CONFIRMED" != "CONFIRMED" ]]; then
+            echo "后端 Smoke Test 未确认，禁止发布前端"
+            exit 1
+          fi
+          HEALTH_JSON="$(curl --fail --silent --show-error "$PRODUCTION_HEALTH_URL")"
+          export HEALTH_JSON
+          node --input-type=module -e 'const body = JSON.parse(process.env.HEALTH_JSON); const expected = process.env.BACKEND_VERSION; if (body.ok !== true || body.service !== "jieyou-xiaowu-v1" || body.promptVersion !== expected) { console.error(JSON.stringify({ expected, actual: { ok: body.ok, service: body.service, promptVersion: body.promptVersion } }, null, 2)); process.exit(1); } console.log(JSON.stringify({ backendReady: true, promptVersion: body.promptVersion }, null, 2));'
+
+      - name: Build production Pages artifact
         run: npm run build:pages
         env:
           VITE_API_BASE_URL: https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-http-api
+          VITE_PAGES_BASE: /
+          VITE_INCLUDE_CNAME: 'true'
+
+      - name: Verify production artifact
+        run: npm run verify:production-build
+
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Upload Pages artifact
