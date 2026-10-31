@@ -5,31 +5,31 @@
   "spec_version": "1.0.0",
   "spec_sha256": "5aa0eb838b22ec09269d6f073ad1e0694cbeeda65f0a848d430223c6a7dbd866",
   "executor": "Codex",
-  "result_state": "COMPLETE",
+  "result_state": "PARTIAL",
   "base_sha": "861a446847f032dece7927ba358eb9f1c311fa75",
-  "head_sha": "8f5f77c6ea1740d58a40a3d39cd65c4e157d31e5",
+  "head_sha": "63d87f4827e306236bef8cd58245f96150cfab1f",
   "branch": "codex/jy-safety-001-20261031",
   "acceptance_results": [
     {
       "acceptance_id": "AT001",
-      "status": "PASS",
+      "status": "BLOCKED",
       "evidence_refs": [
         {
           "kind": "test_log",
-          "location": "worker/handler.contract.test.ts:100-117",
-          "summary": "本地 Handler 契约测试验证危险表达+真人请求返回 allowed=false，且未调用 DeepSeek；普通真人请求返回 allowed=true。"
+          "location": "server/rules.test.ts:9-44; worker/handler.contract.test.ts:100-132",
+          "summary": "本地回归与 Handler 契约测试验证引号即时危险、引号自伤表达、第三方引述、风险连续性和普通真人请求；危险链路不调用 DeepSeek。"
         },
         {
           "kind": "api_trace",
           "location": "Staging API /jieyou-v19-staging/api/safety-gate，2026-10-31，虚构测试内容",
-          "summary": "真实 Staging 请求返回 URGENT、allowed=false 和现有安全回应；未进入预约页面，也未提交预约。"
+          "summary": "现有 Staging 可达但仍运行旧版本：引号即时危险、引号自伤表达和风险后疑问句均返回 allowed=true/NO_SIGNAL_DETECTED；因此新修复尚未获得 Staging API 证据。"
         }
       ],
-      "note": "危险链路只使用虚构内容，未写入飞书或数据库。"
+      "note": "危险链路只使用虚构内容，未写入飞书或数据库；重新部署 Staging 被仓库脚本阻止，因为本机缺少显式 DEPLOY_ENV_ID 及 STAGING_* 配置。"
     },
     {
       "acceptance_id": "AT002",
-      "status": "PASS",
+      "status": "BLOCKED",
       "evidence_refs": [
         {
           "kind": "browser_e2e",
@@ -42,7 +42,7 @@
           "summary": "快捷发送、固定入口和 AI CTA 共用 moveToBooking 安全门禁；后端 /api/chat 对当前 Issue 的风险保持门禁并避免调用 DeepSeek。"
         }
       ],
-      "note": "AI CTA 先由真实 Staging 模型在虚构对话中生成，再在同一 Issue 追加危险表达后点击验证。"
+      "note": "此前浏览器证据针对 8f5f77c；本次规则修复未能部署到 Staging，故不把旧 Staging 浏览器证据扩展为本次修复的通过证据。"
     },
     {
       "acceptance_id": "AT003",
@@ -58,20 +58,20 @@
     },
     {
       "acceptance_id": "AT004",
-      "status": "PASS",
+      "status": "BLOCKED",
       "evidence_refs": [
         {
           "kind": "test_log",
-          "location": "server/rules.test.ts:9-31; worker/handler.contract.test.ts:119-132",
-          "summary": "覆盖即时危险、模糊风险、下一句真人请求不清除风险，以及明确“我现在安全，身边有人”后恢复正常支持。"
+          "location": "server/rules.test.ts:25-44; worker/handler.contract.test.ts:119-132",
+          "summary": "本地回归覆盖风险后真人/普通回复不清除风险、明确“我现在安全，身边有人”可恢复，以及疑问/选择问/失控担忧不能恢复。"
         },
         {
           "kind": "api_trace",
           "location": "Staging API /jieyou-v19-staging/api/safety-gate，2026-10-31，虚构测试内容",
-          "summary": "先有风险再请求真人返回 NEEDS_CLARIFICATION/allowed=false；安全澄清后返回 NO_SIGNAL_DETECTED/allowed=true；不同 Issue 的风险未串用。"
+          "summary": "现有 Staging 的旧版本在“风险后疑问句”上返回 allowed=true/NO_SIGNAL_DETECTED；本次修复的 Staging 复验因此被阻断。"
         }
       ],
-      "note": "风险状态只按当前 Issue 的用户消息计算，普通下一句不会自动解除，明确安全澄清可以解除。"
+      "note": "本地代码满足连续性规则；Staging 尚未重新部署，不能宣称本次修复已在真实 Staging 生效。"
     },
     {
       "acceptance_id": "AT005",
@@ -79,50 +79,53 @@
       "evidence_refs": [
         {
           "kind": "test_log",
-          "location": "server/rules.test.ts:9-31",
-          "summary": "覆盖即时危险、模糊表达、普通焦虑/失眠、否定但仍含可能危险、第三方引述等代表性样例。"
+          "location": "server/rules.test.ts:9-44",
+          "summary": "覆盖即时危险、两种引号危险表达、第三方引述、普通焦虑/失眠、否定但仍含可能危险，以及明确安全、疑问和矛盾安全陈述。"
         },
         {
           "kind": "commit",
-          "location": "8f5f77c6ea1740d58a40a3d39cd65c4e157d31e5",
-          "summary": "安全识别的引述剥离、矛盾表达处理和 Issue 风险连续性测试随实现提交。"
+          "location": "63d87f4827e306236bef8cd58245f96150cfab1f",
+          "summary": "安全识别仅在明确第三方归属时忽略引号内容；未归属危险表达保留为当前用户信号，安全澄清只接受明确肯定形式。"
         }
       ],
       "note": "这是规则级安全分流，不是临床风险评估；关键词和语义边界仍需真实用户/导师反馈验证。"
     },
     {
       "acceptance_id": "AT006",
-      "status": "PASS",
+      "status": "BLOCKED",
       "evidence_refs": [
         {
           "kind": "test_log",
-          "location": "npm run typecheck; npm test -- --reporter=dot; npm run build:cloudbase; npm run build:pages",
-          "summary": "类型检查通过；11 个测试文件、84 个测试通过；CloudBase 和 Pages 构建均通过。"
+          "location": "npm run typecheck; npm test -- --reporter=dot; npm run build; npm run build:cloudbase; npm run build:pages",
+          "summary": "类型检查通过；11 个测试文件、85 个测试通过；普通、CloudBase 和 Pages 构建均通过。"
         },
         {
           "kind": "api_trace",
           "location": "Staging health 与安全接口：/jieyou-v19-staging/health、/api/safety-gate、/api/chat、/api/appointments，2026-10-31",
-          "summary": "健康检查返回 promptVersion v1.9.0；安全门禁、聊天安全短路、Issue 隔离和危险预约后端复核均通过；危险预约在飞书调用前返回 409 SAFETY_GATE_BLOCKED。"
+          "summary": "现有 Staging 安全门禁可达，普通真人请求与明确安全陈述返回 allowed=true；但其旧版本对本次三类回归输入错误放行，不能作为新代码验收证据。"
         },
         {
           "kind": "manual_check",
           "location": "npm run verify:staging; npm run verify:staging-build; git status --short --branch，2026-10-31",
-          "summary": "Staging 函数/Pages 隔离检查通过，构建中存在 Staging API 且无 Production API/CNAME/密钥名/Growth 入口；Production 未部署、未写入正式飞书或数据库；现有 docs 未跟踪资料保持原样。"
+          "summary": "Staging 函数/Pages 隔离检查通过，构建中存在 Staging API 且无 Production API/CNAME/密钥名/Growth 入口；本地未重新部署 Staging；Production 未部署、未写入正式飞书或数据库。"
         }
       ],
       "note": "未执行普通成功预约提交、状态回写或正式导师接待验收，以遵守不写入飞书/数据库的任务边界；相关本地 Mock 幂等与状态测试仍通过。"
     }
   ],
   "deployment": {
-    "performed": true,
+    "performed": false,
     "environment": "staging",
-    "reference": "CloudBase function jieyou-v19-staging and Pages hosting path v19-staging; 2026-10-31",
+    "reference": "未执行当前修复的 Staging 部署：.env.local 未提供显式 DEPLOY_ENV_ID、DEPLOY_API_DOMAIN、DEPLOY_API_BASE_URL 及 STAGING_* 配置；既有线上 Staging 仅做只读探测",
     "production_writes_performed": false
   },
-  "blockers": [],
+  "blockers": [
+    "Staging 重新部署被 scripts/deploy-cloudbase.mjs 在部署前阻止：本机缺少显式 staging DEPLOY_ENV_ID 及 STAGING_* 运行配置；未猜测或复用 Production 凭据。",
+    "现有 Staging 对本次新增回归样例仍返回旧实现结果，AT001、AT002、AT004、AT006 的真实 Staging 验收不能标记通过。"
+  ],
   "deviations": [
     "未修改 server/http.ts；当前 Staging 实际入口为 cloudbase/functions/web-entry.ts → worker/handler.ts，本任务按真实 Staging 路径实施。",
-    "CloudBase/Wrangler 构建输出了无法写入用户目录日志文件的 EPERM 警告，但构建命令退出码为 0，产物与 Staging 校验均通过。",
+    "本次未重新部署 Staging；现有 Staging 只读探测使用虚构内容，未提交预约、未调用聊天模型、未写入飞书或数据库。",
     "未执行普通成功预约提交和 Production 只读业务探测，避免越过任务要求的飞书/数据库与 Production 边界。"
   ],
   "improvement_proposals": [
@@ -132,6 +135,6 @@
       "evidence": "AT005 通过的规则样例与 task.yaml 对不声称临床风险评估的约束。"
     }
   ],
-  "summary_for_user": "R001-R006 已在任务分支完成最小安全分流修复。安全门禁已覆盖聊天、快捷真人请求、固定入口、AI CTA、预约提交后端复核，并按当前 Issue 保持风险直到明确安全澄清；本地自动测试、Staging API、Staging 浏览器链路和隔离构建检查均通过。实现代码提交为 8f5f77c6ea1740d58a40a3d39cd65c4e157d31e5。结果仅提交复核，ready_for_release=false；未合并 main、未部署 Production、未写入正式飞书或数据库。",
+  "summary_for_user": "两处最小修复已在原任务分支完成：未明确第三方归属的引号危险表达不再被删除；风险状态只接受明确肯定的安全陈述解除。本地全量自动检查通过，但当前分支尚未重新部署到 Staging；现有 Staging 仍暴露旧实现，因此真实 Staging 验收为 PARTIAL/BLOCKED。未合并 main、未部署 Production、未写入正式飞书或数据库。",
   "ready_for_release": false
 }
