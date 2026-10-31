@@ -80,12 +80,16 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .home-copy h1 { margin: 0; color: #28483e; font-family: Georgia, "Songti SC", serif; font-size: clamp(42px, 4.8vw, 64px); font-weight: 400; letter-spacing: -.08em; line-height: 1.12; }
 .home-heading-line { white-space: nowrap; }
 .home-copy h1 em { color: #4f8777; font-style: normal; }
-.home-intro { max-width: 31em; margin: 25px 0 30px; color: #5f756c; font-size: 16px; line-height: 1.9; }
+.home-intro { max-width: 34em; margin: 25px 0 30px; color: #5f756c; font-size: 16px; line-height: 1.9; }
+.home-intro p { margin: 0 0 10px; }
+.home-intro p:last-child { margin-bottom: 0; }
 .home-cta { display: inline-flex; align-items: center; gap: 18px; padding: 14px 22px 14px 24px; border: 1px solid #356c5b; border-radius: 999px; background: #356c5b; color: #fff; font-size: 15px; box-shadow: 0 12px 24px rgba(53, 108, 91, .16); transition: transform .18s, background .18s, box-shadow .18s; }
 .home-cta span { font-size: 22px; line-height: .7; }
 .home-cta:hover { background: #2f604f; box-shadow: 0 15px 28px rgba(53, 108, 91, .22); transform: translateY(-2px); }
 .home-cta:active { transform: translateY(0); }
+.home-cta:focus-visible { outline: 3px solid rgba(79, 135, 119, .32); outline-offset: 4px; }
 .home-note { margin: 14px 0 0; color: #9aa9a1; font-size: 11px; }
+.home-privacy { max-width: 48em; margin: 12px 0 0; color: #8a9992; font-size: 11px; line-height: 1.7; }
 .home-growth-link { display: inline-flex; align-items: center; gap: 8px; margin-top: 24px; color: #4f8777; font-size: 13px; text-decoration: none; text-underline-offset: 4px; }
 .home-growth-link:hover { text-decoration: underline; }
 .home-scene { position: relative; display: grid; place-items: center; min-height: 430px; }
@@ -136,9 +140,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .home-hero { display: block; min-height: auto; padding: 62px 8px 38px; }
   .home-eyebrow { margin-bottom: 17px; font-size: 11px; }
   .home-copy h1 { font-size: clamp(36px, 10vw, 52px); line-height: 1.17; letter-spacing: -.1em; }
-  .home-intro { margin: 20px 0 24px; font-size: 14px; line-height: 1.8; }
+  .home-intro { margin: 20px 0 24px; font-size: 14px; line-height: 1.75; }
+  .home-intro p { margin-bottom: 8px; }
   .home-cta { padding: 13px 19px 13px 21px; font-size: 14px; }
   .home-note { font-size: 10px; }
+  .home-privacy { margin-top: 10px; font-size: 10px; line-height: 1.65; }
   .home-scene { min-height: 345px; margin-top: 28px; }
   .home-scene-halo { width: 270px; height: 270px; }
   .home-scene-card { width: min(100%, 330px); padding: 83px 24px 27px; border-radius: 24px; }
