@@ -66,7 +66,6 @@ function HomePage() {
           <div className="home-intro"><p>有些话，不想告诉熟人；有些委屈，也不知道从何说起。</p><p>没关系。这里不需要你坚强，也不需要你把话说得多有条理。</p><p>你可以匿名说出心里的烦恼、情绪和难以启齿的事。我会认真听，陪你一点点梳理。</p><p>想说多少，就说多少。不着急，我们慢慢来。</p></div>
           <button className="home-cta" type="button" onClick={openChat}>匿名说说心事 <span aria-hidden="true">→</span></button>
           <p className="home-note">无需注册 · 不用实名 · 你决定说多少</p>
-          <p className="home-privacy">聊天内容会发送至云端 AI 生成回复；会话记录默认保存在当前浏览器。只有主动预约真人支持时才需要填写联系方式。</p>
           {growthEnabled && <a className="home-growth-link" href={appPath('/growth')}>看看最近的我 <span aria-hidden="true">→</span></a>}
         </div>
 
