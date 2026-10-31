@@ -6,6 +6,7 @@ import { deleteLearningSession, getLearningConsent, getLearningSessionId, Learni
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import { readAppRoute } from './router.js';
+import { requestSafetyGate } from './safety-gate.js';
 import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay } from './chat-messages.js';
 import './styles.css';
 
@@ -172,6 +173,7 @@ function ChatPage() {
   const learningSessionIdRef = useRef(getLearningSessionId());
   const learningTrackerRef = useRef(new LearningMetricsTracker());
   const learningFinalizedRef = useRef(false);
+  const bookingGatePendingRef = useRef(false);
   const growthConsentRef = useRef(getGrowthConsent());
   const growthIdRef = useRef(getGrowthId());
   const sessionIdRef = useRef('jieyou-main-session');
@@ -214,11 +216,29 @@ function ChatPage() {
     return fresh.issue_id;
   }
 
-  async function moveToBooking() {
-    await ensureBookingIssueId();
-    learningTrackerRef.current.markBookingClicked();
-    emitLearningEvent('booking_clicked', { entry: 'chat' });
-    location.href = appPath('/booking');
+  async function moveToBooking(preparedIssueId?: string) {
+    if (!session || bookingGatePendingRef.current) return;
+    bookingGatePendingRef.current = true;
+    setError('');
+    try {
+      const issueId = preparedIssueId || await ensureBookingIssueId();
+      if (!issueId) return;
+      const gate = await requestSafetyGate(apiBaseUrl, messagesRef.current.map(messagePayload), issueId);
+      if (!gate.allowed) {
+        const assistant = await addMessage(session.id, 'assistant', gate.reply || '我想先确认你的安全，再继续预约。', issueId);
+        messagesRef.current = [...messagesRef.current, assistant];
+        learningTrackerRef.current.recordAssistant(assistant.content);
+        setMessages(messagesRef.current);
+        return;
+      }
+      learningTrackerRef.current.markBookingClicked();
+      emitLearningEvent('booking_clicked', { entry: 'chat' });
+      location.href = appPath('/booking');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '安全检查暂时不可用，请稍后重试');
+    } finally {
+      bookingGatePendingRef.current = false;
+    }
   }
 
   function renderVoiceText() {
@@ -400,7 +420,7 @@ function ChatPage() {
       messagesRef.current = [...messagesRef.current, userMessage];
       learningTrackerRef.current.recordUser(content);
       setMessages(messagesRef.current);
-      await moveToBooking();
+      await moveToBooking(issueId || undefined);
       return;
     }
     if (/清除|删除|清空.*(?:聊天|记录)|聊天记录.*清除/.test(content)) {
@@ -493,14 +513,14 @@ function ChatPage() {
           <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
         </header>
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
-          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
+          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
       </div>
       <div className="chat-dock">
         <div className="chat-options">
-          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={moveToBooking}>免费预约真人聊聊 →</button></div>
+          <div className="quick-prompts-heading"><p>大家都在问 <span>→</span></p><button className="human-entry" onClick={() => void moveToBooking()}>免费预约真人聊聊 →</button></div>
           <div className="quick-prompt-list">{quickPrompts.map((prompt) => <button key={prompt} onClick={() => useQuickPrompt(prompt)}>{prompt}</button>)}</div>
         </div>
         <section className="composer-card">
@@ -576,7 +596,32 @@ function BookingPage() {
   async function submit() {
     if (!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting) return;
     setError(''); setSubmitting(true);
-    try { if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() }); const original = generatedSummaryRef.current.trim(); const edited = original && original !== summary.trim(); const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length); const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0; if (edited) emitBookingLearning('summary_edited', ratio); const bookingCaseId = `booking_${requestId}`; const result = await api<{ requestId: string; recordId?: string; status: string; bookingCaseId?: string }>('/api/appointments', { method: 'POST', body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: session?.currentIssueId, bookingCaseId }) }); if (session) { const submittedAt = new Date().toISOString(); const snapshot: BookingCaseSnapshot = { booking_case_id: result.bookingCaseId || bookingCaseId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null }; await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot); } location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`); }
+    try {
+      const currentIssueId = session?.currentIssueId;
+      const gate = await requestSafetyGate(apiBaseUrl, messages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })), currentIssueId);
+      if (!gate.allowed) {
+        setError(gate.reply || '我想先确认你的安全，再继续预约。');
+        setSubmitting(false);
+        return;
+      }
+      if (session) await saveSessionProfile(session.id, { nickname: nickname.trim(), contact: contact.trim() });
+      const original = generatedSummaryRef.current.trim();
+      const edited = original && original !== summary.trim();
+      const changed = original.split('').reduce((count, character, index) => count + (character !== summary.trim()[index] ? 1 : 0), 0) + Math.max(0, summary.trim().length - original.length);
+      const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0;
+      if (edited) emitBookingLearning('summary_edited', ratio);
+      const bookingCaseId = `booking_${requestId}`;
+      const result = await api<{ requestId: string; recordId?: string; status: string; bookingCaseId?: string }>('/api/appointments', {
+        method: 'POST',
+        body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: currentIssueId, bookingCaseId, messages: messages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) }),
+      });
+      if (session) {
+        const submittedAt = new Date().toISOString();
+        const snapshot: BookingCaseSnapshot = { booking_case_id: result.bookingCaseId || bookingCaseId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null };
+        await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot);
+      }
+      location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`);
+    }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
   function goBack() { location.href = appPath('/chat'); }

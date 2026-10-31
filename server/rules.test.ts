@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, routeConcern } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, recentSafetyStatus, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('支持多标签分类，并保留当前主题优先顺序', () => {
@@ -12,6 +12,25 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectSafety('我已经不想活了')).toBe('NEEDS_CLARIFICATION');
     expect(routeConcern('我现在正准备伤害自己，我想预约真人', 'URGENT')).toBe('EMERGENCY_SUPPORT');
     expect(analyzeConversation('我现在正准备伤害自己').conversation_state).toBe('SAFETY_SUPPORT');
+  });
+
+  it('安全识别覆盖否定、引述和矛盾表达，不把普通低落当成即时危险', () => {
+    expect(detectSafety('最近很焦虑、睡不着，也很疲惫')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我没有自杀念头，但有点活不下去的感觉')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说“我不想活了”，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
+    const urgent = [
+      { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },
+      { role: 'user' as const, content: '我想找真人导师', issueId: 'issue-a' },
+    ];
+    expect(recentSafetyStatus(urgent)).toBe('URGENT');
+    expect(recentSafetyStatus([...urgent, { role: 'user' as const, content: '我现在安全，身边有人', issueId: 'issue-a' }])).toBe('NO_SIGNAL_DETECTED');
+    expect(recentSafetyStatus([
+      { role: 'user' as const, content: '我已经不想活了', issueId: 'issue-a' },
+      { role: 'user' as const, content: '我想预约真人', issueId: 'issue-a' },
+    ])).toBe('NEEDS_CLARIFICATION');
   });
 
   it('用户明确要真人时不要求先完成探索', () => {
