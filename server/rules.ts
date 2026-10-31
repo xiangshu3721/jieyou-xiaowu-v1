@@ -147,24 +147,34 @@ export function classifyConcern(text: string): TopicCode[] {
 }
 
 export function detectSafety(text: string): SafetyStatus {
-  // Quoted speech is not enough to establish that the current user is in danger.
-  // Keep the surrounding sentence so an attribution can still be handled by the
-  // normal conversation flow, while avoiding a direct crisis block for examples
-  // such as “朋友说‘我不想活了’”。
-  const unquotedText = text.replace(/[“「『][^”」』]*[”」』]|"[^"]*"|'[^']*'/g, ' ');
-  const clauses = unquotedText.split(/[，。！？\n]/).map((clause) => clause.trim()).filter(Boolean);
+  // Only suppress a quoted segment when the surrounding text explicitly
+  // attributes it to another person. A first-person quote without that
+  // attribution is still a current-user signal, e.g. “我现在正准备伤害自己”
+  // or 我现在想“自杀”.
+  const quotedText = text.replace(/[“「『][^”」』]*[”」』]|"[^"]*"|'[^']*'/g, (quote, offset) => {
+    const before = text.slice(Math.max(0, offset - 32), offset);
+    const after = text.slice(offset + quote.length, offset + quote.length + 32);
+    const thirdParty = /(?:朋友|他人|对方|家人|同事|同学|伴侣|父母|孩子|有人|他说|她说|对方说|某人)(?:刚刚|之前|曾经|一直)?(?:说|表示|提到|告诉我|发来|写道)\s*[:：]?\s*$/.test(before)
+      || /^\s*[,，。:：]?\s*(?:朋友|他人|对方|家人|同事|同学|伴侣|父母|孩子|有人|某人)(?:刚刚|之前|曾经|一直)?(?:说|表示|提到|告诉我|发来|写道)/.test(after);
+    return thirdParty ? ' ' : quote;
+  });
+  const clauses = quotedText.split(/[，。！？\n]/).map((clause) => clause.trim()).filter(Boolean);
   const explicitNegative = /(?:没有|不会|不想|并没有|没打算).{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/;
   if (clauses.some((clause) => immediateDangerPatterns.some((pattern) => pattern.test(clause)) && !explicitNegative.test(clause))) return 'URGENT';
-  const negativeMatch = unquotedText.match(explicitNegative);
-  if (negativeMatch && !possibleDangerPatterns.some((pattern) => pattern.test(unquotedText.replace(negativeMatch[0], '')))) return 'NO_SIGNAL_DETECTED';
-  if (possibleDangerPatterns.some((pattern) => pattern.test(unquotedText))) return 'NEEDS_CLARIFICATION';
+  const negativeMatch = quotedText.match(explicitNegative);
+  if (negativeMatch && !possibleDangerPatterns.some((pattern) => pattern.test(quotedText.replace(negativeMatch[0], '')))) return 'NO_SIGNAL_DETECTED';
+  if (possibleDangerPatterns.some((pattern) => pattern.test(quotedText))) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
 }
 
 function isSafetyClarification(text: string) {
-  const compact = text.replace(/[，。！？、\s]/g, '');
-  return /^(?:我)?(?:现在)?(?:安全|是安全的|没有危险)(?:了|啦)?(?:身边有人|有人陪着我|已经离开危险环境)?$/.test(compact)
-    || /现在(?:是)?安全(?:的)?/.test(compact);
+  const normalized = text.trim().replace(/\s+/g, ' ');
+  if (!normalized || /[?？]/.test(normalized)) return false;
+  // Do not let uncertainty, a feared loss of control, or a mixed statement
+  // clear a pending risk. This is intentionally a positive-form assertion,
+  // not a punctuation-stripped substring check.
+  if (/(?:还是|是否|吗|么|不确定|不知道|怕|担心|失控|可能|不安全|危险|会)/.test(normalized)) return false;
+  return /^(?:(?:我(?:现在|此刻)?|现在我|目前我)?(?:是)?安全(?:的)?(?:了|啦)?(?:[，,、](?:我)?(?:身边有人|有人陪着我|已经离开危险环境|在安全的地方))?|(?:我)?没有危险)[。.]?$/.test(normalized);
 }
 
 /**

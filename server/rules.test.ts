@@ -8,6 +8,8 @@ describe('解忧小屋智能导诊规则', () => {
 
   it('对可信即时危险进入安全支持，对模糊表达先澄清', () => {
     expect(detectSafety('我现在正准备伤害自己')).toBe('URGENT');
+    expect(detectSafety('“我现在正准备伤害自己”')).toBe('URGENT');
+    expect(detectSafety('我现在想“自杀”')).not.toBe('NO_SIGNAL_DETECTED');
     expect(detectSafety('我没有想过自杀，但现在正准备伤害自己')).toBe('URGENT');
     expect(detectSafety('我已经不想活了')).toBe('NEEDS_CLARIFICATION');
     expect(routeConcern('我现在正准备伤害自己，我想预约真人', 'URGENT')).toBe('EMERGENCY_SUPPORT');
@@ -31,6 +33,14 @@ describe('解忧小屋智能导诊规则', () => {
       { role: 'user' as const, content: '我已经不想活了', issueId: 'issue-a' },
       { role: 'user' as const, content: '我想预约真人', issueId: 'issue-a' },
     ])).toBe('NEEDS_CLARIFICATION');
+  });
+
+  it('只有明确肯定的安全陈述可以解除风险，疑问或矛盾表达不能解除', () => {
+    const urgent = { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' };
+    expect(recentSafetyStatus([urgent, { role: 'user' as const, content: '我现在安全，身边有人', issueId: 'issue-a' }])).toBe('NO_SIGNAL_DETECTED');
+    for (const content of ['我现在安全了吗？', '我现在安全还是不安全？', '我现在安全，但我很怕自己会失控', '我想找真人导师']) {
+      expect(recentSafetyStatus([urgent, { role: 'user' as const, content, issueId: 'issue-a' }])).toBe('URGENT');
+    }
   });
 
   it('用户明确要真人时不要求先完成探索', () => {
