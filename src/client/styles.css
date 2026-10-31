@@ -28,18 +28,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .compact-resource-link span { font-size: 13px; }
 .compact-avatar { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: #4f8777; color: #fffdf7; font-family: Georgia, "Songti SC", serif; font-size: 10px; font-weight: 600; line-height: 1.05; }
 .compact-header strong { color: #28483e; font-size: 15px; font-weight: 650; letter-spacing: -.03em; }
-.welcome-card { position: relative; flex: 0 0 auto; overflow: visible; padding: 72px 36px 26px; border: 2px solid #ebe7df; border-radius: 28px; background: repeating-linear-gradient(90deg, rgba(244, 239, 230, .35) 0, rgba(244, 239, 230, .35) 2px, transparent 2px, transparent 9px), #fffdfa; text-align: center; }
 .chat-resource-links { position: absolute; top: 22px; right: 22px; z-index: 2; display: flex; align-items: center; gap: 7px; }
 .resource-button { display: inline-flex; align-items: center; gap: 3px; padding: 7px 11px; border: 1px solid #b8d7c4; border-radius: 999px; background: rgba(255, 255, 255, .88); color: #4f8777; font-size: 12px; line-height: 1.2; text-decoration: none; white-space: nowrap; transition: border-color .18s, background .18s, transform .18s; }
 .resource-button:hover { border-color: #78a992; background: #f4fbf5; transform: translateY(-1px); }
 .resource-button:active { transform: translateY(0) scale(.98); }
 .resource-button span { font-size: 13px; line-height: 1; }
-.avatar-badge { position: absolute; top: -58px; left: 50%; display: grid; place-items: center; width: 112px; height: 112px; transform: translateX(-50%); border: 2px solid #eee9e1; border-radius: 50%; background: #fff; box-shadow: 0 0 0 7px rgba(255,255,255,.9); }
-.avatar-core { display: grid; place-items: center; width: 86px; height: 86px; border-radius: 50%; background: #4f8777; color: #fffdf7; font-family: Georgia, "Songti SC", serif; font-size: 20px; font-weight: 600; line-height: 1.15; letter-spacing: .12em; }
-.avatar-badge > span { position: absolute; bottom: 24px; left: 50%; color: #dcefe4; font-size: 21px; transform: translateX(-50%); }
-.welcome-card h1 { margin: 0 0 14px; color: #28483e; font-size: clamp(28px, 5vw, 39px); font-weight: 650; letter-spacing: -.05em; line-height: 1.1; }
-.welcome-tags { display: flex; justify-content: center; gap: 22px; margin-bottom: 17px; }.welcome-tags span { position: relative; padding: 0 0 0 13px; color: #5b927c; font-size: 14px; font-weight: 550; letter-spacing: .04em; }.welcome-tags span::before { position: absolute; top: 50%; left: 0; width: 5px; height: 5px; border-radius: 50%; background: #a7cfb5; content: ''; transform: translateY(-50%); }
-.welcome-card p { max-width: 650px; margin: 0 auto; color: #3a4542; font-size: clamp(18px, 3vw, 24px); line-height: 1.55; text-align: left; }
 .message-stream { margin: 20px 0 10px; padding: 8px 2px; }
 .message-row { display: flex; margin: 12px 0; }.message-row.user { justify-content: flex-end; }.message-bubble { max-width: min(650px, 88%); padding: 13px 16px; border-radius: 15px 15px 15px 4px; background: #edf5ef; color: #314e44; font-size: 15px; line-height: 1.75; white-space: pre-wrap; word-break: break-word; }.message-row.user .message-bubble { border-radius: 15px 15px 4px 15px; background: #4f8777; color: #fff; }
 .message-cta { display: block; width: fit-content; max-width: 100%; margin-top: 12px; padding: 8px 12px; border: 1px solid #a9cdb9; border-radius: 999px; background: #f7fcf8; color: #397260; font-size: 13px; line-height: 1.35; white-space: nowrap; transition: background .18s, border-color .18s, transform .18s; }.message-cta:hover { border-color: #6f9f8c; background: #eff8f1; }.message-cta:active { transform: translateY(1px) scale(.98); }
@@ -74,19 +67,6 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .chat-about-link:hover { border-color: #b9d9c4; background: #f8fcf9; transform: translateY(-1px); }
 .compact-header-brand > div { display: block; }
 .compact-header-brand small { display: block; margin-top: 2px; color: #8aa59a; font-size: 9px; font-weight: 400; }
-.welcome-card { max-width: 540px; margin: 0 auto; padding: 34px 38px 37px; border: 1px solid #edf2ee; border-radius: 25px; background: rgba(255, 255, 255, .94); box-shadow: 0 18px 40px rgba(62, 101, 79, .08); text-align: left; }
-.welcome-sprout { position: absolute; top: 0; left: -116px; width: 88px; height: 88px; border-radius: 50%; background: #f0f8f2; }
-.welcome-sprout b { position: absolute; left: 43px; top: 43px; width: 2px; height: 24px; border-radius: 3px; background: #7cac8e; transform: rotate(-4deg); }
-.welcome-sprout i, .welcome-leaf i { position: absolute; display: block; width: 22px; height: 13px; border-radius: 100% 0 100% 0; background: #75ad88; transform: rotate(28deg); }
-.welcome-sprout i:first-child { left: 26px; top: 34px; }
-.welcome-sprout i:last-of-type { left: 43px; top: 27px; transform: rotate(-22deg) scale(.85); }
-.welcome-card h1 { display: flex; align-items: center; gap: 10px; margin: 0 0 28px; color: #1f2926; font-size: 28px; font-weight: 650; letter-spacing: -.05em; line-height: 1.3; }
-.welcome-leaf { position: relative; display: inline-block; width: 27px; height: 28px; }
-.welcome-leaf i:first-child { left: 1px; top: 10px; transform: rotate(26deg) scale(.75); }
-.welcome-leaf i:last-child { left: 10px; top: 2px; transform: rotate(-22deg); }
-.welcome-copy { color: #3b4742; font-size: 22px; line-height: 1.7; }
-.welcome-copy p { max-width: none; margin: 0; color: inherit; font-size: inherit; line-height: inherit; text-align: left; }
-.welcome-copy p + p { margin-top: 27px; }
 .message-stream { width: min(100%, 620px); margin: 44px auto 18px; padding: 0; }
 .message-row { align-items: flex-start; margin: 18px 0; }
 .welcome-message { margin-top: 24px; }
@@ -104,20 +84,9 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .chat-topbar-brand span { margin-top: 3px; font-size: 12px; }
   .chat-about-link { gap: 6px; padding: 9px 12px; font-size: 12px; }
   .chat-about-link::before { width: 9px; height: 11px; }
-  .welcome-card { width: calc(100% - 58px); max-width: none; margin-left: 58px; padding: 22px 18px 22px; border-radius: 20px; }
-  .welcome-sprout { left: -58px; width: 46px; height: 46px; }
-  .welcome-sprout b { left: 22px; top: 22px; height: 15px; }
-  .welcome-sprout i { width: 13px; height: 8px; }
-  .welcome-sprout i:first-child { left: 13px; top: 17px; }
-  .welcome-sprout i:last-of-type { left: 22px; top: 13px; }
-  .welcome-card h1 { gap: 6px; margin-bottom: 18px; font-size: 20px; }
-  .welcome-leaf { width: 20px; height: 20px; transform: scale(.75); transform-origin: left center; }
-  .welcome-copy { font-size: 15px; line-height: 1.58; }
-  .welcome-copy p + p { margin-top: 14px; }
   .message-stream { width: calc(100% - 8px); margin: 30px auto 12px; }
   .message-row { margin: 14px 0; }
-  .welcome-message { margin-top: 18px; }
-  .message-bubble { max-width: 90%; padding: 12px 15px; border-radius: 17px 17px 17px 6px; font-size: 14px; }
+  .message-bubble { max-width: 90%; padding: 12px 15px; border-radius: 17px 17px 17px 6px; font-size: 16px; line-height: 1.7; }
   .message-row.user .message-bubble { border-radius: 17px 17px 6px 17px; }
 }
 
@@ -217,4 +186,22 @@ button:disabled { cursor: not-allowed; opacity: .48; }
   .home-footer { padding: 0 8px; font-size: 9px; }
   .chat-footer { align-items: flex-start; }
   .chat-footer-meta { gap: 7px; }
+}
+
+/* Final chat overrides: keep the first viewport focused on the real conversation. */
+.compact-avatar,
+.chat-topbar-avatar { display: flex; align-items: center; justify-content: center; padding: 0; text-align: center; line-height: 1; }
+.compact-avatar > span,
+.chat-topbar-avatar > span { display: block; line-height: 1; transform: translateY(-.02em); }
+.chat-topbar { margin-bottom: 24px; }
+.message-stream { margin: 0 auto 18px; }
+.welcome-message { margin-top: 0; }
+.message-bubble { max-width: min(620px, 92%); padding: 14px 18px; font-size: 16px; line-height: 1.7; }
+.message-row { margin: 14px 0; }
+
+@media (max-width: 760px) {
+  .chat-topbar { margin-bottom: 20px; }
+  .message-stream { width: calc(100% - 8px); margin: 0 auto 12px; }
+  .message-bubble { max-width: 92%; padding: 13px 16px; font-size: 16px; line-height: 1.7; }
+  .message-row { margin: 12px 0; }
 }

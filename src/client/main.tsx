@@ -485,18 +485,13 @@ function ChatPage() {
       <div ref={chatScrollRef} className={`chat-scroll ${visibleMessages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
         <div className="compact-header" aria-hidden={!scrolled}>
           <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于我们 <span aria-hidden="true">↗</span></a>
-          <div className="compact-header-brand"><div className="compact-avatar">解<br />忧</div><div><strong>解忧小屋</strong><small>AI 倾听 · 温和陪伴</small></div></div>
+          <div className="compact-header-brand"><div className="compact-avatar"><span>解<br />忧</span></div><div><strong>解忧小屋</strong><small>AI 倾听 · 温和陪伴</small></div></div>
           {growthEnabled && <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
         </div>
         <header className="chat-topbar">
-          <div className="chat-topbar-brand"><div className="chat-topbar-avatar">解<br />忧</div><div><strong>解忧小屋</strong><span>AI 倾听 · 温和陪伴</span></div></div>
+          <div className="chat-topbar-brand"><div className="chat-topbar-avatar"><span>解<br />忧</span></div><div><strong>解忧小屋</strong><span>AI 倾听 · 温和陪伴</span></div></div>
           <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
         </header>
-        <section className="welcome-card">
-          <div className="welcome-sprout" aria-hidden="true"><i /><i /><b /></div>
-          <h1>嗨，我是解忧小屋 <span className="welcome-leaf" aria-hidden="true"><i /><i /></span></h1>
-          <div className="welcome-copy"><p>无论是情绪、压力、工作、家庭，还是任何让你困扰的事情，都可以在这里和我聊聊。</p><p>你可以自由表达，不需要伪装，也不需要想好怎么说。我会认真听，一直在这里陪着你。</p></div>
-        </section>
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
           {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
