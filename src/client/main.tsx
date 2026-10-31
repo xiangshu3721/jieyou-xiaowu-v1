@@ -493,8 +493,8 @@ function ChatPage() {
           <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
         </header>
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
-          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
-          {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
+          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
+          {sending && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
       </div>
