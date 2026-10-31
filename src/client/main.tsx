@@ -6,6 +6,7 @@ import { deleteLearningSession, getLearningConsent, getLearningSessionId, Learni
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import { readAppRoute } from './router.js';
+import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay } from './chat-messages.js';
 import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -477,26 +478,27 @@ function ChatPage() {
 
   function useQuickPrompt(prompt: string) { setInput(prompt); }
 
+  const visibleMessages = session ? messagesForDisplay(session, messages) : messages;
+
   return <div className="app-shell">
     <main className={`chat-page ${scrolled ? 'is-scrolled' : ''}`}>
-      <div ref={chatScrollRef} className={`chat-scroll ${messages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
+      <div ref={chatScrollRef} className={`chat-scroll ${visibleMessages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
         <div className="compact-header" aria-hidden={!scrolled}>
-          <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于 ASVA <span aria-hidden="true">↗</span></a>
-          <div className="compact-header-brand"><div className="compact-avatar">解<br />忧</div><strong>解忧小屋</strong></div>
+          <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于我们 <span aria-hidden="true">↗</span></a>
+          <div className="compact-header-brand"><div className="compact-avatar">解<br />忧</div><div><strong>解忧小屋</strong><small>AI 倾听 · 温和陪伴</small></div></div>
           {growthEnabled && <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
         </div>
+        <header className="chat-topbar">
+          <div className="chat-topbar-brand"><div className="chat-topbar-avatar">解<br />忧</div><div><strong>解忧小屋</strong><span>AI 倾听 · 温和陪伴</span></div></div>
+          <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
+        </header>
         <section className="welcome-card">
-          <div className="chat-resource-links" aria-label="更多入口">
-            <a className="resource-button" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于 ASVA <span aria-hidden="true">↗</span></a>
-            {growthEnabled && <a className="resource-button" href={appPath('/growth')}>最近的我</a>}
-          </div>
-          <div className="avatar-badge"><div className="avatar-core">解<br />忧</div><span>·</span></div>
-          <h1>Hi，我是解忧小屋</h1>
-          <div className="welcome-tags"><span>AI 倾听</span><span>温和陪伴</span></div>
-          <p>情绪、情感、工作、家庭等困扰，都可以问我，我会陪着你一起</p>
+          <div className="welcome-sprout" aria-hidden="true"><i /><i /><b /></div>
+          <h1>嗨，我是解忧小屋 <span className="welcome-leaf" aria-hidden="true"><i /><i /></span></h1>
+          <div className="welcome-copy"><p>无论是情绪、压力、工作、家庭，还是任何让你困扰的事情，都可以在这里和我聊聊。</p><p>你可以自由表达，不需要伪装，也不需要想好怎么说。我会认真听，一直在这里陪着你。</p></div>
         </section>
-        {messages.length > 0 && <section className="message-stream" aria-live="polite">
-          {messages.map((message) => <div key={message.id} className={`message-row ${message.role}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
+        {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
+          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}><div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={moveToBooking}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
