@@ -50,6 +50,7 @@ const jsonHeaders = {
   'Content-Type': 'application/json; charset=utf-8',
   'Cache-Control': 'no-store',
 };
+const productionOrigin = 'https://xiangshu3721.github.io';
 
 const requestCounts = new Map<string, { count: number; resetAt: number }>();
 let feishuTokenCache: { token: string; expiresAt: number } | null = null;
@@ -57,10 +58,14 @@ let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseL
 let growthStoreCache: { key: string; store: ReturnType<typeof createCloudBaseGrowthStore> } | null = null;
 
 function json(status: number, body: unknown, request?: Request) {
+  const corsHeaders: Record<string, string> = request?.headers.get('Origin') === productionOrigin
+    ? { 'Access-Control-Allow-Origin': productionOrigin }
+    : {};
   return new Response(status === 204 ? null : JSON.stringify(body), {
     status,
     headers: {
       ...jsonHeaders,
+      ...corsHeaders,
       'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token',
       'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS',
     },
