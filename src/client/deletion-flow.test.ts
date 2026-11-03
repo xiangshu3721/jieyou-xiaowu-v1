@@ -43,4 +43,17 @@ describe('聊天删除边界', () => {
     expect(clearBody).toContain('await clearLocalMessages();');
     expect(clearBody).toContain('const freshSession = await getOrCreateSession();');
   });
+
+  it('真人快捷预约的异步过程也使用 sending 保护', () => {
+    const bookingStart = source.indexOf('if (wantsHumanBooking(content))');
+    const normalSendStart = source.indexOf("\n    setInput(''); setError(''); setSending(true); setSendingPhase('listening');", bookingStart + 1);
+    expect(bookingStart).toBeGreaterThanOrEqual(0);
+    expect(normalSendStart).toBeGreaterThan(bookingStart);
+    const bookingBody = source.slice(bookingStart, normalSendStart);
+
+    expect(bookingBody).toContain("setInput(''); setError(''); setSending(true); setSendingPhase('listening');");
+    expect(bookingBody).toContain('await ensureBookingIssueId()');
+    expect(bookingBody).toContain('await moveToBooking(issueId || undefined);');
+    expect(bookingBody).toContain('setSending(false); setSendingPhase(\'listening\');');
+  });
 });

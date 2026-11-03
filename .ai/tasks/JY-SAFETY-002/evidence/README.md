@@ -14,6 +14,7 @@
 - **AT002 / R002：PASS（行为已完成；IndexedDB UUID 读取受工具能力限制）**
   - `automation-regression.log`：静态边界测试覆盖发送期间禁用清空、确认文案、清空后重新读取 Session/Issue 和两类失败提示；92 项测试全部通过。
   - `browser-e2e-2026-11-03.md`：全新隔离 in-app 浏览器中完成 Cancel、OK、刷新、发送新消息和发送期间按钮禁用的真实记录。
+  - `shortcut-booking-sending-2026-11-03.md`：快捷真人预约分支的异步 sending 保护和请求结束后的恢复记录。
 - **AT003 / R003：PASS（Staging 成功路径受隔离配置限制）**
   - `automation-regression.log`：成功、HTTP 错误、服务端未明确确认、网络失败四类本地 Mock 测试。
   - `staging-api-2026-11-03.json`：Staging 的学习存储关闭，虚构 session 删除请求返回 503；未写入真实学习数据。成功响应的明确确认由本地 Mock 覆盖。
@@ -29,4 +30,5 @@
 - 构建命令退出码均为 0，但 Wrangler 尝试写入用户目录日志时输出 EPERM 警告；这不影响本次构建产物生成，已在日志中保留。
 - Staging 构建检查曾因两个会同时写 `dist/` 的构建命令并行执行而出现一次真实失败；随后按 CloudBase → Pages → verify 串行重跑，全部通过。该失败不代表代码或最终构建失败。
 - 当前 CUA 浏览器接口只返回页面可见状态，不能直接执行页面 JavaScript 读取 IndexedDB；因此未记录真实 Issue UUID。脱敏记录使用 `jieyou-main-session`（代码固定的 Session ID）和“清空前旧 opaque Issue / 清空后新 opaque Issue”，并由 `src/client/storage.ts:34-42,237-243` 的实际逻辑与刷新后行为共同核对。
+- 快捷真人预约的本地安全检查请求返回很快，页面没有被记录为“请求中”快照；该瞬间保护由新增自动化静态测试和代码 finally 路径覆盖。
 - 工作树中原有未跟踪 `docs/.DS_Store`、`docs/audit/` 未修改、未删除。

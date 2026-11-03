@@ -32,6 +32,22 @@ Test Files  13 passed (13)
 Tests  92 passed (92)
 Duration 1.48s（本次执行）
 
+FOLLOW-UP SHORTCUT BOOKING FIX:
+- `wantsHumanBooking(content)` now sets `sending=true` before ensureBookingIssueId/addMessage/moveToBooking and resets it in finally.
+- `src/client/deletion-flow.test.ts` adds the shortcut booking sending-protection assertion.
+
+COMMAND: npm test -- --reporter=dot (after shortcut booking fix)
+EXIT_CODE: 0
+OUTPUT:
+Test Files  13 passed (13)
+Tests  93 passed (93)
+Duration 0.80s（本次执行）
+
+COMMAND: npm run typecheck (after shortcut booking fix)
+EXIT_CODE: 0
+OUTPUT:
+tsc --noEmit passed.
+
 COMMAND: npm run build:cloudbase
 EXIT_CODE: 0
 OUTPUT:
@@ -74,4 +90,5 @@ CODE EVIDENCE:
 - src/client/main.tsx:493-524 clearCurrentConversation() blocks during sending, confirms scope, clears only after confirm, rereads a fresh Session/messages set, and distinguishes transaction failure from reread failure.
 - src/client/main.tsx:544 clear button is disabled while sending.
 - src/client/storage.ts:34-42,237-243 keeps the fixed Session ID and creates a new Issue on clear; exact Issue UUID was not exposed by the CUA browser interface.
+- src/client/main.tsx:418-435 wraps the entire shortcut human-booking async path in the existing sending protection and restores it in finally.
 - src/client/learning.ts:205-227 requires HTTP success plus JSON body ok:true; network/HTTP failures remain retryable results.

@@ -416,13 +416,19 @@ function ChatPage() {
     if (!content || !session || sending) return;
     stopVoiceInput();
     if (wantsHumanBooking(content)) {
-      setInput('');
-      const issueId = await ensureBookingIssueId();
-      const userMessage = await addMessage(session.id, 'user', content, issueId || session.currentIssueId);
-      messagesRef.current = [...messagesRef.current, userMessage];
-      learningTrackerRef.current.recordUser(content);
-      setMessages(messagesRef.current);
-      await moveToBooking(issueId || undefined);
+      setInput(''); setError(''); setSending(true); setSendingPhase('listening');
+      try {
+        const issueId = await ensureBookingIssueId();
+        const userMessage = await addMessage(session.id, 'user', content, issueId || session.currentIssueId);
+        messagesRef.current = [...messagesRef.current, userMessage];
+        learningTrackerRef.current.recordUser(content);
+        setMessages(messagesRef.current);
+        await moveToBooking(issueId || undefined);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '预约入口暂时无法打开，请稍后重试');
+      } finally {
+        setSending(false); setSendingPhase('listening');
+      }
       return;
     }
     setInput(''); setError(''); setSending(true); setSendingPhase('listening');
