@@ -1,0 +1,118 @@
+{
+  "protocol": "XSH_AI_DEV_V1",
+  "kind": "result",
+  "task_id": "JY-SAFETY-002",
+  "spec_version": "1.0.0",
+  "spec_sha256": "4fa95c3b814a197b1112494eac25b8f02cb0f881d755d74197b1f1b5039fecb0",
+  "executor": "Codex",
+  "result_state": "PARTIAL",
+  "base_sha": "28c927fc680f8cd346324673427dbb82a6ecc486",
+  "head_sha": null,
+  "branch": "codex/jy-safety-002",
+  "acceptance_results": [
+    {
+      "acceptance_id": "AT001",
+      "status": "PASS",
+      "evidence_refs": [
+        {
+          "kind": "test_log",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/automation-regression.log",
+          "summary": "13 个测试文件、91 项测试全部通过；静态边界测试确认 send() 不含删除调用并保留 /api/chat 路径。",
+          "environment": "local",
+          "observed_at": "2026-11-03"
+        },
+        {
+          "kind": "browser_e2e",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/browser-e2e-2026-11-03.md",
+          "summary": "浏览器中发送普通消息及含清空措辞的消息均进入聊天流程，未触发本地清空。",
+          "environment": "local browser",
+          "observed_at": "2026-11-03"
+        }
+      ],
+      "note": "语音转写和快捷输入沿用同一 send() 入口；未调用 DeepSeek 作为本次删除边界验收的一部分。"
+    },
+    {
+      "acceptance_id": "AT002",
+      "status": "BLOCKED",
+      "evidence_refs": [
+        {
+          "kind": "test_log",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/automation-regression.log",
+          "summary": "类型检查和全量测试通过；静态代码覆盖原生确认、清空后重新读取 Session/Issue 和失败不提前清空。",
+          "environment": "local",
+          "observed_at": "2026-11-03"
+        },
+        {
+          "kind": "browser_e2e",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/browser-e2e-2026-11-03.md",
+          "summary": "真实浏览器已验证确认文案及 Cancel 后消息仍在；未执行 OK 删除路径，因此确认后清空和清空后新消息未取得完整浏览器证据。",
+          "environment": "local browser",
+          "observed_at": "2026-11-03"
+        }
+      ],
+      "note": "阻断只针对未执行的图形界面实际删除路径，不是代码或自动化测试失败。需要一次明确授权的真实浏览器确认删除验收。"
+    },
+    {
+      "acceptance_id": "AT003",
+      "status": "PASS",
+      "evidence_refs": [
+        {
+          "kind": "test_log",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/automation-regression.log",
+          "summary": "本地 Mock 覆盖 HTTP 200 且 ok:true、HTTP 503、HTTP 200 且 ok:false、网络失败；只有明确成功才返回 ok:true。",
+          "environment": "local mocked fetch",
+          "observed_at": "2026-11-03"
+        },
+        {
+          "kind": "api_trace",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/staging-api-2026-11-03.json",
+          "summary": "Staging learningConfigured=false；虚构 session 的删除请求真实返回 503 LEARNING_STORE_UNAVAILABLE，不能被客户端当作远端删除成功。",
+          "environment": "isolated Staging",
+          "observed_at": "2026-11-03"
+        }
+      ],
+      "note": "本地授权关闭、聊天不变和同一 session ID 重试由实现代码及 Mock 测试覆盖；Staging 成功删除路径因学习存储关闭未可用。"
+    },
+    {
+      "acceptance_id": "AT004",
+      "status": "PASS",
+      "evidence_refs": [
+        {
+          "kind": "test_log",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/automation-regression.log",
+          "summary": "typecheck 退出码 0；13 个测试文件、91 项测试通过；CloudBase 和 Pages 构建退出码 0；Staging 隔离检查通过。",
+          "environment": "local build + staging guard checks",
+          "observed_at": "2026-11-03"
+        },
+        {
+          "kind": "api_trace",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/staging-api-2026-11-03.json",
+          "summary": "Staging health 显示 v1.9.0、生产目标拒绝、正式飞书拒绝；普通真人意图安全门禁返回 allowed:true，未继续提交预约。",
+          "environment": "isolated Staging",
+          "observed_at": "2026-11-03"
+        },
+        {
+          "kind": "manual_check",
+          "location": ".ai/tasks/JY-SAFETY-002/evidence/README.md",
+          "summary": "允许路径之外的后端、安全规则、存储 Schema、Prompt、飞书字段和 docs 未修改；未部署 Production。",
+          "environment": "repository review",
+          "observed_at": "2026-11-03"
+        }
+      ],
+      "note": "普通预约只验证到安全门禁和入口，不提交真实预约；因此没有产生任何正式飞书或生产数据库写入。"
+    }
+  ],
+  "deployment": {
+    "performed": true,
+    "environment": "isolated Staging",
+    "reference": "CloudBase jieyou-v19-staging; Pages /v19-staging/; deployed 2026-11-03",
+    "production_writes_performed": false
+  },
+  "blockers": [
+    "AT002 的确认删除、清空后 fresh Session/Issue 和清空后新消息尚未取得完整图形界面真实证据；未执行 OK 以避免未经当前动作确认的本地删除。"
+  ],
+  "deviations": [],
+  "improvement_proposals": [],
+  "summary_for_user": "JY-SAFETY-002 的最小代码修复、自动化回归和隔离 Staging 检查已完成：普通聊天不再因删除措辞清空记录；清空按钮与学习授权撤回已分离；学习删除结果不再虚报。自动化 91/91 通过，类型检查、CloudBase/Pages 构建和 Staging 隔离检查通过。由于未执行会真实删除本地记录的浏览器 OK 动作，AT002 标记 BLOCKED，整体 PARTIAL，不能宣布 VERIFIED 或正式发布。",
+  "ready_for_release": false
+}

@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
 import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
-import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, rotateLearningSession, sendLearningEvent, sendLearningReview } from './learning.js';
+import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, setLearningConsent, sendLearningEvent, sendLearningReview } from './learning.js';
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import { readAppRoute } from './router.js';
@@ -170,6 +170,8 @@ function ChatPage() {
   const messagesRef = useRef<LocalMessage[]>([]);
   const learningConsentRef = useRef(getLearningConsent());
   const [learningConsent, setLearningConsentState] = useState(learningConsentRef.current);
+  const [learningDeleteRetry, setLearningDeleteRetry] = useState(false);
+  const [learningDeleteBusy, setLearningDeleteBusy] = useState(false);
   const learningSessionIdRef = useRef(getLearningSessionId());
   const learningTrackerRef = useRef(new LearningMetricsTracker());
   const learningFinalizedRef = useRef(false);
@@ -423,21 +425,6 @@ function ChatPage() {
       await moveToBooking(issueId || undefined);
       return;
     }
-    if (/清除|删除|清空.*(?:聊天|记录)|聊天记录.*清除/.test(content)) {
-      await clearLocalMessages();
-      setInput('');
-      await deleteLearningSession(learningSessionIdRef.current, apiBaseUrl);
-      rotateLearningSession();
-      learningSessionIdRef.current = getLearningSessionId();
-      learningConsentRef.current = false;
-      setLearningConsentState(false);
-      learningTrackerRef.current = new LearningMetricsTracker();
-      learningFinalizedRef.current = false;
-      messagesRef.current = [];
-      setMessages([]);
-      setError('这次聊天记录和对应的本地导诊状态已清除。');
-      return;
-    }
     setInput(''); setError(''); setSending(true); setSendingPhase('listening');
     const userMessage = await addMessage(session.id, 'user', content);
     messagesRef.current = [...messagesRef.current, userMessage];
@@ -481,19 +468,46 @@ function ChatPage() {
     } finally { setSending(false); setSendingPhase('listening'); }
   }
 
-  async function clearCurrentConversation() {
-    if (!confirm('确定清空这一次对话吗？清空后无法恢复。')) return;
-    await deleteLearningSession(learningSessionIdRef.current, apiBaseUrl);
-    rotateLearningSession();
-    learningSessionIdRef.current = getLearningSessionId();
+  async function revokeLearningConsent() {
+    if (learningDeleteBusy) return;
+    const learningSessionId = learningSessionIdRef.current;
+    setError('');
+    setLearningConsent(false);
     learningConsentRef.current = false;
     setLearningConsentState(false);
-    learningTrackerRef.current = new LearningMetricsTracker();
-    learningFinalizedRef.current = false;
-    await clearLocalMessages();
-    messagesRef.current = [];
-    setMessages([]);
-    setError('');
+    learningFinalizedRef.current = true;
+    setLearningDeleteBusy(true);
+    const result = await deleteLearningSession(learningSessionId, apiBaseUrl);
+    setLearningDeleteBusy(false);
+    if (result.ok) {
+      setLearningDeleteRetry(false);
+      setError('本地学习授权已撤回，云端学习数据删除已确认；聊天记录未改变。');
+      return;
+    }
+    setLearningDeleteRetry(true);
+    setError(result.reason === 'network'
+      ? '本地学习授权已撤回；云端学习数据删除尚未确认，请重试。'
+      : `本地学习授权已撤回；云端学习数据删除尚未确认（HTTP ${result.status}），请重试。`);
+  }
+
+  async function clearCurrentConversation() {
+    if (!confirm('确定清空这一次对话吗？这将删除当前浏览器的本地聊天、相关问题状态和本地预约快照，且无法恢复；不影响已经提交的正式预约记录。')) return;
+    try {
+      await clearLocalMessages();
+      const freshSession = await getOrCreateSession();
+      const freshMessages = await listMessages(freshSession.id);
+      sessionIdRef.current = freshSession.id;
+      messagesRef.current = freshMessages;
+      learningTrackerRef.current.resetFromMessages(freshMessages);
+      learningFinalizedRef.current = false;
+      growthAnalysisRef.current = null;
+      growthSentRef.current = new Set<string>();
+      setSession(freshSession);
+      setMessages(freshMessages);
+      setError('');
+    } catch {
+      setError('本地记录清除失败，当前页面未更改，请重试。');
+    }
   }
 
   function useQuickPrompt(prompt: string) { setInput(prompt); }
@@ -528,7 +542,7 @@ function ChatPage() {
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
         <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span></div></div>
-        {learningConsent && <button className="learning-delete" type="button" onClick={() => void clearCurrentConversation()}>撤回授权并删除本次学习数据</button>}
+        {(learningConsent || learningDeleteRetry) && <button className="learning-delete" type="button" disabled={learningDeleteBusy} onClick={() => void revokeLearningConsent()}>{learningDeleteBusy ? '正在删除学习数据…' : learningDeleteRetry ? '重试删除学习数据' : '撤回授权并删除本次学习数据'}</button>}
       </div>
     </main>
   </div>;

@@ -1,0 +1,50 @@
+JY-SAFETY-002 automation evidence
+Date: 2026-11-03 Asia/Shanghai
+Branch at execution: codex/jy-safety-002
+Base: 28c927fc680f8cd346324673427dbb82a6ecc486
+
+COMMAND: /private/tmp/jy-safety-001-venv/bin/python .ai/tools/validate.py task .ai/tasks/JY-SAFETY-002/task.yaml
+EXIT_CODE: 0
+OUTPUT:
+协议结构与跨文件一致性：PASS（不等于真实业务验收通过）
+
+COMMAND: npm run typecheck
+EXIT_CODE: 0
+OUTPUT:
+> jieyou-xiaowu-v1@1.0.0 typecheck
+> tsc --noEmit
+
+COMMAND: npm test -- --reporter=dot
+EXIT_CODE: 0
+OUTPUT:
+Test Files  13 passed (13)
+Tests  91 passed (91)
+Duration 1.56s（本次执行）
+
+COMMAND: npm run build:cloudbase
+EXIT_CODE: 0
+OUTPUT:
+vite production build passed; cloudbase/functions/api/index.js 205.2kb; Done.
+WARNING: Wrangler reported EPERM while attempting to write /Users/xiangshu/Library/Preferences/.wrangler/logs/...; command still completed with exit code 0 and produced the CloudBase bundle.
+
+COMMAND: VITE_API_BASE_URL='https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging' VITE_PAGES_BASE='/v19-staging/' VITE_ENABLE_GROWTH=false VITE_INCLUDE_CNAME=false npm run build:pages
+EXIT_CODE: 0
+OUTPUT:
+vite pages build passed; dist/index.html 0.61 kB; dist/assets/index-B3eQXQSl.js 272.45 kB.
+WARNING: same non-fatal Wrangler log-file EPERM as above.
+
+COMMAND: npm run verify:staging
+EXIT_CODE: 0
+OUTPUT:
+{"ok":true,"deploymentEnvironmentExplicit":true,"targetFunction":"jieyou-v19-staging","hostingPath":"v19-staging","learningEnabled":false,"growthEnabled":false,"productionFunctionRejected":true,"productionFeishuRejected":true,"stagingCnameDisabled":true}
+
+COMMAND: npm run verify:staging-build
+EXIT_CODE: 0
+OUTPUT:
+{"ok":true,"filesChecked":5,"stagingApiPresent":true,"productionApiAbsent":true,"cnameAbsent":true,"secretNamesAbsent":true,"growthEntryAbsent":true,"cloudbaseBundlePresent":true}
+
+CODE EVIDENCE:
+- src/client/main.tsx:414-469 send() now has no deletion-keyword branch and sends ordinary content through /api/chat.
+- src/client/main.tsx:471-491 revokeLearningConsent() closes local consent and calls deleteLearningSession without clearLocalMessages().
+- src/client/main.tsx:493-510 clearCurrentConversation() confirms scope, clears only after confirm, rereads a fresh Session/messages set, and reports failure without optimistic UI clearing.
+- src/client/learning.ts:205-227 requires HTTP success plus JSON body ok:true; network/HTTP failures remain retryable results.

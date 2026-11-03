@@ -1,0 +1,48 @@
+{
+  "observed_at": "2026-11-03T16:41:00+08:00",
+  "environment": "isolated Staging",
+  "function": "jieyou-v19-staging",
+  "hosting_path": "v19-staging",
+  "api_base": "https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging",
+  "synthetic_only": true,
+  "production_writes_performed": false,
+  "requests": [
+    {
+      "method": "GET",
+      "path": "/health",
+      "request": null,
+      "http_status": 200,
+      "response": {
+        "ok": true,
+        "service": "jieyou-xiaowu-v1",
+        "promptVersion": "v1.9.0",
+        "deepseekConfigured": true,
+        "feishuConfigured": true,
+        "d1Configured": false,
+        "learningConfigured": false,
+        "growthConfigured": false,
+        "devConfigured": true
+      }
+    },
+    {
+      "method": "POST",
+      "path": "/api/learning/session/delete",
+      "request": { "sessionId": "jy-safety-002-evidence-session-20261103" },
+      "http_status": 503,
+      "response": { "error": "学习数据存储尚未配置", "code": "LEARNING_STORE_UNAVAILABLE" },
+      "interpretation": "隔离 Staging 未启用学习数据存储；客户端必须把该响应视为远端删除未确认，而不能提示成功。"
+    },
+    {
+      "method": "POST",
+      "path": "/api/safety-gate",
+      "request": { "message": "我想找真人聊聊", "sessionId": "jy-safety-002-safety-gate-20261103" },
+      "http_status": 200,
+      "response": { "allowed": true, "safety_status": "NO_SIGNAL_DETECTED", "reply": null },
+      "interpretation": "普通真人请求的安全门禁未被本任务改动。未继续提交预约，避免产生外部写入。"
+    }
+  ],
+  "not_tested": [
+    "Staging 学习删除成功响应：learningConfigured=false，因此由本地 Mock 测试覆盖。",
+    "真人预约正式提交：本任务明确禁止写入正式飞书或数据库。"
+  ]
+}
