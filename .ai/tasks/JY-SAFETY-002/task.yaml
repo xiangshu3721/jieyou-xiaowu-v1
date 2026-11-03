@@ -1,0 +1,181 @@
+# JY-SAFETY-002 — 防止聊天记录误删与学习授权误删
+# 用户已批准本地与隔离 Staging 实施；不等于 Production 发布授权。
+protocol: "XSH_AI_DEV_V1"
+kind: "task"
+task_id: "JY-SAFETY-002"
+spec_version: "1.0.0"
+state: "APPROVED"
+approval:
+  user_confirmed: true
+  reference: "ChatGPT 当前对话用户消息（2026-11-03）：“批准”；对应 JY-SAFETY-002 极简研发规则 V1.0，仅授权限定范围内本地与隔离 Staging 实施"
+project:
+  id: "JIEYOU_XIAOWU"
+  repo: "xiangshu3721/jieyou-xiaowu-v1"
+  base_ref: "codex/jy-safety-001-20261031"
+  base_sha: "28c927fc680f8cd346324673427dbb82a6ecc486"
+  verified_facts:
+    -
+      fact: "JY-SAFETY-002 以已完成独立验收的 JY-SAFETY-001 任务分支提交 28c927fc680f8cd346324673427dbb82a6ecc486 为代码基线"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/commit/28c927fc680f8cd346324673427dbb82a6ecc486"
+      verified_at: "2026-11-03"
+    -
+      fact: "src/client/main.tsx 的 send() 当前会因删除、清除或清空相关文本直接调用 clearLocalMessages()，并继续删除学习会话及撤回授权"
+      source: "src/client/main.tsx:414-440"
+      verified_at: "2026-11-03"
+    -
+      fact: "聊天页的清空按钮与撤回学习授权按钮当前都调用 clearCurrentConversation()"
+      source: "src/client/main.tsx:480-498, 531"
+      verified_at: "2026-11-03"
+    -
+      fact: "clearLocalMessages() 会清空 messages，并重建当前 session、Issue 和 bookingCases；调用方当前没有重新读取新 Session"
+      source: "src/client/storage.ts:237-249; src/client/main.tsx:480-498"
+      verified_at: "2026-11-03"
+    -
+      fact: "deleteLearningSession() 当前只等待 fetch，不检查 HTTP 响应状态；失败时无法向调用方报告远端删除未确认"
+      source: "src/client/learning.ts:205-215"
+      verified_at: "2026-11-03"
+    -
+      fact: "协议要求的 .ai/project/context.yaml 在当前基线不存在"
+      source: "find .ai -maxdepth 3 -type f"
+      verified_at: "2026-11-03"
+  assumptions:
+    - "现有 clearLocalMessages() 和 /api/learning/session/delete 是本任务允许复用的既有能力，不改变 IndexedDB 结构或后端接口。"
+    - "浏览器原生 confirm() 在 Staging 浏览器中可用；若浏览器自动化无法稳定控制原生对话框，需把该部分标为待真实 UI 验证，不伪造通过。"
+    - "本任务不需要调用 DeepSeek；普通消息的模型行为沿用现有流程。"
+intent:
+  user_goal: "让删除相关文字永远只作为普通聊天内容处理；只有用户明确确认清空按钮后才删除当前浏览器本地聊天；撤回学习授权只撤回授权并单独请求删除云端学习数据，不连带删除聊天。"
+  observable_success: "删除相关文字正常进入聊天流程且本地记录保留；清空按钮取消不改变任何本地状态，确认后重建并重新绑定一致的新 Session/Issue；撤回授权保持聊天不变，并能区分本地授权已关闭与远端删除是否确认。"
+  non_goals:
+    - "不修改 AI 交谈、安全识别、真人预约、话题切换、DeepSeek Prompt 或导诊规则。"
+    - "不修改 worker/handler.ts、后端接口、数据库结构、飞书字段或 IndexedDB Schema。"
+    - "不新增第三方依赖、后台任务、消息队列、回收站、撤销系统或复杂事务补偿。"
+    - "不部署 Production，不写入正式飞书或数据库，不清理未跟踪 docs 文件。"
+scope:
+  allowed_paths:
+    - ".ai/tasks/JY-SAFETY-002/"
+    - "src/client/main.tsx"
+    - "src/client/learning.ts"
+    - "src/client/*.test.ts"
+  forbidden_paths:
+    - "main"
+    - "worker/"
+    - "server/"
+    - "src/client/storage.ts"
+    - "src/client/styles.css"
+    - "scripts/"
+    - ".github/"
+    - ".env*"
+    - "docs/"
+    - "CNAME"
+authorization:
+  production_deploy_allowed: false
+  production_write_allowed: false
+  merge_allowed: false
+requirements:
+  -
+    id: "R001"
+    priority: "must"
+    scenario: "聊天内容含删除相关措辞"
+    given: "用户通过文字、语音转写或快捷输入发送任意聊天内容"
+    when: "内容包含删除、清除、清空等词语，但用户没有点击清空按钮并确认"
+    then: "内容只按普通聊天消息处理；不得调用 clearLocalMessages()、撤回学习授权或删除学习数据"
+    constraints:
+      - "删除关键词不得触发任何删除分支"
+      - "不新增关键词识别或 AI 删除意图判断"
+      - "普通消息仍按既有聊天流程进入 /api/chat"
+  -
+    id: "R002"
+    priority: "must"
+    scenario: "用户主动清空当前本地对话"
+    given: "用户点击现有清空按钮"
+    when: "原生 confirm() 明确确认删除范围后选择取消或确认"
+    then: "取消时消息、Session、Issue、本地预约快照均不变；确认时复用 clearLocalMessages()，清空本地聊天及相关状态后重新读取新 Session 并更新 React 状态与引用；失败时不提前清空界面且不提示成功"
+    constraints:
+      - "保留浏览器原生 confirm()，明确说明本地聊天、问题状态和本地预约快照不可恢复且不影响正式预约"
+      - "不改 IndexedDB Schema，不删除已提交至飞书的正式预约"
+      - "不新增撤销、回收站、备份或复杂事务补偿"
+  -
+    id: "R003"
+    priority: "must"
+    scenario: "用户撤回学习授权并请求删除学习数据"
+    given: "用户点击撤回学习授权按钮，且本地学习授权可能已开启"
+    when: "客户端执行撤回操作"
+    then: "立即关闭本地授权并停止后续学习事件/复核上传；独立调用现有 /api/learning/session/delete；保留聊天、Session、Issue 和预约快照；只有 HTTP 成功响应才报告远端删除确认，失败时保留会话标识并可再次请求"
+    constraints:
+      - "不得调用 clearLocalMessages()"
+      - "明确区分本地授权关闭与远端历史数据删除确认"
+      - "不新增后端接口、存储表、后台重试任务或云端补偿"
+  -
+    id: "R004"
+    priority: "must"
+    scenario: "删除与授权修复后的既有业务回归"
+    given: "用户进行普通聊天、安全分流、真人预约或清空后的新对话"
+    when: "使用现有聊天和预约流程"
+    then: "AI 交谈、安全门禁、真人预约、话题和历史消息读取保持原有行为；清空后可以正常开始新对话；Staging 与 Production 保持隔离"
+    constraints:
+      - "不修改安全规则、预约字段、后端业务、Prompt 或页面布局"
+      - "运行原有类型检查、自动测试、CloudBase/Pages 构建及必要 Staging 隔离检查"
+      - "未验证项必须明确标记，不把退出码 0 直接当作完整业务验收"
+acceptance:
+  -
+    id: "AT001"
+    requirement_ids:
+      - "R001"
+    method: "unit"
+    environment: "local mocked dependency"
+    expected: "五类含删除措辞的消息不触发本地清空、学习撤回或删除接口，并保留普通聊天发送路径；语音转写与快捷输入复用同一发送入口。"
+    evidence_required:
+      - "test_log"
+    release_blocking: true
+  -
+    id: "AT002"
+    requirement_ids:
+      - "R002"
+    method: "browser_e2e"
+    environment: "local browser + isolated Staging where available"
+    expected: "取消原生确认时所有本地状态不变；确认后消息为空、Session/Issue 与 React 引用重新一致；清空后可发新消息；删除失败时不提前清空界面且保留重试状态。"
+    evidence_required:
+      - "test_log"
+      - "browser_e2e"
+    release_blocking: true
+  -
+    id: "AT003"
+    requirement_ids:
+      - "R003"
+    method: "integration"
+    environment: "local mocked fetch + isolated Staging API where available"
+    expected: "撤回后本地授权关闭且聊天/Session/Issue/预约快照不变；HTTP 成功才报告远端删除确认；网络失败或 HTTP 错误明确未确认并可使用同一学习 Session ID 重试；后续不再上传学习数据。"
+    evidence_required:
+      - "test_log"
+      - "api_trace"
+    release_blocking: true
+  -
+    id: "AT004"
+    requirement_ids:
+      - "R004"
+    method: "integration"
+    environment: "local + existing isolated Staging"
+    expected: "类型检查、全量自动测试、CloudBase/Pages 构建和 Staging 隔离检查通过；JY-SAFETY-001 安全门禁与普通真人预约路径不回归；不部署 Production、不写入正式飞书或数据库。"
+    evidence_required:
+      - "test_log"
+      - "api_trace"
+      - "manual_check"
+    release_blocking: true
+guardrails:
+  - "遵守 XSH AI Dev Protocol V1.0；R001–R004 分别覆盖 AT001–AT004，真实证据逐项归档。"
+  - "仅修改允许路径；发现必须修改禁止路径时停止并报告最小变更建议。"
+  - "保护现有未提交 docs 文件，不覆盖、不清理、不删除。"
+  - "仅使用虚构测试内容；不调用付费 DeepSeek，不写正式飞书或数据库。"
+  - "不合并 main，不部署 Production；Staging 若需部署必须先核对隔离配置。"
+  - "不把本地 Mock、HTTP 200、代码提交或自动测试通过直接当作完整业务验收。"
+stop_conditions:
+  - "需要修改 src/client/storage.ts、worker/handler.ts、后端接口、数据库结构或其他禁止路径。"
+  - "无法在不扩大范围的情况下保证撤回授权与聊天清空彻底分离。"
+  - "无法证明学习删除失败时本地授权仍关闭且可用同一会话标识重试。"
+  - "无法证明 Staging 与 Production 配置隔离，或需要 Production/正式飞书/数据库权限。"
+  - "浏览器原生确认或 Staging 必要验证无法取得真实证据；必须显式 PARTIAL/BLOCKED，不捏造 PASS。"
+change_requests: []
+extensions:
+  protocol_source: "https://github.com/xiangshu3721/asva-workbench/blob/f5f05cbb287909de2e6fa6d799d9a70e9f5db56d/.ai/protocol/PROTOCOL.md"
+  protocol_schema: "https://github.com/xiangshu3721/asva-workbench/blob/f5f05cbb287909de2e6fa6d799d9a70e9f5db56d/.ai/schemas/task.schema.json"
+  handoff: "JY-SAFETY-002 仅修复聊天误删、清空状态一致性和学习授权撤回分离；结束时提交 result.json 与脱敏证据，禁止合并和上线。"

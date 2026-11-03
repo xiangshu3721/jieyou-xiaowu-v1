@@ -202,14 +202,26 @@ export async function sendLearningReview(input: { baseUrl?: string; sessionId: s
   }
 }
 
-export async function deleteLearningSession(sessionId: string, baseUrl = '') {
+export type LearningDeleteResult =
+  | { ok: true; status: number }
+  | { ok: false; reason: 'network' | 'http'; status?: number };
+
+export async function deleteLearningSession(sessionId: string, baseUrl = ''): Promise<LearningDeleteResult> {
   try {
-    await fetch(`${baseUrl}/api/learning/session/delete`, {
+    const response = await fetch(`${baseUrl}/api/learning/session/delete`, {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=UTF-8' },
       body: JSON.stringify({ sessionId }),
     });
+    if (!response.ok) return { ok: false, reason: 'http', status: response.status };
+    try {
+      const body = await response.json() as { ok?: unknown };
+      if (body.ok !== true) return { ok: false, reason: 'http', status: response.status };
+    } catch {
+      return { ok: false, reason: 'http', status: response.status };
+    }
+    return { ok: true, status: response.status };
   } catch {
-    // Local deletion still proceeds if the network is unavailable.
+    return { ok: false, reason: 'network' };
   }
 }

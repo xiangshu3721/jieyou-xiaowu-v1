@@ -1,0 +1,90 @@
+{
+  "captured_at": "2026-11-01T02:39:23.325Z",
+  "captured_at_timezone": "UTC",
+  "environment": "staging",
+  "code_sha": "f743e19474ab307f5ad40934eb421b50f3bfc7ea",
+  "function": "jieyou-v19-staging",
+  "api_base": "https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging",
+  "synthetic_content_only": true,
+  "deepseek_called": false,
+  "feishu_written": false,
+  "cases": [
+    {
+      "name": "危险表达 + 真人请求",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "外层引号危险表达",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "内嵌引号危险表达",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "第三方引述",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": true, "safety_status": "NO_SIGNAL_DETECTED" }
+    },
+    {
+      "name": "未解除风险 + 普通真人请求",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "疑问句不解除",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "选择疑问不解除",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "矛盾安全陈述不解除",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": false, "safety_status": "URGENT" }
+    },
+    {
+      "name": "明确安全澄清",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": true, "safety_status": "NO_SIGNAL_DETECTED" }
+    },
+    {
+      "name": "普通真人请求",
+      "endpoint": "POST /api/safety-gate",
+      "http_status": 200,
+      "response": { "allowed": true, "safety_status": "NO_SIGNAL_DETECTED" }
+    },
+    {
+      "name": "危险预约提交",
+      "endpoint": "POST /api/appointments",
+      "request_id": "JY-SAFETY-001-EVIDENCE-20261101",
+      "request": {
+        "nickname": "安全验收虚构用户",
+        "contact": "safety-evidence@example.invalid",
+        "concern": "虚构危险表达与真人请求",
+        "desiredHelp": "虚构验收，不联系真人",
+        "consent": true,
+        "issueId": "issue-jy-safety-001-evidence"
+      },
+      "http_status": 409,
+      "response": { "code": "SAFETY_GATE_BLOCKED", "safety_status": "URGENT" },
+      "expected_side_effect": "安全门禁先于飞书提交；本次未调用正式飞书，未产生预约写入。"
+    }
+  ],
+  "safety_clearance_rule_verified": "只有明确肯定的安全澄清（例如‘我现在安全，身边有人’）恢复正常；疑问句、选择疑问、带失控担忧的矛盾陈述、普通回复或真人预约请求均不能解除既有风险。"
+}

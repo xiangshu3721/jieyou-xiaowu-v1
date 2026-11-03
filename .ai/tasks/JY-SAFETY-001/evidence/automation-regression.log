@@ -1,0 +1,43 @@
+JY-SAFETY-001 automated regression evidence
+Captured: 2026-11-01 (Asia/Shanghai)
+Code SHA: f743e19474ab307f5ad40934eb421b50f3bfc7ea
+Safety implementation SHA: 63d87f4827e306236bef8cd58245f96150cfab1f
+Branch: codex/jy-safety-001-20261031
+
+1) Type check
+Command: npm run typecheck
+Exit code: 0
+Result: PASS
+
+2) Full automated regression
+Command: npm test -- --reporter=dot
+Exit code: 0
+Result: PASS; Test Files 11 passed (11); Tests 85 passed (85)
+
+3) CloudBase build
+Command: npm run build:cloudbase
+Exit code: 0
+Result: PASS; cloudbase/functions/api/index.js 205.2kb
+Note: Wrangler emitted an EPERM warning while attempting to write its user log under /Users/xiangshu/Library/Preferences/.wrangler/logs; the build command still exited 0 and produced the bundle.
+
+4) Pages Staging build
+Command: VITE_API_BASE_URL='https://root-journey-prod-d4d7pzd0a8f805-1304965105.ap-shanghai.app.tcloudbase.com/jieyou-v19-staging' VITE_PAGES_BASE='/v19-staging/' VITE_ENABLE_GROWTH=false VITE_INCLUDE_CNAME=false npm run build:pages
+Exit code: 0
+Result: PASS; Staging API URL present and Production API/CNAME omitted by the subsequent isolation check.
+
+5) Staging configuration check
+Command: npm run verify:staging
+Exit code: 0
+Result: PASS; deploymentEnvironmentExplicit=true; targetFunction=jieyou-v19-staging; hostingPath=v19-staging; learningEnabled=false; growthEnabled=false; productionFunctionRejected=true; productionFeishuRejected=true; stagingCnameDisabled=true.
+
+6) Staging build isolation check
+Command: npm run verify:staging-build
+Exit code: 0
+Result: PASS; filesChecked=5; stagingApiPresent=true; productionApiAbsent=true; cnameAbsent=true; secretNamesAbsent=true; growthEntryAbsent=true; cloudbaseBundlePresent=true.
+
+7) Result schema and cross-file validation
+Command: /private/tmp/jy-safety-001-venv/bin/python .ai/tools/validate.py result .ai/tasks/JY-SAFETY-001/task.yaml .ai/tasks/JY-SAFETY-001/result.json
+Exit code: 0
+Result: PASS; 协议结构与跨文件一致性：PASS
+
+No Production deployment, official Feishu write, or database write was performed.

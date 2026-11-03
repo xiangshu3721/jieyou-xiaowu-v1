@@ -1,5 +1,5 @@
 import type { AppointmentInput, ChatMessage } from '../src/shared.js';
-import { analyzeConversation, buildConversationUnderstanding, detectSafety, emergencyReply, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
+import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
@@ -83,6 +83,18 @@ function conversationText(messages: ChatMessage[]) {
   return messages.map((message) => `${message.role === 'user' ? '用户' : 'AI'}：${message.content}`).join('\n').slice(-18_000);
 }
 
+function safetyGateFor(body: Record<string, unknown>) {
+  const messages = messagesValue(body.messages);
+  const currentIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : '';
+  const scopedMessages = currentIssueId ? messagesForIssue(messages, currentIssueId) : messages;
+  const safetyStatus = recentSafetyStatus(scopedMessages);
+  return {
+    allowed: safetyStatus === 'NO_SIGNAL_DETECTED',
+    safety_status: safetyStatus,
+    reply: safetyStatus === 'URGENT' ? emergencyReply : safetyStatus === 'NEEDS_CLARIFICATION' ? safetyClarificationReply : null,
+  };
+}
+
 async function readBody(request: Request) {
   const bodyText = await request.text();
   if (new TextEncoder().encode(bodyText).byteLength > 1_500_000) throw new Error('请求体过大');
@@ -151,7 +163,7 @@ function clientKey(request: Request) {
 }
 
 function rateLimit(request: Request, pathname: string) {
-  if (!['/api/chat', '/api/booking-summary', '/api/appointments', '/api/learning/events', '/api/learning/review', '/api/growth/events', '/api/growth/generate'].includes(pathname)) return null;
+  if (!['/api/chat', '/api/safety-gate', '/api/booking-summary', '/api/appointments', '/api/learning/events', '/api/learning/review', '/api/growth/events', '/api/growth/generate'].includes(pathname)) return null;
   const key = `${clientKey(request)}:${pathname}`;
   const now = Date.now();
   const current = requestCounts.get(key);
@@ -447,6 +459,11 @@ export async function handleApi(request: Request, env: WorkerEnv) {
     return json(result.status, result.body, request);
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/safety-gate') {
+    const body = await readBody(request);
+    return json(200, safetyGateFor(body), request);
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/chat') {
     try {
       const body = await readBody(request);
@@ -456,6 +473,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const requestedIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : undefined;
       const issueContext = parseIssueContext(body.issue, requestedIssueId || 'issue-current');
       const issueMessages = messagesForIssue(messages, issueContext.issue_id);
+      const safetyStatus = recentSafetyStatus(issueMessages);
       const currentUserMessages = userMessagesForIssue(messages, issueContext.issue_id);
       const previousUserMessages = issueContext.status === 'AWAITING_TOPIC' ? [] : currentUserMessages.slice(0, -1);
       const resolution = resolveCurrentIssue({
@@ -464,7 +482,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         currentIssue: issueContext,
         previousMessages: previousUserMessages,
         previousTopics: issueContext.topic_tags,
-        safetyDetected: detectSafety(latestText) !== 'NO_SIGNAL_DETECTED',
+        safetyDetected: safetyStatus !== 'NO_SIGNAL_DETECTED',
       });
       const analysisMessages = resolution.issue_action === 'CREATE_NEW'
         ? (resolution.awaiting_topic ? [] : [{ role: 'user' as const, content: latestText }])
@@ -490,6 +508,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         newIssueConfidence: resolution.new_issue_confidence,
         controlIntent: resolution.control_intent,
         understanding,
+        safetyStatus,
       });
       let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
       if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
@@ -549,6 +568,14 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         sourceEnvironment: env.APPOINTMENT_SOURCE_ENVIRONMENT || 'production',
       };
       if (!input.requestId || !input.nickname || !input.contact || !input.concern || !input.desiredHelp || !input.consent) return json(400, { error: '请完整填写预约信息并确认信息使用说明' }, request);
+      const safetyGate = safetyGateFor({
+        ...body,
+        messages: [
+          ...messagesValue(body.messages),
+          { role: 'user', content: input.concern, issueId: input.issueId },
+        ],
+      });
+      if (!safetyGate.allowed) return json(409, { error: safetyGate.reply, code: 'SAFETY_GATE_BLOCKED', safety_status: safetyGate.safety_status }, request);
       if (!env.DB) {
         const existing = await findFeishuAppointmentByRequestId(env, input.requestId);
         if (existing) return json(200, { ok: true, requestId: input.requestId, recordId: existing.recordId, bookingCaseId: input.bookingCaseId || input.requestId, status: 'submitted', idempotent: true }, request);

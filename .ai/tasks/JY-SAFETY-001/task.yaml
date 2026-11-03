@@ -1,0 +1,225 @@
+# JY-SAFETY-001 — 危机安全分流与真人预约快捷入口统一守门
+# 用户明确确认方案；任务批准不等于生产发布授权。请先以协议校验器校验。
+protocol: "XSH_AI_DEV_V1"
+kind: "task"
+task_id: "JY-SAFETY-001"
+spec_version: "1.0.0"
+state: "APPROVED"
+approval:
+  user_confirmed: true
+  reference: "ChatGPT 当前对话用户消息（2026-10-31）：“确认方案，开始实施”；对应上一轮已预览的 JY-SAFETY-001 方案，仅授权本地与 Staging 实施"
+project:
+  id: "JIEYOU_XIAOWU"
+  repo: "xiangshu3721/jieyou-xiaowu-v1"
+  base_ref: "main"
+  base_sha: "861a446847f032dece7927ba358eb9f1c311fa75"
+  verified_facts:
+    -
+      fact: "main 的目标基线提交为 861a446847f032dece7927ba358eb9f1c311fa75"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/commit/861a446847f032dece7927ba358eb9f1c311fa75"
+      verified_at: "2026-10-31"
+    -
+      fact: "src/client/main.tsx 的 send() 先用 wantsHumanBooking 判断并直接 moveToBooking，未进入 /api/chat 安全处理"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/blob/861a446847f032dece7927ba358eb9f1c311fa75/src/client/main.tsx#L392-L405"
+      verified_at: "2026-10-31"
+    -
+      fact: "聊天页含固定真人预约入口和 AI 回复预约 CTA，均会调用 moveToBooking"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/blob/861a446847f032dece7927ba358eb9f1c311fa75/src/client/main.tsx#L217-L223"
+      verified_at: "2026-10-31"
+    -
+      fact: "worker/handler.ts 在 /api/chat 内执行风险分析及优先安全回应；风险判断依赖 latestText"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/blob/861a446847f032dece7927ba358eb9f1c311fa75/worker/handler.ts#L450-L499"
+      verified_at: "2026-10-31"
+    -
+      fact: "server/rules.ts 含 detectSafety、emergencyReply、safetyClarificationReply，属于既有安全能力"
+      source: "https://github.com/xiangshu3721/jieyou-xiaowu-v1/blob/861a446847f032dece7927ba358eb9f1c311fa75/server/rules.ts#L148-L170"
+      verified_at: "2026-10-31"
+  assumptions:
+    - "Production 实际部署版本、环境变量及当前可访问性本轮未再次实测，不把 main 代码视为 Production 已生效逻辑。"
+    - "Staging 环境 jieyou-v19-staging 及其隔离配置可能变化，执行者部署前必须重新只读核对。"
+    - "现有关键词风险判断不等于完善的临床风险评估，不要求本任务证明识别所有隐晦风险。"
+intent:
+  user_goal: "防止用户表达可能的紧急危险时，因输入真人请求或点击任何普通预约入口而绕过必要的安全回应；同时不阻碍无风险用户自主预约。"
+  observable_success: "正常真人请求可直接预约；出现即时危险或待澄清风险时，用户首先得到合适的安全信息和可执行的现实求助路径，不会被直接送入普通预约流程；近期风险上下文不会在下一句自动消失；已有聊天/预约业务保持正常。"
+  non_goals:
+    - "不重做整个 AI 智能导诊、不优化普通对话文风或 Prompt。"
+    - "不实现临床心理诊断、不构建未成年人系统、不新增多智能体或大型风控服务。"
+    - "不修改飞书表字段、预约数据模型、数据库或其他未批准的任务（例如正常倾诉误清空）。"
+    - "不将普通真人导师包装成紧急救援，不提高商业预约转化率作为目标。"
+scope:
+  allowed_paths:
+    - ".ai/tasks/JY-SAFETY-001/"
+    - "src/client/main.tsx"
+    - "src/client/storage.ts"
+    - "src/client/safety-gate.ts"
+    - "src/client/*.test.ts"
+    - "worker/handler.ts"
+    - "worker/*.test.ts"
+    - "server/rules.ts"
+    - "server/issue.ts"
+    - "server/*.test.ts"
+    - "src/shared.ts"
+  forbidden_paths:
+    - ".github/"
+    - "ai/"
+    - "migrations/"
+    - "src/client/styles.css"
+    - "server/deepseek.ts"
+    - "scripts/deploy-*"
+    - ".env*"
+    - "docs/"
+    - "CNAME"
+authorization:
+  production_deploy_allowed: false
+  production_write_allowed: false
+  merge_allowed: false
+requirements:
+  -
+    id: "R001"
+    priority: "must"
+    scenario: "明显的迫近人身危险与主动真人请求同现"
+    given: "用户在聊天中明确表达当前有自伤、伤人或迫近的人身危险"
+    when: "同一句话还包含“想找真人导师/预约”等意愿"
+    then: "不得直接跳普通预约表单；先展示合适的安全回应、现实紧急求助方式；不把普通导师当应急服务"
+    constraints:
+      - "安全优先于直接预约"
+      - "不得因用户要求真人而跳过安全判断"
+      - "不得依据关键词自动做临床诊断"
+  -
+    id: "R002"
+    priority: "must"
+    scenario: "所有预约入口都遵守同一风险边界"
+    given: "用户可能从输入快捷语句、固定预约按钮、AI 消息 CTA 进入预约"
+    when: "存在当前或近期未澄清的风险线索"
+    then: "无论入口如何均不能未经必要安全处理直接进入普通预约；无风险时保留原流程"
+    constraints:
+      - "后台必须是风险放行最终依据"
+      - "不得通过纯前端标记绕过服务端安全门禁"
+  -
+    id: "R003"
+    priority: "must"
+    scenario: "普通真人意愿可直接预约"
+    given: "用户没有待处理的危险线索且明确要求真人支持"
+    when: "点击固定预约入口或发出明确请求"
+    then: "无需凑够三轮即可进入预约，不能额外推销或强迫继续聊"
+    constraints:
+      - "不增加非必要模型调用"
+      - "不改变预约字段与用户授权"
+  -
+    id: "R004"
+    priority: "must"
+    scenario: "近期风险连续性、澄清与恢复"
+    given: "用户在当前 Issue 近期消息中表达高危或待澄清风险"
+    when: "下一句仅说“我想找真人”或进行普通回复"
+    then: "系统仍考虑此前线索，并根据明确后续澄清决定是否转正常流程；不会仅凭换一句话自动消除风险，也不会永久锁死用户"
+    constraints:
+      - "不永久贴高风险标签"
+      - "尽量复用现有 Issue 与消息上下文，不新增云端用户画像"
+      - "避免仅凭一条含否定词的文本武断解除风险"
+  -
+    id: "R005"
+    priority: "must"
+    scenario: "避免误伤普通焦虑/低落表述"
+    given: "用户表达普通焦虑、难过、失眠、疲惫、含否定风险或引用他人话语"
+    when: "在聊天或预约入口交互"
+    then: "不会机械判断为迫近危机；有歧义时适度澄清，不强行诊断或阻断所有预约"
+    constraints:
+      - "回归中同时含正例、负例、模糊例"
+      - "不能宣称风险检测可达到 100%"
+  -
+    id: "R006"
+    priority: "must"
+    scenario: "现有聊天与预约核心链路保持不变"
+    given: "既有匿名对话、Issue、聊天记录、预约摘要、状态查询已运行"
+    when: "完成本轮安全修复"
+    then: "原有功能行为不退化；未授权不得触碰 Production、飞书、数据库、未跟踪资料"
+    constraints:
+      - "不改变常规 DeepSeek Prompt 与导诊规则"
+      - "不改 UI 视觉、Growth/ Learning 等非目标功能"
+      - "保持 Staging 与 Production 环境隔离"
+acceptance:
+  -
+    id: "AT001"
+    requirement_ids:
+      - "R001"
+    method: "integration"
+    environment: "local mocked dependency + staging API"
+    expected: "危险表达+真人请求优先给出安全回应，不直接进入预约；核对真正进入的接口、返回内容和前端状态。"
+    evidence_required:
+      - "test_log"
+      - "api_trace"
+    release_blocking: true
+  -
+    id: "AT002"
+    requirement_ids:
+      - "R002"
+    method: "browser_e2e"
+    environment: "local browser + staging"
+    expected: "输入快捷真人请求、固定入口、AI 预约 CTA 三条路径均受同一安全门禁约束；危险历史存在时先处理安全，不直接跳预约。"
+    evidence_required:
+      - "browser_e2e"
+      - "test_log"
+    release_blocking: true
+  -
+    id: "AT003"
+    requirement_ids:
+      - "R003"
+    method: "browser_e2e"
+    environment: "local browser + staging"
+    expected: "普通用户首句要求真人、固定预约入口，均可在无额外三轮限制下正常进入预约；不写入正式飞书。"
+    evidence_required:
+      - "browser_e2e"
+    release_blocking: true
+  -
+    id: "AT004"
+    requirement_ids:
+      - "R004"
+    method: "integration"
+    environment: "local + staging API"
+    expected: "先表达高风险再请求真人，风险未澄清时不放行；出现合适的安全澄清后能恢复正常支持且不永久锁定。"
+    evidence_required:
+      - "test_log"
+      - "api_trace"
+    release_blocking: true
+  -
+    id: "AT005"
+    requirement_ids:
+      - "R005"
+    method: "unit"
+    environment: "local"
+    expected: "覆盖危险/模糊/无危险/否定/引述等代表性正反例，避免普通焦虑触发不当紧急分流；说明风险识别的能力边界。"
+    evidence_required:
+      - "test_log"
+    release_blocking: true
+  -
+    id: "AT006"
+    requirement_ids:
+      - "R006"
+    method: "integration"
+    environment: "local + existing staging isolated environment"
+    expected: "类型检查、全量自动测试、Pages/CloudBase 构建和 Staging 安全检查通过，聊天/预约基本接口不回归；Production 无改动；报告未实测项。"
+    evidence_required:
+      - "test_log"
+      - "api_trace"
+      - "manual_check"
+    release_blocking: true
+guardrails:
+  - "遵守 XSH AI Dev Protocol V1.0：Rxxx→ATxxx 双向映射，真实证据，不把 Mock/HTTP200 当完整业务验收。"
+  - "执行前核对仓库 main SHA、现有安全规则/快速入口逻辑；若已不同需重新核对，不依据旧代码盲改。"
+  - "优先复用现有安全判断；如必须增加极小安全校验接口，先说明理由，不引入独立服务、多智能体、复杂持久化。"
+  - "真实风险内容仅用虚构测试用例，不采集、不上传用户真实敏感聊天数据。"
+  - "不自动合并 PR，不改生产函数/Pages，不向 Production/飞书写数据，不删除已有资料。"
+  - "不声称 AI 能取代专业危机救援或临床风险评估。"
+  - "提交 result.json 绑定 task.yaml SHA256 和真实 commit SHA；结果标记 COMPLETE/PARTIAL/BLOCKED，逐 AT 列出证据链接及未覆盖项。"
+stop_conditions:
+  - "需要修改禁止路径、改变预约字段/导诊业务规则或引入新存储模型但尚未获得变更批准。"
+  - "无法证明 Staging 与 Production 关键配置隔离。"
+  - "需要部署或写入 Production，或需要合并到 main，但缺少单独的生产/合并授权。"
+  - "无法在 Staging 验证任何必选安全链路，或发现新安全回归而不能在限定范围修复。"
+  - "现有可验证证据不足或与设计冲突，必须显式 BLOCKED，不得捏造 PASS。"
+change_requests: []
+extensions:
+  protocol_source: "https://github.com/xiangshu3721/asva-workbench/blob/f5f05cbb287909de2e6fa6d799d9a70e9f5db56d/.ai/protocol/PROTOCOL.md"
+  protocol_schema: "https://github.com/xiangshu3721/asva-workbench/blob/f5f05cbb287909de2e6fa6d799d9a70e9f5db56d/.ai/schemas/task.schema.json"
+  handoff: "Codex 请读取本 task.yaml、协议、实际代码；仅在此任务分支继续实施。先核验协议结构及审批引用；结束提交 result.json 真实证据，禁止合并和上线。"
+  expected_production_baseline: "当前 Production API 版本来自历史报告，执行时仅可只读核验，不以其替代真实部署记录。"

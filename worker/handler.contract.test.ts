@@ -97,6 +97,40 @@ describe('worker handler API 契约', () => {
     expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE' });
   });
 
+  it('safety-gate 在危险+真人请求时优先阻断预约，普通真人请求直接放行', async () => {
+    const blocked = await handleApi(request('/api/safety-gate', 'POST', {
+      currentIssueId: 'issue-danger',
+      messages: [
+        { role: 'user', content: '我现在正准备伤害自己，想找真人导师', issueId: 'issue-danger' },
+      ],
+    }), baseEnv);
+    expect(blocked.status).toBe(200);
+    expect(await json(blocked)).toMatchObject({ allowed: false, safety_status: 'URGENT' });
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const allowed = await handleApi(request('/api/safety-gate', 'POST', {
+      currentIssueId: 'issue-normal',
+      messages: [{ role: 'user', content: '我想找真人导师聊聊', issueId: 'issue-normal' }],
+    }), baseEnv);
+    expect(allowed.status).toBe(200);
+    expect(await json(allowed)).toMatchObject({ allowed: true, safety_status: 'NO_SIGNAL_DETECTED', reply: null });
+  });
+
+  it('chat 会保留当前 Issue 的近期风险，直到出现明确安全澄清', async () => {
+    const blocked = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-danger',
+      issue: { issue_id: 'issue-danger', status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '我已经不想活了', issueId: 'issue-danger' },
+        { role: 'assistant', content: '先确认你的安全', issueId: 'issue-danger' },
+        { role: 'user', content: '我想找真人', issueId: 'issue-danger' },
+      ],
+    }), baseEnv);
+    expect(blocked.status).toBe(200);
+    expect(await json(blocked)).toMatchObject({ model: 'safety-rule', analysis: { safety_status: 'NEEDS_CLARIFICATION' } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('booking-summary 返回摘要，并拒绝空消息请求', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('这是一段结构化的预约摘要。'));
     const response = await handleApi(request('/api/booking-summary', 'POST', {
@@ -168,5 +202,20 @@ describe('worker handler API 契约', () => {
     const status = await handleApi(request('/api/appointments/contract-request-001/status'), baseEnv);
     expect(status.status).toBe(200);
     expect(await json(status)).toMatchObject({ requestId: 'contract-request-001', recordId: 'rec-staging-contract-001', status: '待分配' });
+  });
+
+  it('appointments 在后端复核预约摘要中的危险表达时不触发飞书写入', async () => {
+    const response = await handleApi(request('/api/appointments', 'POST', {
+      requestId: 'danger-request-001',
+      nickname: 'Staging Mock User',
+      contact: 'mock@example.invalid',
+      concern: '我现在正准备伤害自己，想预约真人',
+      desiredHelp: '先获得安全支持',
+      consent: true,
+      issueId: 'issue-danger',
+    }), baseEnv);
+    expect(response.status).toBe(409);
+    expect(await json(response)).toMatchObject({ code: 'SAFETY_GATE_BLOCKED', safety_status: 'URGENT' });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });
