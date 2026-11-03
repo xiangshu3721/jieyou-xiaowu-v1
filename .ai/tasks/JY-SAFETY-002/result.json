@@ -7,7 +7,7 @@
   "executor": "Codex",
   "result_state": "PARTIAL",
   "base_sha": "28c927fc680f8cd346324673427dbb82a6ecc486",
-  "head_sha": null,
+  "head_sha": "7cda77eada2f9fa9c4e3f907ef4366f974b931a5",
   "branch": "codex/jy-safety-002",
   "acceptance_results": [
     {
