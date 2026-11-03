@@ -491,9 +491,15 @@ function ChatPage() {
   }
 
   async function clearCurrentConversation() {
+    if (sending) return;
     if (!confirm('确定清空这一次对话吗？这将删除当前浏览器的本地聊天、相关问题状态和本地预约快照，且无法恢复；不影响已经提交的正式预约记录。')) return;
     try {
       await clearLocalMessages();
+    } catch {
+      setError('本地记录未清除，当前页面未更改，请重试。');
+      return;
+    }
+    try {
       const freshSession = await getOrCreateSession();
       const freshMessages = await listMessages(freshSession.id);
       sessionIdRef.current = freshSession.id;
@@ -506,7 +512,14 @@ function ChatPage() {
       setMessages(freshMessages);
       setError('');
     } catch {
-      setError('本地记录清除失败，当前页面未更改，请重试。');
+      messagesRef.current = [];
+      learningTrackerRef.current.resetFromMessages([]);
+      learningFinalizedRef.current = false;
+      growthAnalysisRef.current = null;
+      growthSentRef.current = new Set<string>();
+      setSession(null);
+      setMessages([]);
+      setError('本地记录已清除，但页面重新读取失败，请刷新页面重试。');
     }
   }
 
@@ -541,7 +554,7 @@ function ChatPage() {
           <textarea id="chat-input" value={input} onChange={(event) => setInput(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); void send(); } }} placeholder="自由表达你的困惑，别有压力" rows={3} />
           <div className="composer-bottom"><span className="composer-plus" aria-hidden="true">+</span><div className="composer-actions"><button type="button" className={`voice-button ${recording ? 'is-recording' : ''}`} disabled={sending} onClick={toggleVoiceInput} aria-label={recording ? '停止语音输入' : '开始语音输入'} title={recording ? '停止语音输入' : '语音转文字'}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 14a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v5a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0M12 19v3M8 22h8" /></svg></button><button type="button" className="send-circle" disabled={!input.trim() || sending} onClick={() => void send()} aria-label="发送">↑</button></div></div>
         </section>
-        <div className="chat-footer"><button onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span></div></div>
+        <div className="chat-footer"><button disabled={sending} onClick={() => void clearCurrentConversation()}>清空本次对话</button><div className="chat-footer-meta"><span>对话仅保存在当前浏览器</span></div></div>
         {(learningConsent || learningDeleteRetry) && <button className="learning-delete" type="button" disabled={learningDeleteBusy} onClick={() => void revokeLearningConsent()}>{learningDeleteBusy ? '正在删除学习数据…' : learningDeleteRetry ? '重试删除学习数据' : '撤回授权并删除本次学习数据'}</button>}
       </div>
     </main>

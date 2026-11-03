@@ -28,4 +28,19 @@ describe('聊天删除边界', () => {
     expect(revokeBody).not.toContain('clearLocalMessages');
     expect(source).toContain('当前浏览器的本地聊天、相关问题状态和本地预约快照');
   });
+
+  it('发送期间禁止清空，并区分清空事务与回读失败', () => {
+    const clearStart = source.indexOf('  async function clearCurrentConversation()');
+    const clearEnd = source.indexOf('\n  function useQuickPrompt', clearStart);
+    expect(clearStart).toBeGreaterThanOrEqual(0);
+    expect(clearEnd).toBeGreaterThan(clearStart);
+    const clearBody = source.slice(clearStart, clearEnd);
+
+    expect(clearBody).toContain('if (sending) return;');
+    expect(source).toContain('<button disabled={sending} onClick={() => void clearCurrentConversation()}>清空本次对话</button>');
+    expect(clearBody).toContain('本地记录未清除，当前页面未更改，请重试。');
+    expect(clearBody).toContain('本地记录已清除，但页面重新读取失败，请刷新页面重试。');
+    expect(clearBody).toContain('await clearLocalMessages();');
+    expect(clearBody).toContain('const freshSession = await getOrCreateSession();');
+  });
 });
