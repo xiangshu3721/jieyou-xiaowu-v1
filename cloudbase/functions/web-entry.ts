@@ -2,6 +2,7 @@ import http from 'node:http';
 import { handleApi, type WorkerEnv } from '../../worker/handler.ts';
 
 const maxBodyBytes = 1_500_000;
+const productionOrigin = 'https://xiangshu3721.github.io';
 
 function readBody(request: http.IncomingMessage) {
   return new Promise<Buffer>((resolve, reject) => {
@@ -43,7 +44,9 @@ const server = http.createServer(async (incoming, outgoing) => {
     // browser CORS preflight and intentionally returns 204 from handleApi.
     outgoing.end(response.status === 204 || response.status === 304 ? undefined : await response.text());
   } catch (error) {
-    outgoing.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
+    const origin = typeof incoming.headers.origin === 'string' ? incoming.headers.origin : '';
+    const corsHeaders = origin === productionOrigin ? { 'Access-Control-Allow-Origin': productionOrigin } : {};
+    outgoing.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...corsHeaders });
     outgoing.end(JSON.stringify({ error: error instanceof Error ? error.message : '服务器错误' }));
   }
 });
