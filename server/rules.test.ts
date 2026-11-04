@@ -114,6 +114,18 @@ describe('解忧小屋智能导诊规则', () => {
     expect(explicit.problem_map.functional_impacts).toEqual(expect.arrayContaining(['sleep', 'work_study', 'daily_life']));
     expect(explicitUnderstanding.known_facts.severity_score?.value).toBe(7);
     expect(explicitUnderstanding.known_facts.functional_impact?.value).toEqual(expect.stringContaining('work_study'));
+
+    const sleepOnly = analyzeConversation('工作压力影响睡眠');
+    expect(sleepOnly.problem_map.functional_impacts).toEqual(['sleep']);
+
+    const deniedWorkImpact = analyzeConversation('最近失眠，但没有影响工作');
+    expect(deniedWorkImpact.problem_map.functional_impacts).toEqual(['sleep']);
+
+    const deniedWorkCapacityImpact = analyzeConversation('工作压力很大，但没影响我的工作能力');
+    expect(deniedWorkCapacityImpact.problem_map.functional_impacts).toEqual([]);
+
+    const explicitWorkImpact = analyzeConversation('已经影响工作能力');
+    expect(explicitWorkImpact.problem_map.functional_impacts).toContain('work_study');
   });
 
   it('跨领域长期困扰时推荐单一辅助测评，但不将其当成诊断', () => {
