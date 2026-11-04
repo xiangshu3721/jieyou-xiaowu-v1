@@ -97,6 +97,25 @@ describe('解忧小屋智能导诊规则', () => {
     expect(sparse.next_question).toBeTruthy();
   });
 
+  it('V1.7A 只记录用户明确说出的严重程度、功能影响和诱因', () => {
+    const sparse = analyzeConversation('工作压力很大');
+    const sparseUnderstanding = buildConversationUnderstanding([{ role: 'user', content: '工作压力很大' }]);
+    expect(sparse.problem_map.severity_score).toBeNull();
+    expect(sparse.problem_map.functional_impacts).not.toContain('work_study');
+    expect(sparseUnderstanding.known_facts.severity_score).toBeUndefined();
+    expect(sparseUnderstanding.known_facts.functional_impact).toBeUndefined();
+
+    const corrected = buildConversationUnderstanding([{ role: 'user', content: '我只是最近项目太多，不是因为害怕失败。' }]);
+    expect(corrected.known_facts.trigger).toBeUndefined();
+
+    const explicit = analyzeConversation('我现在有 7 分，晚上睡不好，白天状态也受影响，已经影响工作能力');
+    const explicitUnderstanding = buildConversationUnderstanding([{ role: 'user', content: '我现在有 7 分，晚上睡不好，白天状态也受影响，已经影响工作能力' }]);
+    expect(explicit.problem_map.severity_score).toBe(7);
+    expect(explicit.problem_map.functional_impacts).toEqual(expect.arrayContaining(['sleep', 'work_study', 'daily_life']));
+    expect(explicitUnderstanding.known_facts.severity_score?.value).toBe(7);
+    expect(explicitUnderstanding.known_facts.functional_impact?.value).toEqual(expect.stringContaining('work_study'));
+  });
+
   it('跨领域长期困扰时推荐单一辅助测评，但不将其当成诊断', () => {
     const analysis = analyzeConversation('我长期在亲密关系里不安，总担心被抛下，也想知道自己是不是总在重复类似的关系模式');
     expect(analysis.assessment.needed).toBe(true);

@@ -228,18 +228,15 @@ function extractFrequency(text: string) {
 function extractSeverity(text: string) {
   const numeric = text.match(/(?:现在|目前|大概|大约|强度|严重程度|焦虑|痛苦|难受)?[^0-9]{0,8}(10|[0-9])\s*(?:分|\/10)/);
   if (numeric) return Math.max(0, Math.min(10, Number(numeric[1])));
-  if (/崩溃|撑不住|极度|非常严重|特别严重/.test(text)) return 8;
-  if (/很严重|很大|特别难受|很痛苦/.test(text)) return 7;
-  if (/有点|轻微|一点点/.test(text)) return 3;
   return null;
 }
 
 function extractFunctionalImpacts(text: string) {
   const impacts: string[] = [];
-  if (/睡眠|失眠|睡不着|早醒|噩梦/.test(text)) impacts.push('sleep');
-  if (/工作|学习|上班|效率|面试准备/.test(text) && /影响|没法|无法|耽误|做不下去|不稳|压力/.test(text)) impacts.push('work_study');
+  if (/睡眠|失眠|睡不着|睡不好|早醒|噩梦/.test(text)) impacts.push('sleep');
+  if (/工作|学习|上班|效率|面试准备/.test(text) && /影响|没法|无法|耽误|做不下去|不稳/.test(text)) impacts.push('work_study');
   if (/关系|伴侣|家里|父母|孩子|吵架/.test(text) && /影响|冲突|吵|疏远|没法|无法/.test(text)) impacts.push('relationship');
-  if (/吃饭|起床|出门|生活|日常|照顾自己/.test(text) && /影响|没法|无法|不想|做不到/.test(text)) impacts.push('daily_life');
+  if (/吃饭|起床|出门|生活|日常|状态|照顾自己/.test(text) && /影响|没法|无法|不想|做不到/.test(text)) impacts.push('daily_life');
   if (/身体|心慌|胸闷|头痛|胃口|疼/.test(text)) impacts.push('body');
   if (/收入|房贷|债务|经济/.test(text) && /影响|压力|担心|无法/.test(text)) impacts.push('finance');
   return unique(impacts);
@@ -247,10 +244,16 @@ function extractFunctionalImpacts(text: string) {
 
 function extractTriggers(text: string) {
   const triggers: string[] = [];
-  for (const match of text.matchAll(/(?:因为|由于|遇到|当|每当|一到)([^，。！？\n]{2,60})/g)) triggers.push(match[1].trim());
-  if (/加班|工作量|工作压力|领导|同事|项目/.test(text)) triggers.push('work_pressure');
-  if (/吵架|冲突|不回消息|关系变化|分手/.test(text)) triggers.push('relationship_conflict');
-  if (/父母|家人|原生家庭|孩子/.test(text)) triggers.push('family_context');
+  for (const match of text.matchAll(/(?:因为|由于|遇到|当|每当|一到)([^，。！？\n]{2,60})/g)) {
+    const matchIndex = match.index ?? -1;
+    const prefix = matchIndex >= 0 ? text.slice(Math.max(0, matchIndex - 12), matchIndex) : '';
+    if (/(?:不是|并不是|并非|没有|没)\s*$/.test(prefix)) continue;
+    triggers.push(match[1].trim());
+  }
+  const negatedCause = /(?:不是|并不是|并非|没有|没)\s*(?:因为|由于)[^，。！？\n]{2,60}/.test(text);
+  if (!negatedCause && /加班|工作量|工作压力|领导|同事|项目/.test(text)) triggers.push('work_pressure');
+  if (!negatedCause && /吵架|冲突|不回消息|关系变化|分手/.test(text)) triggers.push('relationship_conflict');
+  if (!negatedCause && /父母|家人|原生家庭|孩子/.test(text)) triggers.push('family_context');
   return unique(triggers);
 }
 
@@ -322,7 +325,7 @@ function buildInformationGaps(problemMap: ProblemMap, understanding?: Conversati
   const asked = new Set(understanding?.asked_fields || []);
   if (problemMap.issue_types.includes('OTHER') && !asked.has('main_issue')) gaps.push('主要问题/主诉');
   if (!problemMap.scene_summary && !asked.has('scene')) gaps.push('最近一次最典型的场景');
-  if (problemMap.severity_score === null && !asked.has('severity_score')) gaps.push(problemMap.functional_impacts.length ? '主观严重程度' : '严重程度与日常功能影响');
+  if (problemMap.severity_score === null && !problemMap.functional_impacts.length && !asked.has('severity_score')) gaps.push('严重程度与日常功能影响');
   if (!problemMap.functional_impacts.length && !asked.has('functional_impact')) gaps.push('日常功能影响');
   if (!isSpecificDuration(problemMap.onset_duration) && !asked.has('duration')) gaps.push('持续时间');
   if (!problemMap.frequency && !asked.has('frequency')) gaps.push('出现频率');
