@@ -124,8 +124,13 @@ describe('解忧小屋智能导诊规则', () => {
     const deniedWorkCapacityImpact = analyzeConversation('工作压力很大，但没影响我的工作能力');
     expect(deniedWorkCapacityImpact.problem_map.functional_impacts).toEqual([]);
 
+    for (const text of ['工作不受影响', '工作没有受影响', '不会影响工作']) {
+      expect(analyzeConversation(text).problem_map.functional_impacts).toEqual([]);
+    }
+
     const explicitWorkImpact = analyzeConversation('已经影响工作能力');
     expect(explicitWorkImpact.problem_map.functional_impacts).toContain('work_study');
+    expect(analyzeConversation('工作受到影响').problem_map.functional_impacts).toContain('work_study');
   });
 
   it('跨领域长期困扰时推荐单一辅助测评，但不将其当成诊断', () => {

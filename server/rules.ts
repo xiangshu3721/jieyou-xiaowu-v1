@@ -235,7 +235,7 @@ function extractFunctionalImpacts(text: string) {
   const impacts: string[] = [];
   if (/睡眠|失眠|睡不着|睡不好|早醒|噩梦/.test(text)) impacts.push('sleep');
   const workImpactPattern = /(?:影响|耽误|拖累)[^，。！？；,!?;]{0,8}(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)|(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)[^，。！？；,!?;]{0,8}(?:受到影响|受影响|被影响|受损)|(?:无法|没法|做不下去)(?:工作|上班|学习)/;
-  const deniedWorkImpactPattern = /(?:没有|没|并没有|并没|未|不曾|未曾)\s*(?:影响|耽误|拖累)[^，。！？；,!?;]{0,8}(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)/;
+  const deniedWorkImpactPattern = /(?:没有|没|并没有|并没|未|不曾|未曾)\s*(?:影响|耽误|拖累)[^，。！？；,!?;]{0,8}(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)|(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)[^，。！？；,!?;]{0,8}(?:不受影响|没有受影响|没受影响|未受影响)|不会\s*(?:影响|耽误|拖累)[^，。！？；,!?;]{0,8}(?:工作能力|工作效率|工作状态|工作表现|工作|学习|上班)/;
   if (text.split(/[，。！？；,!?;]/).some((clause) => workImpactPattern.test(clause) && !deniedWorkImpactPattern.test(clause))) impacts.push('work_study');
   if (/关系|伴侣|家里|父母|孩子|吵架/.test(text) && /影响|冲突|吵|疏远|没法|无法/.test(text)) impacts.push('relationship');
   if (/吃饭|起床|出门|生活|日常|状态|照顾自己/.test(text) && /影响|没法|无法|不想|做不到/.test(text)) impacts.push('daily_life');
