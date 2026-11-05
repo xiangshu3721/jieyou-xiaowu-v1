@@ -1,7 +1,7 @@
 import type { AppointmentInput, ChatMessage } from '../src/shared.js';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
-import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
+import { fallbackReply, mergeAnalysis, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
 import { createCloudBaseGrowthStore } from './growth-store.js';
@@ -535,7 +535,11 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
-      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
+      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED'
+        ? fallbackReply(analysis)
+        : parsed
+          ? normalizeUserReply(parsed.reply, analysis)
+          : fallbackReply(analysis, { allowQuestion: false });
       return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';

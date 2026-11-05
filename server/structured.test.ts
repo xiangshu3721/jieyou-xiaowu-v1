@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, buildConversationUnderstanding } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, emergencyReply, safetyClarificationReply } from './rules.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
 
 describe('结构化 AI 输出校验', () => {
@@ -90,6 +90,27 @@ describe('结构化 AI 输出校验', () => {
     expect(naturalReply('抱歉，刚才的回复可能显示不全。我重新说一遍：\n\n我在听你说。')).toContain('显示不全');
     expect(naturalReply('{"assistant_reply":"内部字段"}')).toBeNull();
     expect(naturalReply('```json\n{"assistant_reply":"内部字段"}\n```')).toBeNull();
+  });
+
+  it('Fallback 尊重倾诉意愿和 ask_question=false，不机械追问或给建议', () => {
+    const comfort = analyzeConversation('我最近很累，只想倾诉，不想听建议');
+    expect(fallbackReply(comfort)).toContain('先听着');
+    expect(fallbackReply(comfort)).not.toMatch(/[？?]/);
+    expect(fallbackReply(comfort)).not.toMatch(/建议你|可以先做|试试|应该/);
+
+    const noQuestion = analyzeConversation('最近总是焦虑怎么办');
+    expect(noQuestion.ask_question).toBe(false);
+    expect(fallbackReply(noQuestion)).not.toMatch(/[？?]/);
+
+    const clarification = analyzeConversation('最近很累，能帮我理清楚吗');
+    expect(clarification.ask_question).toBe(true);
+    expect(fallbackReply(clarification)).toMatch(/[？?]/);
+    expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
+  });
+
+  it('Fallback 保留安全澄清和危机指引例外', () => {
+    expect(fallbackReply(analyzeConversation('我现在正准备伤害自己'))).toBe(emergencyReply);
+    expect(fallbackReply(analyzeConversation('我不想活了'))).toBe(safetyClarificationReply);
   });
 
   it('把旧的真人服务流程句替换为温和的用户文案', () => {
