@@ -110,6 +110,54 @@ describe('worker handler API 契约', () => {
     expect(body.reply).not.toMatch(/[？?]/);
   });
 
+  it('阶段 1.3：Handler 对用户纠正保持当前 Issue，不创建新 Issue', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"我明白了，我不再按那个方向理解。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-a',
+      issue: { issue_id: 'issue-a', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '最近工作压力很大', issueId: 'issue-a' },
+        { role: 'assistant', content: '你是不是在自我价值感上受影响？', issueId: 'issue-a' },
+        { role: 'user', content: '你理解错了，不要往自我价值感上分析', issueId: 'issue-a' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toEqual(expect.objectContaining({
+      control_intent: 'GENERAL_CHAT',
+      issue_action: 'CONTINUE_CURRENT',
+      current_issue_id: 'issue-a',
+      new_issue_detected: false,
+    }));
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('阶段 1.3：Handler 对明确拒绝真人保留当前 Issue，不接受真人或结束对话', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-a',
+      issue: { issue_id: 'issue-a', status: 'HANDOFF_OFFERED', topic_tags: ['CAREER'], handoff_offered: true, handoff_state: 'OFFERED' },
+      messages: [
+        { role: 'user', content: '工作压力很大', issueId: 'issue-a' },
+        { role: 'assistant', content: '如果你愿意，也可以预约真人。', issueId: 'issue-a' },
+        { role: 'user', content: '暂时不想找真人，先这样聊聊就好', issueId: 'issue-a' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({ model: 'control-rule', reply: '可以，我们继续按你舒服的节奏聊。' });
+    expect(body.analysis).toEqual(expect.objectContaining({
+      control_intent: 'DECLINE_HANDOFF',
+      issue_action: 'CONTINUE_CURRENT',
+      current_issue_id: 'issue-a',
+      new_issue_detected: false,
+      issue_status: 'ACTIVE',
+      handoff_state: 'DECLINED',
+    }));
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('safety-gate 在危险+真人请求时优先阻断预约，普通真人请求直接放行', async () => {
     const blocked = await handleApi(request('/api/safety-gate', 'POST', {
       currentIssueId: 'issue-danger',
