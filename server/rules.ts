@@ -56,6 +56,14 @@ const declineHumanPatterns = [
 ];
 const endPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 
+const correctionPatterns = [
+  /你(?:理解|弄)错了/,
+  /不是这个意思/,
+  /你说得不对/,
+  /不要(?:再)?往[^，。！？\n]{0,20}分析/,
+  /别(?:再)?往[^，。！？\n]{0,20}分析/,
+];
+
 export const topicLabels: Record<TopicCode, string> = {
   EMOTION: '情绪与心力',
   CAREER: '职业与事业',
@@ -121,6 +129,7 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   const previous = previousText.trim();
   if (!latest || !previous) return { detected: false, confidence: 0 };
   const explicitSwitch = /(?:另外|还有个事情|还有一件事|换个话题|我还想问一个|我还想说一个|其实我最近还|再说一个|另一个问题)/.test(latest);
+  if (!explicitSwitch && correctionPatterns.some((pattern) => pattern.test(latest))) return { detected: false, confidence: 0.05 };
   const previousTopicSet = new Set(previousTopics.length ? previousTopics : classifyConcern(previous));
   const latestTopics = classifyConcern(latest);
   const novelTopics = latestTopics.filter((topic) => topic !== 'OTHER' && !previousTopicSet.has(topic));
@@ -203,8 +212,8 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
 }
 
 function detectIntent(text: string): UserIntent {
-  if (endPatterns.some((pattern) => pattern.test(text))) return 'WANTS_END';
   if (declineHumanPatterns.some((pattern) => pattern.test(text))) return 'VENTING';
+  if (endPatterns.some((pattern) => pattern.test(text))) return 'WANTS_END';
   if (humanPatterns.some((pattern) => pattern.test(text))) return 'WANTS_HUMAN';
   if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text)) return 'WANTS_COMFORT';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';

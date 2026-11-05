@@ -280,6 +280,12 @@ describe('解忧小屋智能导诊规则', () => {
     expect(switched.detected).toBe(false);
   });
 
+  it('阶段 1.3 用户纠正 AI 理解时不切换 Issue', () => {
+    const switched = detectIssueSwitch('你理解错了，不要往自我价值感上分析', '最近工作压力很大', ['CAREER']);
+    expect(switched.detected).toBe(false);
+    expect(analyzeConversation('暂时不想找真人，先这样聊聊就好').user_intent).toBe('VENTING');
+  });
+
   it('V1.4 信息仍不足且 AI 还有明显帮助价值时继续 AI 支持', () => {
     const analysis = analyzeConversation('最近总是焦虑怎么办');
     expect(analysis.handoff_mode).toBe('NONE');

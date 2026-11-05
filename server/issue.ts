@@ -29,7 +29,7 @@ const topicSwitchPatterns = [
 const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
 const acceptHandoffPatterns = [/(?:想|希望|需要|我要|帮我).{0,8}(?:找真人|真人聊|预约真人|找导师|导师聊)/, /(?:预约|找).{0,8}(?:真人|导师|老师)/];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
-const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/, /^算了[。！! ]*$/, /^不用了[。！! ]*$/];
+const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/, /^算了[。！! ]*$/, /^不用了[。！! ]*$/];
 
 export function createIssueId() {
   return globalThis.crypto?.randomUUID?.() || `issue-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
@@ -55,7 +55,7 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
 export function detectConversationControl(text: string, handoffOffered = false): ConversationControlIntent {
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
-  if (handoffOffered && declineHandoffPatterns.some((pattern) => pattern.test(latest))) return 'DECLINE_HANDOFF';
+  if (declineHandoffPatterns.some((pattern) => pattern.test(latest))) return 'DECLINE_HANDOFF';
   if (acceptHandoffPatterns.some((pattern) => pattern.test(latest))) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
   if (closeTopicPatterns.some((pattern) => pattern.test(latest))) return 'CLOSE_TOPIC';

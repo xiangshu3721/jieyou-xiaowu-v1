@@ -127,4 +127,39 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(resolution.issue_action).toBe('CONTINUE_CURRENT');
     expect(resolution.current_issue_id).toBe('issue-b');
   });
+
+  it('阶段 1.3：用户纠正 AI 理解时继续当前 Issue', () => {
+    const resolution = resolveCurrentIssue({
+      message: '你理解错了，不要往自我价值感上分析',
+      currentIssueId: 'issue-a',
+      currentIssue: parseIssueContext({ issue_id: 'issue-a', status: 'ACTIVE', topic_tags: ['CAREER'] }),
+      previousMessages: [{ role: 'user', content: '最近工作压力很大', issueId: 'issue-a' }],
+      previousTopics: ['CAREER'],
+    });
+    expect(resolution.control_intent).toBe('GENERAL_CHAT');
+    expect(resolution.issue_action).toBe('CONTINUE_CURRENT');
+    expect(resolution.current_issue_id).toBe('issue-a');
+    expect(resolution.new_issue_detected).toBe(false);
+  });
+
+  it('阶段 1.3：明确拒绝真人时保留当前 Issue 并继续聊天', () => {
+    const message = '暂时不想找真人，先这样聊聊就好';
+    const resolution = resolveCurrentIssue({
+      message,
+      currentIssueId: 'issue-a',
+      currentIssue: parseIssueContext({ issue_id: 'issue-a', status: 'HANDOFF_OFFERED', handoff_offered: true, handoff_state: 'OFFERED' }),
+      previousMessages: [{ role: 'user', content: '工作压力很大', issueId: 'issue-a' }],
+      previousTopics: ['CAREER'],
+    });
+    expect(detectConversationControl(message, true)).toBe('DECLINE_HANDOFF');
+    expect(resolution.control_intent).toBe('DECLINE_HANDOFF');
+    expect(resolution.issue_action).toBe('CONTINUE_CURRENT');
+    expect(resolution.current_issue_id).toBe('issue-a');
+    expect(resolution.new_issue_detected).toBe(false);
+  });
+
+  it('阶段 1.3：明确拒绝真人且尚未展示入口时也不误判为接受真人', () => {
+    expect(detectConversationControl('我暂时不想找真人，先自己聊聊', false)).toBe('DECLINE_HANDOFF');
+    expect(detectConversationControl('我想找真人导师聊聊', false)).toBe('ACCEPT_HANDOFF');
+  });
 });
