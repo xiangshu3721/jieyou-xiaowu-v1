@@ -262,16 +262,19 @@ export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssi
   };
 }
 
-export function fallbackReply(analysis: ConversationAnalysis) {
+export function fallbackReply(analysis: ConversationAnalysis, options: { allowQuestion?: boolean } = {}) {
+  const allowQuestion = options.allowQuestion !== false;
   if (analysis.safety_status === 'URGENT') return emergencyReply;
   if (analysis.safety_status === 'NEEDS_CLARIFICATION') return safetyClarificationReply;
   if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) {
     return handoffCopyFor(analysis);
   }
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
+  if (analysis.user_intent === 'WANTS_COMFORT' || !allowQuestion || !analysis.ask_question) {
+    return '我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。';
+  }
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';
-  if (!analysis.ask_question && analysis.reply_length === 'SHORT') return '我先听着，也接住你刚才说的这部分，不急着把它解释清楚。我们可以先从眼前最影响你的地方慢慢看。';
   if (analysis.information_gaps.length && analysis.next_question) return `我先听你把刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
   if (analysis.complexity === 'LIGHT') return '你现在描述的问题比较具体，我们可以先从一个最小、现实可行的动作开始，再看看它对你有没有帮助。';
   return '我先把目前的情况做个阶段性整理，再和你一起看一个更适合眼下的下一步。';

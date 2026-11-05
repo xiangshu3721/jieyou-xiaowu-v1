@@ -97,6 +97,19 @@ describe('worker handler API 契约', () => {
     expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE' });
   });
 
+  it('chat 的结构化输出解析失败时使用无提问承接，不继续导诊', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('我在听，你最想先说什么？'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      sessionId: 'contract-chat-fallback-session',
+      messages: [{ role: 'user', content: '最近很累，能帮我理清楚吗' }],
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.reply).toContain('先听着');
+    expect(body.reply).not.toMatch(/[？?]/);
+  });
+
   it('safety-gate 在危险+真人请求时优先阻断预约，普通真人请求直接放行', async () => {
     const blocked = await handleApi(request('/api/safety-gate', 'POST', {
       currentIssueId: 'issue-danger',
