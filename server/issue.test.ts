@@ -162,4 +162,12 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(detectConversationControl('我暂时不想找真人，先自己聊聊', false)).toBe('DECLINE_HANDOFF');
     expect(detectConversationControl('我想找真人导师聊聊', false)).toBe('ACCEPT_HANDOFF');
   });
+
+  it('阶段 1.3：算了和不用了只有在真人入口已展示时才视为拒绝预约', () => {
+    for (const message of ['算了', '不用了']) {
+      expect(detectConversationControl(message, false)).not.toBe('DECLINE_HANDOFF');
+      expect(detectConversationControl(message, true)).toBe('DECLINE_HANDOFF');
+    }
+    expect(detectConversationControl('不想找真人', false)).toBe('DECLINE_HANDOFF');
+  });
 });
