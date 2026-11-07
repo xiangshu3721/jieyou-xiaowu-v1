@@ -110,6 +110,50 @@ describe('worker handler API 契约', () => {
     expect(body.reply).not.toMatch(/[？?]/);
   });
 
+  it('真人交接 Handler 契约保持入口、状态和无提问回复一致', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你愿意先说说为什么想找真人吗？"}'));
+    const directResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-direct-handoff',
+      issue: { issue_id: 'issue-direct-handoff', status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '我想找真人导师聊聊', issueId: 'issue-direct-handoff' }],
+    }), baseEnv);
+    const directBody = await json(directResponse);
+    expect(directResponse.status).toBe(200);
+    expect(directBody).toMatchObject({ model: 'deepseek-chat' });
+    expect(directBody.reply).toContain('免费预约真人聊聊');
+    expect(directBody.reply).not.toMatch(/[？?]/);
+    expect(directBody.analysis).toEqual(expect.objectContaining({
+      handoff_mode: 'DIRECT_HANDOFF',
+      handoff_state: 'OFFERED',
+      show_booking_button: true,
+      ask_question: false,
+      no_more_questions: true,
+    }));
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"如果你愿意，可以预约真人。"}'));
+    const quickResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-quick-handoff',
+      issue: { issue_id: 'issue-quick-handoff', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '工作压力很大。', issueId: 'issue-quick-handoff' },
+        { role: 'user', content: '已经两三个月了，每天都不想上班。', issueId: 'issue-quick-handoff' },
+        { role: 'user', content: '晚上睡不好，白天状态也受影响。', issueId: 'issue-quick-handoff' },
+      ],
+    }), baseEnv);
+    const quickBody = await json(quickResponse);
+    expect(quickResponse.status).toBe(200);
+    expect(quickBody.reply).toMatch(/睡眠|工作/);
+    expect(quickBody.reply).toContain('免费预约真人聊聊');
+    expect(quickBody.reply).not.toMatch(/[？?]/);
+    expect(quickBody.analysis).toEqual(expect.objectContaining({
+      handoff_mode: 'QUICK_HANDOFF',
+      handoff_state: 'OFFERED',
+      show_booking_button: true,
+      ask_question: false,
+      no_more_questions: true,
+    }));
+  });
+
   it('阶段 1.3：Handler 对用户纠正保持当前 Issue，不创建新 Issue', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"我明白了，我不再按那个方向理解。"}'));
     const response = await handleApi(request('/api/chat', 'POST', {
