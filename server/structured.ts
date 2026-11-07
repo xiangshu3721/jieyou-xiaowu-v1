@@ -27,11 +27,21 @@ export interface ParsedAssistantOutput {
 }
 
 const legacyHumanServiceCopy = '将会有专门的导师好好倾听你的诉求，放心，预约是免费的。';
-const humanServiceCopies = [
+const legacyHumanServiceCopies = [
   '基于你刚才说的这些情况，事情可能有点复杂了。我想邀请你找一位合适的导师聊聊：预约是免费的，会有真人联系你，陪你把头绪慢慢理清，也一起看看怎样减轻眼下的压力。',
   '你已经为这件事撑了很久，不必再一个人扛着。你可以预约一次免费的真人沟通，之后会有导师联系你，认真听你说，陪你把困扰好好梳理一下。',
   '从你描述的情况看，继续自己消化可能会有些累。如果你愿意，可以预约免费的真人导师聊聊，ta 会陪你慢慢理清重点，找到更有力量的下一步。',
   '这件事牵动的地方不少，找一个真正的人一起梳理，可能会更轻松一些。你可以先预约，服务是免费的，之后会有真人导师联系你，希望能陪你分担一点压力。',
+];
+const directHandoffCopies = [
+  '可以，下面有“免费预约真人聊聊”的入口，预约是免费的。提交后会由真人联系你，陪你把这件事继续聊下去。',
+  '可以按你的想法来，直接点下面的“免费预约真人聊聊”就好，之后会有真人联系你。',
+  '好，下面就是“免费预约真人聊聊”的入口。提交后会由真人和你一对一聊聊当前这件事。',
+];
+const quickHandoffTemplates = [
+  (reason: string) => `${reason}下面有“免费预约真人聊聊”的入口，是否预约由你自己决定。`,
+  (reason: string) => `${reason}如果你愿意，可以点下面的“免费预约真人聊聊”，提交后会由真人联系你。`,
+  (reason: string) => `${reason}你可以点下面的“免费预约真人聊聊”，把这部分带到一次真人沟通里。`,
 ];
 
 const conversationStates = new Set<ConversationState>(['LISTENING', 'EMOTIONAL_SUPPORT', 'EXPLORATION', 'PROBLEM_SOLVING', 'HUMAN_SERVICE', 'SAFETY_SUPPORT']);
@@ -65,8 +75,25 @@ function escapeRegex(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function handoffReasonFor(analysis: ConversationAnalysis) {
+  const impacts = new Map([
+    ['sleep', '睡眠'],
+    ['work_study', '工作或学习'],
+    ['relationship', '关系'],
+    ['daily_life', '日常生活'],
+    ['body', '身体状态'],
+    ['finance', '经济压力'],
+  ]);
+  const explicitImpacts = analysis.problem_map.functional_impacts.map((impact) => impacts.get(impact)).filter(Boolean);
+  if (explicitImpacts.length) return `你提到这件事已经影响到${explicitImpacts.join('、')}，找真人一起梳理会更合适。`;
+  const duration = analysis.problem_map.onset_duration;
+  if (duration && !/最近|这段时间/.test(duration)) return `你提到这种状态已经持续${duration.replace(/^持续/, '')}，找真人一起梳理会更合适。`;
+  if (analysis.problem_map.attempts.length) return '你已经提到试过一些办法，这部分可以带着一起和真人梳理。';
+  return '根据你刚才提到的这些具体情况，找真人一起梳理会更合适。';
+}
+
 function handoffCopyFor(analysis?: ConversationAnalysis) {
-  if (!analysis) return humanServiceCopies[0];
+  if (!analysis) return '可以，预约是免费的；提交后会由真人联系你，陪你把这件事继续聊下去。';
   const seed = [
     analysis.current_issue_id,
     analysis.user_turn_count,
@@ -75,12 +102,14 @@ function handoffCopyFor(analysis?: ConversationAnalysis) {
     analysis.problem_map.scene_summary,
   ].filter(Boolean).join('|');
   const score = Array.from(seed).reduce((sum, character) => sum + character.charCodeAt(0), 0);
-  return humanServiceCopies[score % humanServiceCopies.length];
+  const direct = analysis.handoff_mode === 'DIRECT_HANDOFF' || analysis.human_intent === 'EXPLICIT' || analysis.user_intent === 'WANTS_HUMAN';
+  if (direct) return directHandoffCopies[score % directHandoffCopies.length];
+  return quickHandoffTemplates[score % quickHandoffTemplates.length](handoffReasonFor(analysis));
 }
 
 function replaceHandoffCopies(reply: string, analysis?: ConversationAnalysis) {
   const selectedCopy = handoffCopyFor(analysis);
-  const knownCopies = [legacyHumanServiceCopy, ...humanServiceCopies]
+  const knownCopies = [legacyHumanServiceCopy, ...legacyHumanServiceCopies, ...directHandoffCopies]
     .map(escapeRegex)
     .join('|');
   let keptCopy = false;

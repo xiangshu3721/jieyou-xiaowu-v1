@@ -1,0 +1,211 @@
+{
+  "generatedAt": "2026-11-07T08:06:29.161Z",
+  "evidenceBoundary": "Synthetic messages only; no Feishu, database, appointment, or Production request.",
+  "handlerPath": "worker/handler.ts via local candidate source; real DeepSeek responses captured at the HTTP boundary.",
+  "callCount": 4,
+  "records": [
+    {
+      "id": "S01-direct-human",
+      "label": "明确要求真人立即交接",
+      "input": {
+        "currentIssueId": "stage3-direct",
+        "issue": {
+          "issue_id": "stage3-direct",
+          "status": "ACTIVE",
+          "topic_tags": [],
+          "handoff_offered": false,
+          "handoff_state": "NOT_READY"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "我想找真人导师聊聊",
+            "issueId": "stage3-direct"
+          }
+        ]
+      },
+      "httpStatus": 200,
+      "deepSeekCalls": 1,
+      "rawModelHttpBody": "{\"id\":\"3e61eeb9-6d68-4787-a7b6-bd95ecebdc55\",\"object\":\"chat.completion\",\"created\":1794038769,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"{\\\"problem_map\\\":{\\\"main_issue\\\":null,\\\"issue_types\\\":[\\\"OTHER\\\"],\\\"scene_summary\\\":\\\"用户明确表示想找真人导师聊聊\\\",\\\"onset_duration\\\":null,\\\"frequency\\\":null,\\\"severity_score\\\":null,\\\"functional_impacts\\\":[],\\\"known_triggers\\\":[],\\\"attempts\\\":[],\\\"user_goal\\\":\\\"想找真人导师聊聊\\\"},\\\"information_gaps\\\":[],\\\"known_facts\\\":{\\\"scene\\\":{\\\"value\\\":\\\"我想找真人导师聊聊\\\",\\\"source\\\":\\\"user_explicit\\\",\\\"confidence\\\":1},\\\"user_goal\\\":{\\\"value\\\":\\\"想找真人导师聊聊\\\",\\\"source\\\":\\\"user_explicit\\\",\\\"confidence\\\":1}},\\\"asked_fields\\\":[],\\\"unresolved_fields\\\":[],\\\"asked_questions\\\":[],\\\"primary_response_strategy\\\":\\\"HANDOFF\\\",\\\"question_value\\\":0,\\\"assessment\\\":{\\\"needed\\\":false,\\\"recommended_tool\\\":null,\\\"reason\\\":null},\\\"complexity\\\":\\\"LIGHT\\\",\\\"diagnostic_sufficiency\\\":0.4,\\\"routing\\\":\\\"HUMAN_MENTOR\\\",\\\"depth_level\\\":\\\"D0\\\",\\\"next_question\\\":null,\\\"conversation_mode\\\":\\\"HANDOFF\\\",\\\"response_goal\\\":\\\"HANDOFF\\\",\\\"problem_clarity\\\":0.4,\\\"severity_level\\\":\\\"UNKNOWN\\\",\\\"ai_help_value\\\":0.75,\\\"human_help_value\\\":1,\\\"handoff_state\\\":\\\"OFFERED\\\",\\\"handoff_mode\\\":\\\"DIRECT_HANDOFF\\\",\\\"minimum_sufficient_judgment\\\":false,\\\"human_intent\\\":\\\"EXPLICIT\\\",\\\"ai_can_help_now\\\":false,\\\"ai_further_value\\\":\\\"HIGH\\\",\\\"human_help_level\\\":\\\"HIGH\\\",\\\"reply_length\\\":\\\"SHORT\\\",\\\"ask_question\\\":false,\\\"no_more_questions\\\":true,\\\"show_booking_button\\\":true,\\\"booking_button_text\\\":\\\"免费预约真人聊聊\\\",\\\"booking_summary_ready\\\":true,\\\"handoff_ready\\\":true,\\\"conversation_state\\\":\\\"HUMAN_SERVICE\\\",\\\"primary_topic\\\":\\\"OTHER\\\",\\\"secondary_topics\\\":[],\\\"user_intent\\\":\\\"WANTS_HUMAN\\\",\\\"confirmed_facts\\\":[\\\"我想找真人导师聊聊\\\"],\\\"confirmed_goal\\\":\\\"想找真人导师聊聊\\\",\\\"tentative_hypotheses\\\":[],\\\"support_provided\\\":[],\\\"support_feedback\\\":null,\\\"routing_reason\\\":\\\"用户明确表达真人帮助意愿，直接进入预约交接\\\",\\\"reply_strategy\\\":\\\"承接用户的真人需求，说明下方预约入口及后续人工联系安排，不再追问\\\",\\\"assistant_reply\\\":\\\"好的，这件事我们直接交给真人来陪你聊。下方有「免费预约真人聊聊」入口，提交后会由人工根据你的情况安排合适的人联系你，继续帮你梳理。\\\"}\"},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7240,\"completion_tokens\":537,\"total_tokens\":7777,\"prompt_tokens_details\":{\"cached_tokens\":5760},\"prompt_cache_hit_tokens\":5760,\"prompt_cache_miss_tokens\":1480},\"system_fingerprint\":\"bc19ba97cbe016479903222bb1578db6\"}",
+      "rawModelContent": "{\"problem_map\":{\"main_issue\":null,\"issue_types\":[\"OTHER\"],\"scene_summary\":\"用户明确表示想找真人导师聊聊\",\"onset_duration\":null,\"frequency\":null,\"severity_score\":null,\"functional_impacts\":[],\"known_triggers\":[],\"attempts\":[],\"user_goal\":\"想找真人导师聊聊\"},\"information_gaps\":[],\"known_facts\":{\"scene\":{\"value\":\"我想找真人导师聊聊\",\"source\":\"user_explicit\",\"confidence\":1},\"user_goal\":{\"value\":\"想找真人导师聊聊\",\"source\":\"user_explicit\",\"confidence\":1}},\"asked_fields\":[],\"unresolved_fields\":[],\"asked_questions\":[],\"primary_response_strategy\":\"HANDOFF\",\"question_value\":0,\"assessment\":{\"needed\":false,\"recommended_tool\":null,\"reason\":null},\"complexity\":\"LIGHT\",\"diagnostic_sufficiency\":0.4,\"routing\":\"HUMAN_MENTOR\",\"depth_level\":\"D0\",\"next_question\":null,\"conversation_mode\":\"HANDOFF\",\"response_goal\":\"HANDOFF\",\"problem_clarity\":0.4,\"severity_level\":\"UNKNOWN\",\"ai_help_value\":0.75,\"human_help_value\":1,\"handoff_state\":\"OFFERED\",\"handoff_mode\":\"DIRECT_HANDOFF\",\"minimum_sufficient_judgment\":false,\"human_intent\":\"EXPLICIT\",\"ai_can_help_now\":false,\"ai_further_value\":\"HIGH\",\"human_help_level\":\"HIGH\",\"reply_length\":\"SHORT\",\"ask_question\":false,\"no_more_questions\":true,\"show_booking_button\":true,\"booking_button_text\":\"免费预约真人聊聊\",\"booking_summary_ready\":true,\"handoff_ready\":true,\"conversation_state\":\"HUMAN_SERVICE\",\"primary_topic\":\"OTHER\",\"secondary_topics\":[],\"user_intent\":\"WANTS_HUMAN\",\"confirmed_facts\":[\"我想找真人导师聊聊\"],\"confirmed_goal\":\"想找真人导师聊聊\",\"tentative_hypotheses\":[],\"support_provided\":[],\"support_feedback\":null,\"routing_reason\":\"用户明确表达真人帮助意愿，直接进入预约交接\",\"reply_strategy\":\"承接用户的真人需求，说明下方预约入口及后续人工联系安排，不再追问\",\"assistant_reply\":\"好的，这件事我们直接交给真人来陪你聊。下方有「免费预约真人聊聊」入口，提交后会由人工根据你的情况安排合适的人联系你，继续帮你梳理。\"}",
+      "parseSucceeded": true,
+      "parsedAssistantReply": "好的，这件事我们直接交给真人来陪你聊。下方有「免费预约真人聊聊」入口，提交后会由人工根据你的情况安排合适的人联系你，继续帮你梳理。",
+      "finalReply": "好的，这件事我们直接交给真人来陪你聊。下方有「免费预约真人聊聊」入口，提交后会由人工根据你的情况安排合适的人联系你，继续帮你梳理。",
+      "fallbackUsed": false,
+      "fallbackReason": null,
+      "finalModelLabel": "deepseek-chat",
+      "analysis": {
+        "handoff_mode": "DIRECT_HANDOFF",
+        "handoff_state": "OFFERED",
+        "show_booking_button": true,
+        "ask_question": false,
+        "no_more_questions": true,
+        "user_turn_count": 1,
+        "routing": "HUMAN_MENTOR",
+        "safety_status": "NO_SIGNAL_DETECTED"
+      }
+    },
+    {
+      "id": "S02-before-third-turn",
+      "label": "前两次有效表达不主动导流",
+      "input": {
+        "currentIssueId": "stage3-early",
+        "issue": {
+          "issue_id": "stage3-early",
+          "status": "ACTIVE",
+          "topic_tags": [
+            "CAREER"
+          ],
+          "handoff_offered": false,
+          "handoff_state": "NOT_READY"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "最近工作压力很大。",
+            "issueId": "stage3-early"
+          },
+          {
+            "role": "assistant",
+            "content": "我听到最近的工作压力已经占据了你的注意力。",
+            "issueId": "stage3-early"
+          },
+          {
+            "role": "user",
+            "content": "已经两三个月了。",
+            "issueId": "stage3-early"
+          }
+        ]
+      },
+      "httpStatus": 200,
+      "deepSeekCalls": 1,
+      "rawModelHttpBody": "{\"id\":\"bb873f15-5f98-42dc-8c5a-bb49f7e403a4\",\"object\":\"chat.completion\",\"created\":1794038771,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"这种状态持续两三个月，确实会让人感到疲惫。\"},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7305,\"completion_tokens\":12,\"total_tokens\":7317,\"prompt_tokens_details\":{\"cached_tokens\":6400},\"prompt_cache_hit_tokens\":6400,\"prompt_cache_miss_tokens\":905},\"system_fingerprint\":\"bc19ba97cbe016479903222bb1578db6\"}",
+      "rawModelContent": "这种状态持续两三个月，确实会让人感到疲惫。",
+      "parseSucceeded": false,
+      "parsedAssistantReply": null,
+      "finalReply": "我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。",
+      "fallbackUsed": true,
+      "fallbackReason": "parseAssistantOutput=null",
+      "finalModelLabel": "deepseek-chat",
+      "analysis": {
+        "handoff_mode": "NONE",
+        "handoff_state": "NOT_READY",
+        "show_booking_button": false,
+        "ask_question": false,
+        "no_more_questions": true,
+        "user_turn_count": 2,
+        "routing": "AI_SUPPORT",
+        "safety_status": "NO_SIGNAL_DETECTED"
+      }
+    },
+    {
+      "id": "S03-quick-human",
+      "label": "第三次且有明确生活影响时推荐",
+      "input": {
+        "currentIssueId": "stage3-quick",
+        "issue": {
+          "issue_id": "stage3-quick",
+          "status": "ACTIVE",
+          "topic_tags": [
+            "CAREER"
+          ],
+          "handoff_offered": false,
+          "handoff_state": "NOT_READY"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "工作压力很大。",
+            "issueId": "stage3-quick"
+          },
+          {
+            "role": "user",
+            "content": "已经两三个月了，每天都不想上班。",
+            "issueId": "stage3-quick"
+          },
+          {
+            "role": "user",
+            "content": "晚上睡不好，白天状态也受影响。",
+            "issueId": "stage3-quick"
+          }
+        ]
+      },
+      "httpStatus": 502,
+      "deepSeekCalls": 1,
+      "rawModelHttpBody": "{\"error\":{\"message\":\"Internal Server Error (request_id: 20405e55-a672-4d9e-85ba-660ba65f10e2)\",\"type\":\"internal_error\",\"param\":null,\"code\":\"internal_error\"}}",
+      "rawModelContent": null,
+      "parseAttempted": false,
+      "parseSucceeded": null,
+      "parsedAssistantReply": null,
+      "finalReply": null,
+      "fallbackUsed": false,
+      "fallbackReason": "DEEPSEEK_REQUEST_ERROR",
+      "failureClass": "UPSTREAM_MODEL_ERROR",
+      "finalModelLabel": null,
+      "analysis": {}
+    },
+    {
+      "id": "S04-after-offer",
+      "label": "已推荐后继续聊天不重复推销",
+      "input": {
+        "currentIssueId": "stage3-after-offer",
+        "issue": {
+          "issue_id": "stage3-after-offer",
+          "status": "HANDOFF_OFFERED",
+          "topic_tags": [
+            "CAREER"
+          ],
+          "handoff_offered": true,
+          "handoff_state": "OFFERED"
+        },
+        "messages": [
+          {
+            "role": "user",
+            "content": "工作压力很大。",
+            "issueId": "stage3-after-offer"
+          },
+          {
+            "role": "user",
+            "content": "已经两三个月了，每天都不想上班。",
+            "issueId": "stage3-after-offer"
+          },
+          {
+            "role": "user",
+            "content": "晚上睡不好，白天状态也受影响。",
+            "issueId": "stage3-after-offer"
+          },
+          {
+            "role": "assistant",
+            "content": "你提到它已经影响睡眠和工作，下面有免费预约真人聊聊的入口。",
+            "issueId": "stage3-after-offer"
+          },
+          {
+            "role": "user",
+            "content": "我其实更担心以后一个人生活。",
+            "issueId": "stage3-after-offer"
+          }
+        ]
+      },
+      "httpStatus": 200,
+      "deepSeekCalls": 1,
+      "rawModelHttpBody": "{\"id\":\"37e33f4b-b0c8-4b83-a671-bcd911015a25\",\"object\":\"chat.completion\",\"created\":1794038788,\"model\":\"deepseek-flash\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"工作上的压力已经压了两三个月，连睡眠和白天状态都受影响了，现在又想到以后可能一个人生活——这两件事叠在一起，确实会让人心里更沉。\\n\\n这种对“一个人生活”的担心，是最近才冒出来的，还是之前就一直在心里？\"},\"logprobs\":null,\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":7373,\"completion_tokens\":58,\"total_tokens\":7431,\"prompt_tokens_details\":{\"cached_tokens\":6400},\"prompt_cache_hit_tokens\":6400,\"prompt_cache_miss_tokens\":973},\"system_fingerprint\":\"bc19ba97cbe016479903222bb1578db6\"}",
+      "rawModelContent": "工作上的压力已经压了两三个月，连睡眠和白天状态都受影响了，现在又想到以后可能一个人生活——这两件事叠在一起，确实会让人心里更沉。\n\n这种对“一个人生活”的担心，是最近才冒出来的，还是之前就一直在心里？",
+      "parseSucceeded": false,
+      "parsedAssistantReply": null,
+      "finalReply": "我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。",
+      "fallbackUsed": true,
+      "fallbackReason": "parseAssistantOutput=null",
+      "finalModelLabel": "deepseek-chat",
+      "analysis": {
+        "handoff_mode": "NONE",
+        "handoff_state": "READY",
+        "show_booking_button": false,
+        "ask_question": false,
+        "no_more_questions": true,
+        "user_turn_count": 4,
+        "routing": "AI_SUPPORT",
+        "safety_status": "NO_SIGNAL_DETECTED"
+      }
+    }
+  ]
+}

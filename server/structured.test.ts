@@ -129,6 +129,26 @@ describe('结构化 AI 输出校验', () => {
     replies.forEach((reply) => expect(reply).toMatch(/预约|真人|导师/));
   });
 
+  it('真人交接话术区分主动要求，并引用快速交接的明确事实', () => {
+    const direct = analyzeConversation('我想找真人导师聊聊', '', { issueId: 'direct-handoff' });
+    const directReply = normalizeUserReply('我听到了。', direct);
+    expect(directReply).toContain('免费预约真人聊聊');
+    expect(directReply).not.toMatch(/[？?]/);
+    expect(directReply).not.toMatch(/撑了很久|事情可能有点复杂|一个人扛着/);
+
+    const quick = analyzeConversation(
+      '晚上睡不好，白天状态也受影响。',
+      '工作压力很大\n已经两三个月了，每天都不想上班',
+      { issueId: 'quick-handoff', userTurnCount: 3 },
+    );
+    const quickReply = fallbackReply(quick);
+    expect(quick.handoff_mode).toBe('QUICK_HANDOFF');
+    expect(quickReply).toMatch(/睡眠|工作/);
+    expect(quickReply).toContain('免费预约真人聊聊');
+    expect(quickReply).not.toMatch(/[？?]/);
+    expect(quickReply).not.toMatch(/撑了很久|一个人扛着/);
+  });
+
   it('移除同一条回复中重复的真人服务文案', () => {
     const normalized = normalizeUserReply('将会有专门的导师好好倾听你的诉求，放心，预约是免费的。你可以先填写信息。将会有专门的导师好好倾听你的诉求，放心，预约是免费的。。');
     expect((normalized.match(/预约/g) || []).length).toBe(1);
