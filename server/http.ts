@@ -1,5 +1,5 @@
 import http from 'node:http';
-import type { ConversationAnalysis, AppointmentInput, ChatMessage } from '../src/shared.js';
+import { hasRequiredAppointmentFields, type ConversationAnalysis, type AppointmentInput, type ChatMessage } from '../src/shared.js';
 import { config, configurationStatus } from './config.js';
 import { callDeepSeek, DeepSeekUnavailableError } from './deepseek.js';
 import { createFeishuAppointment, FeishuUnavailableError, getFeishuAppointment } from './feishu.js';
@@ -16,6 +16,10 @@ import { clearGrowthWatch, deleteGrowthMemory, generateGrowthSnapshot, recordGro
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
 const learningStore = new FileLearningStore();
 const growthStore = new FileGrowthStore();
+
+export function isValidAppointmentRequest(input: AppointmentInput) {
+  return hasRequiredAppointmentFields(input);
+}
 
 function send(response: http.ServerResponse, status: number, body: unknown) {
   response.writeHead(status, { ...jsonHeaders, 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Content-Type, X-Dev-Token', 'Access-Control-Allow-Methods': 'DELETE, GET, POST, OPTIONS' });
@@ -253,7 +257,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       desiredHelp: stringValue(body.desiredHelp, 500),
       consent: body.consent === true,
     };
-    if (!input.requestId || !input.nickname || !input.contact || !input.concern || !input.desiredHelp || !input.consent) return send(response, 400, { error: '请完整填写预约信息并确认信息使用说明' });
+    if (!isValidAppointmentRequest(input)) return send(response, 400, { error: '请完整填写预约信息并确认信息使用说明' });
     const existing = getAppointmentState(input.requestId);
     if (existing?.status === 'submitted' && existing.recordId) return send(response, 200, { ok: true, requestId: input.requestId, recordId: existing.recordId, status: 'submitted', idempotent: true });
     const now = new Date().toISOString();

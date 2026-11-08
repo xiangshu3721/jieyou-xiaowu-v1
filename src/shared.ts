@@ -230,6 +230,10 @@ export interface AppointmentInput {
   sourceEnvironment?: string;
 }
 
+export function hasRequiredAppointmentFields(input: AppointmentInput) {
+  return Boolean(input.requestId && input.nickname && input.contact && input.concern && input.consent);
+}
+
 export interface AppointmentStatus {
   requestId: string;
   status: 'processing' | 'submitted' | 'failed' | 'assigned' | 'contacted' | 'received' | 'cancelled' | 'unreachable' | 'professional_referral';

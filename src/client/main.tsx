@@ -106,6 +106,10 @@ export async function guardedSummaryResult(
   }
 }
 
+export function hasRequiredBookingFields(value: { nickname: string; contact: string; summary: string; consent: boolean }) {
+  return Boolean(value.nickname.trim() && value.contact.trim() && value.summary.trim() && value.consent);
+}
+
 function newRequestId() {
   return globalThis.crypto?.randomUUID?.() || `JY-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
@@ -719,7 +723,7 @@ function BookingPage() {
   }
   function editSummary(value: string) { summaryUserEditedRef.current = true; setSummary(value); }
   async function submit() {
-    if (!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting) return;
+    if (!hasRequiredBookingFields({ nickname, contact, summary, consent }) || submitting) return;
     setError(''); setSubmitting(true);
     try {
       const currentIssueId = session?.currentIssueId;
@@ -774,7 +778,7 @@ function BookingPage() {
   }
   function goBack() { location.href = appPath('/chat'); }
 
-  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>越详细，<br /><em>越容易被支持</em></h1><p>别着急，慢慢写，我们会安排导师尽快来帮你的</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => editSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 整理仅供参考，可随时修改；最终以你确认的内容为准。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
+  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>越详细，<br /><em>越容易被支持</em></h1><p>别着急，慢慢写，我们会安排导师尽快来帮你的</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => editSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 整理仅供参考，可随时修改；最终以你确认的内容为准。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助（选填）</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="之前聊过的就不用重复；有额外期待可以补充" rows={2} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!hasRequiredBookingFields({ nickname, contact, summary, consent }) || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
 }
 
 function Field({ label, value, onChange, onBlur, placeholder }: { label: string; value: string; onChange: (value: string) => void; onBlur?: () => void; placeholder: string }) { return <div className="field"><label>{label}</label><input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} placeholder={placeholder} /></div>; }

@@ -309,6 +309,34 @@ describe('worker handler API 契约', () => {
     expect(await json(status)).toMatchObject({ requestId: 'contract-request-001', recordId: 'rec-staging-contract-001', status: '待分配' });
   });
 
+  it('appointments 允许省略希望获得什么帮助，并且不向飞书伪造该字段', async () => {
+    let postedFields: Record<string, unknown> | undefined;
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method || 'GET';
+      if (url.endsWith('/open-apis/auth/v3/tenant_access_token/internal')) return new Response(JSON.stringify({ code: 0, tenant_access_token: 'mock-tenant-token', expire: 7_200 }), { status: 200 });
+      if (url.includes('/records?filter=')) return new Response(JSON.stringify({ code: 0, data: { items: [] } }), { status: 200 });
+      if (method === 'POST' && url.endsWith('/records')) {
+        postedFields = JSON.parse(String(init?.body)).fields;
+        return new Response(JSON.stringify({ code: 0, data: { record: { record_id: 'rec-staging-optional-help-001' } } }), { status: 200 });
+      }
+      throw new Error(`unexpected mock request: ${method} ${url}`);
+    });
+
+    const response = await handleApi(request('/api/appointments', 'POST', {
+      requestId: 'optional-help-request-001',
+      nickname: 'Staging Mock User',
+      contact: 'mock@example.invalid',
+      concern: '仅用于验证选填字段。',
+      consent: true,
+      issueId: 'issue-optional-help-001',
+    }), baseEnv);
+
+    expect(response.status).toBe(200);
+    expect(await json(response)).toMatchObject({ ok: true, status: 'submitted', recordId: 'rec-staging-optional-help-001' });
+    expect(postedFields).not.toHaveProperty('希望获得什么帮助');
+  });
+
   it('appointments 在后端复核预约摘要中的危险表达时不触发飞书写入', async () => {
     const response = await handleApi(request('/api/appointments', 'POST', {
       requestId: 'danger-request-001',
