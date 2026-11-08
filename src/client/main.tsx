@@ -93,6 +93,19 @@ export async function submitAppointmentWithRecovery(
   return 'submitted';
 }
 
+export async function guardedSummaryResult(
+  fetchSummary: () => Promise<{ summary?: string }>,
+  canApply: () => boolean,
+) {
+  try {
+    const result = await fetchSummary();
+    const summary = result.summary?.trim();
+    return summary && canApply() ? summary : null;
+  } catch {
+    return null;
+  }
+}
+
 function newRequestId() {
   return globalThis.crypto?.randomUUID?.() || `JY-${Date.now()}-${Math.random().toString(16).slice(2, 8)}`;
 }
@@ -639,6 +652,9 @@ function BookingPage() {
   const [error, setError] = useState('');
   const [requestId, setRequestId] = useState<string>(newRequestId);
   const summaryRequestedRef = useRef(false);
+  const summaryRequestRef = useRef(0);
+  const summaryUserEditedRef = useRef(false);
+  const summaryIssueIdRef = useRef<string | null>(null);
   const generatedSummaryRef = useRef('');
   const bookingLearningTrackerRef = useRef(new LearningMetricsTracker());
 
@@ -652,9 +668,31 @@ function BookingPage() {
     return JSON.stringify({ sessionId: currentSession?.id, currentIssueId: currentSession?.currentIssueId, messages: currentMessages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) });
   }
 
+  async function requestSummary(currentSession: LocalSession, currentMessages: LocalMessage[], allowOverwrite = false) {
+    const requestNumber = ++summaryRequestRef.current;
+    const issueId = currentSession.currentIssueId;
+    summaryIssueIdRef.current = issueId;
+    if (allowOverwrite) summaryUserEditedRef.current = false;
+    setError('');
+    setLoadingSummary(true);
+    const generated = await guardedSummaryResult(
+      () => api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: summaryPayload(currentSession, currentMessages) }),
+      () => requestNumber === summaryRequestRef.current && !summaryUserEditedRef.current && summaryIssueIdRef.current === issueId,
+    );
+    if (generated) {
+      setSummary(generated);
+      generatedSummaryRef.current = generated;
+      emitBookingLearning('summary_generated');
+    } else if (requestNumber === summaryRequestRef.current && !summaryUserEditedRef.current) {
+      setError('摘要暂时无法生成，你仍然可以手动填写。');
+    }
+    if (requestNumber === summaryRequestRef.current) setLoadingSummary(false);
+  }
+
   useEffect(() => {
     void getOrCreateSession().then(async (mainSession) => {
       setSession(mainSession);
+      summaryIssueIdRef.current = mainSession.currentIssueId;
       const pendingBooking = readPendingBooking(mainSession.currentIssueId);
       if (pendingBooking) {
         setRequestId(pendingBooking.requestId);
@@ -666,17 +704,7 @@ function BookingPage() {
       setMessages(storedMessages);
       if (storedMessages.length && !summaryRequestedRef.current) {
         summaryRequestedRef.current = true;
-        setLoadingSummary(true);
-        try {
-          const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: summaryPayload(mainSession, storedMessages) });
-          setSummary(result.summary);
-          generatedSummaryRef.current = result.summary;
-          emitBookingLearning('summary_generated');
-        } catch (err) {
-          setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。');
-        } finally {
-          setLoadingSummary(false);
-        }
+        await requestSummary(mainSession, storedMessages);
       }
     }).catch(() => setError('本地对话暂时无法打开。'));
   }, []);
@@ -685,11 +713,11 @@ function BookingPage() {
   }
   async function generateSummary() {
     if (!messages.length) return setError('当前对话还没有可整理的内容。');
-    setError(''); setLoadingSummary(true);
-    try { const result = await api<{ summary: string }>('/api/booking-summary', { method: 'POST', body: summaryPayload(session, messages) }); setSummary(result.summary); generatedSummaryRef.current = result.summary; emitBookingLearning('summary_generated'); }
-    catch (err) { setError(err instanceof Error ? `${err.message} 你仍然可以直接手动填写。` : '摘要生成失败，你仍然可以直接手动填写。'); }
-    finally { setLoadingSummary(false); }
+    const hasCustomSummary = summaryUserEditedRef.current || (summary.trim() && summary.trim() !== generatedSummaryRef.current.trim());
+    if (hasCustomSummary && !globalThis.confirm('重新生成会替换当前摘要，确定继续吗？')) return;
+    if (session) await requestSummary(session, messages, true);
   }
+  function editSummary(value: string) { summaryUserEditedRef.current = true; setSummary(value); }
   async function submit() {
     if (!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting) return;
     setError(''); setSubmitting(true);
@@ -746,7 +774,7 @@ function BookingPage() {
   }
   function goBack() { location.href = appPath('/chat'); }
 
-  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>越详细，<br /><em>越容易被支持</em></h1><p>别着急，慢慢写，我们会安排导师尽快来帮你的</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => setSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 会根据你明确说过的内容自动整理，你可以直接修改、删除或重新填写。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
+  return <div className="app-shell"><main className="form-page"><div className="page-heading booking-heading"><div className="form-page-top"><button className="back-button" type="button" onClick={goBack}>返回上一页</button></div><p className="eyebrow">免费真人预约</p><h1>越详细，<br /><em>越容易被支持</em></h1><p>别着急，慢慢写，我们会安排导师尽快来帮你的</p></div><section className="form-card"><div className="summary-block"><div className="field-head"><label htmlFor="concern">当前困扰描述</label><button className="text-button" onClick={() => void generateSummary()} disabled={loadingSummary}>{loadingSummary ? '整理中…' : '重新生成摘要'}</button></div><textarea id="concern" value={summary} onChange={(event) => editSummary(event.target.value)} placeholder="请写下最近困扰你的事情、感受，以及你最想先解决的部分。" rows={7} /><p className="helper">AI 整理仅供参考，可随时修改；最终以你确认的内容为准。</p></div><Field label="昵称" value={nickname} onChange={setNickname} onBlur={rememberProfile} placeholder="怎么称呼你" /><Field label="微信 / 联系方式" value={contact} onChange={setContact} onBlur={rememberProfile} placeholder="方便联系你的方式" /><div className="field"><label htmlFor="desiredHelp">希望获得什么帮助</label><textarea id="desiredHelp" value={desiredHelp} onChange={(event) => setDesiredHelp(event.target.value)} placeholder="例如：希望有人帮我一起理清下一步" rows={4} /></div><label className="consent"><input type="checkbox" checked={consent} onChange={(event) => setConsent(event.target.checked)} /><span>我确认以上信息可以用于本次预约联系和人工分配，不提交完整聊天记录。</span></label>{error && <div className="inline-error" role="alert">{error}</div>}<button className="primary-button large full" disabled={!nickname.trim() || !contact.trim() || !summary.trim() || !desiredHelp.trim() || !consent || submitting} onClick={() => void submit()}>{submitting ? '正在提交…' : '确认提交预约'}</button><p className="form-footnote">提交后只显示真实写入结果；如果网络中断，可以用同一次请求继续重试。</p></section></main></div>;
 }
 
 function Field({ label, value, onChange, onBlur, placeholder }: { label: string; value: string; onChange: (value: string) => void; onBlur?: () => void; placeholder: string }) { return <div className="field"><label>{label}</label><input value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} placeholder={placeholder} /></div>; }
