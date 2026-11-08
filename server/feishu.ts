@@ -28,15 +28,16 @@ async function getTenantToken() {
 }
 
 function fieldsFor(input: AppointmentInput) {
-  return {
+  const fields: Record<string, string> = {
     预约编号: input.requestId,
     昵称: input.nickname,
     '微信 / 联系方式': input.contact,
     当前困扰描述: input.concern,
-    希望获得什么帮助: input.desiredHelp,
     提交时间: new Date().toISOString(),
     处理状态: '待分配',
   };
+  if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
+  return fields;
 }
 
 export async function createFeishuAppointment(input: AppointmentInput) {

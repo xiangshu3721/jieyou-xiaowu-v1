@@ -1,4 +1,4 @@
-import type { AppointmentInput, ChatMessage } from '../src/shared.js';
+import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage } from '../src/shared.js';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
@@ -240,10 +240,10 @@ function fieldsFor(input: AppointmentInput, includeMetadata = false) {
     昵称: input.nickname,
     '微信 / 联系方式': input.contact,
     当前困扰描述: input.concern,
-    希望获得什么帮助: input.desiredHelp,
     提交时间: includeMetadata ? Date.now() : new Date().toISOString(),
     处理状态: '待分配',
   };
+  if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
   if (includeMetadata) {
     fields['Source Environment'] = input.sourceEnvironment || 'staging';
     fields['Request ID'] = input.requestId;
@@ -576,7 +576,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         bookingCaseId: stringValue(body.bookingCaseId, 120) || undefined,
         sourceEnvironment: env.APPOINTMENT_SOURCE_ENVIRONMENT || 'production',
       };
-      if (!input.requestId || !input.nickname || !input.contact || !input.concern || !input.desiredHelp || !input.consent) return json(400, { error: '请完整填写预约信息并确认信息使用说明' }, request);
+      if (!hasRequiredAppointmentFields(input)) return json(400, { error: '请完整填写预约信息并确认信息使用说明' }, request);
       const safetyGate = safetyGateFor({
         ...body,
         messages: [
