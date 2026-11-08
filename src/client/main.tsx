@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
-import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
+import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, readPendingBooking, savePendingBooking, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
 import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, setLearningConsent, sendLearningEvent, sendLearningReview } from './learning.js';
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
@@ -29,9 +29,16 @@ function api<T>(path: string, init?: RequestInit) {
   if (init?.body && !headers.has('Content-Type')) headers.set('Content-Type', 'text/plain;charset=UTF-8');
   return fetch(`${apiBaseUrl}${path}`, { ...init, headers }).then(async (response) => {
     const payload = await response.json().catch(() => ({})) as { error?: string };
-    if (!response.ok) throw new Error(payload.error || '请求失败，请稍后重试');
+    if (!response.ok) throw new ApiError(payload.error || '请求失败，请稍后重试', response.status);
     return payload as T;
   });
+}
+
+class ApiError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = 'ApiError';
+  }
 }
 
 function newRequestId() {
@@ -578,7 +585,7 @@ function BookingPage() {
   const [loadingSummary, setLoadingSummary] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
-  const [requestId] = useState(newRequestId);
+  const [requestId, setRequestId] = useState<string>(newRequestId);
   const summaryRequestedRef = useRef(false);
   const generatedSummaryRef = useRef('');
   const bookingLearningTrackerRef = useRef(new LearningMetricsTracker());
@@ -596,6 +603,11 @@ function BookingPage() {
   useEffect(() => {
     void getOrCreateSession().then(async (mainSession) => {
       setSession(mainSession);
+      const pendingBooking = readPendingBooking(mainSession.currentIssueId);
+      if (pendingBooking) {
+        setRequestId(pendingBooking.requestId);
+        if (pendingBooking.status === 'submitted') location.href = appPath(`/booking/result?requestId=${encodeURIComponent(pendingBooking.requestId)}`);
+      }
       setNickname(mainSession.profile?.nickname || '');
       setContact(mainSession.profile?.contact || '');
       const storedMessages = await listMessages(mainSession.id);
@@ -644,16 +656,46 @@ function BookingPage() {
       const ratio = edited ? Math.min(1, changed / Math.max(original.length, summary.trim().length, 1)) : 0;
       if (edited) emitBookingLearning('summary_edited', ratio);
       const bookingCaseId = `booking_${requestId}`;
-      const result = await api<{ requestId: string; recordId?: string; status: string; bookingCaseId?: string }>('/api/appointments', {
-        method: 'POST',
-        body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: currentIssueId, bookingCaseId, messages: messages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) }),
-      });
-      if (session) {
-        const submittedAt = new Date().toISOString();
-        const snapshot: BookingCaseSnapshot = { booking_case_id: result.bookingCaseId || bookingCaseId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null };
-        await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot);
+      const booking = { requestId, issueId: currentIssueId || '', bookingCaseId };
+      savePendingBooking({ issueId: booking.issueId, requestId, status: 'pending' });
+
+      const finalizeRemoteSubmission = async (result: { recordId?: string; bookingCaseId?: string }) => {
+        savePendingBooking({ issueId: booking.issueId, requestId, status: 'submitted' });
+        if (session) {
+          const submittedAt = new Date().toISOString();
+          const snapshot: BookingCaseSnapshot = { booking_case_id: result.bookingCaseId || bookingCaseId, issue_id: session.currentIssueId, booking_summary: summary.trim(), nickname: nickname.trim(), contact: contact.trim(), help_wanted: desiredHelp.trim(), submitted_at: submittedAt, feishu_record_id: result.recordId || null };
+          try { await markIssueBookingSubmitted(session.id, session.currentIssueId, snapshot); } catch { /* remote success must not be reported as local/Feishu failure */ }
+        }
+        location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`);
+      };
+
+      let result: { recordId?: string; status: string; bookingCaseId?: string };
+      try {
+        result = await api<{ requestId: string; recordId?: string; status: string; bookingCaseId?: string }>('/api/appointments', {
+          method: 'POST',
+          body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: currentIssueId, bookingCaseId, messages: messages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) }),
+        });
+      } catch (submitError) {
+        const uncertain = !(submitError instanceof ApiError) || submitError.status >= 500;
+        if (!uncertain) throw submitError;
+        try {
+          const recovered = await api<{ requestId: string; recordId?: string; status: string }>(`/api/appointments/${encodeURIComponent(requestId)}/status`);
+          if (!recovered.recordId && recovered.status !== 'submitted') throw new ApiError('预约状态仍在确认中', 503);
+          await finalizeRemoteSubmission(recovered);
+          return;
+        } catch (statusError) {
+          if (statusError instanceof ApiError && statusError.status === 404) {
+            savePendingBooking({ issueId: booking.issueId, requestId, status: 'pending' });
+            setError('暂时没有查到这次预约记录，可以使用同一个预约编号手动重试。');
+          } else {
+            savePendingBooking({ issueId: booking.issueId, requestId, status: 'unknown' });
+            setError('尚无法确认预约是否写入，请不要反复提交；稍后可使用同一个预约编号手动重试。');
+          }
+          setSubmitting(false);
+          return;
+        }
       }
-      location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`);
+      await finalizeRemoteSubmission(result);
     }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
