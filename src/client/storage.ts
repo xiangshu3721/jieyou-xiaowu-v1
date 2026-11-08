@@ -29,6 +29,36 @@ export interface LocalProfile {
   contact: string;
 }
 
+export type PendingBookingStatus = 'pending' | 'unknown' | 'submitted';
+
+export interface PendingBooking {
+  issueId: string;
+  requestId: string;
+  status: PendingBookingStatus;
+}
+
+const pendingBookingKeyPrefix = 'jieyou-xiaowu-v1:pending-booking:';
+
+function pendingBookingKey(issueId: string) {
+  return `${pendingBookingKeyPrefix}${issueId}`;
+}
+
+export function readPendingBooking(issueId: string): PendingBooking | null {
+  try {
+    const raw = localStorage.getItem(pendingBookingKey(issueId));
+    if (!raw) return null;
+    const value = JSON.parse(raw) as Partial<PendingBooking>;
+    if (value.issueId !== issueId || typeof value.requestId !== 'string' || !value.requestId || !['pending', 'unknown', 'submitted'].includes(value.status || '')) return null;
+    return { issueId, requestId: value.requestId, status: value.status as PendingBookingStatus };
+  } catch {
+    return null;
+  }
+}
+
+export function savePendingBooking(value: PendingBooking) {
+  try { localStorage.setItem(pendingBookingKey(value.issueId), JSON.stringify(value)); } catch { /* private browsing may block localStorage */ }
+}
+
 const DB_NAME = 'jieyou-xiaowu-v1';
 const DB_VERSION = 2;
 const SINGLE_SESSION_ID = 'jieyou-main-session';
