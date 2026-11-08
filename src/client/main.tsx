@@ -34,11 +34,63 @@ function api<T>(path: string, init?: RequestInit) {
   });
 }
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(message: string, public readonly status: number) {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+export interface AppointmentResponse {
+  ok?: boolean;
+  requestId?: string;
+  recordId?: string;
+  status?: string;
+  bookingCaseId?: string;
+}
+
+export function isConfirmedAppointmentResponse(value: unknown): value is AppointmentResponse & { ok: true; status: 'submitted'; recordId: string } {
+  const response = value as AppointmentResponse | null;
+  return response?.ok === true && response.status === 'submitted' && typeof response.recordId === 'string' && response.recordId.trim().length > 0;
+}
+
+function isConfirmedAppointmentStatus(value: unknown): value is AppointmentResponse & { recordId: string } {
+  const response = value as AppointmentResponse | null;
+  return typeof response?.recordId === 'string' && response.recordId.trim().length > 0;
+}
+
+function httpStatus(error: unknown) {
+  return error instanceof ApiError ? error.status : undefined;
+}
+
+export async function submitAppointmentWithRecovery(
+  submit: () => Promise<unknown>,
+  queryStatus: () => Promise<unknown>,
+  onSubmitted: (response: AppointmentResponse) => Promise<void> | void,
+): Promise<'submitted' | 'pending' | 'unknown'> {
+  async function recover() {
+    try {
+      const recovered = await queryStatus();
+      if (isConfirmedAppointmentStatus(recovered)) {
+        await onSubmitted(recovered);
+        return 'submitted' as const;
+      }
+      return 'unknown' as const;
+    } catch (error) {
+      return httpStatus(error) === 404 ? 'pending' as const : 'unknown' as const;
+    }
+  }
+
+  let response: unknown;
+  try {
+    response = await submit();
+  } catch (error) {
+    if (error instanceof ApiError && error.status < 500) throw error;
+    return recover();
+  }
+  if (!isConfirmedAppointmentResponse(response)) return recover();
+  await onSubmitted(response);
+  return 'submitted';
 }
 
 function newRequestId() {
@@ -669,33 +721,26 @@ function BookingPage() {
         location.href = appPath(`/booking/result?requestId=${encodeURIComponent(requestId)}`);
       };
 
-      let result: { recordId?: string; status: string; bookingCaseId?: string };
-      try {
-        result = await api<{ requestId: string; recordId?: string; status: string; bookingCaseId?: string }>('/api/appointments', {
+      const recovery = await submitAppointmentWithRecovery(
+        () => api<AppointmentResponse>('/api/appointments', {
           method: 'POST',
           body: JSON.stringify({ requestId, nickname, contact, concern: summary, desiredHelp, consent, issueId: currentIssueId, bookingCaseId, messages: messages.map((message) => ({ id: message.id, role: message.role, content: message.content, issueId: message.issueId, createdAt: message.createdAt })) }),
-        });
-      } catch (submitError) {
-        const uncertain = !(submitError instanceof ApiError) || submitError.status >= 500;
-        if (!uncertain) throw submitError;
-        try {
-          const recovered = await api<{ requestId: string; recordId?: string; status: string }>(`/api/appointments/${encodeURIComponent(requestId)}/status`);
-          if (!recovered.recordId && recovered.status !== 'submitted') throw new ApiError('预约状态仍在确认中', 503);
-          await finalizeRemoteSubmission(recovered);
-          return;
-        } catch (statusError) {
-          if (statusError instanceof ApiError && statusError.status === 404) {
-            savePendingBooking({ issueId: booking.issueId, requestId, status: 'pending' });
-            setError('暂时没有查到这次预约记录，可以使用同一个预约编号手动重试。');
-          } else {
-            savePendingBooking({ issueId: booking.issueId, requestId, status: 'unknown' });
-            setError('尚无法确认预约是否写入，请不要反复提交；稍后可使用同一个预约编号手动重试。');
-          }
-          setSubmitting(false);
-          return;
-        }
+        }),
+        () => api<AppointmentResponse>(`/api/appointments/${encodeURIComponent(requestId)}/status`),
+        finalizeRemoteSubmission,
+      );
+      if (recovery === 'pending') {
+        savePendingBooking({ issueId: booking.issueId, requestId, status: 'pending' });
+        setError('暂时没有查到这次预约记录，可以使用同一个预约编号手动重试。');
+        setSubmitting(false);
+        return;
       }
-      await finalizeRemoteSubmission(result);
+      if (recovery === 'unknown') {
+        savePendingBooking({ issueId: booking.issueId, requestId, status: 'unknown' });
+        setError('尚无法确认预约是否写入，请不要反复提交；稍后可使用同一个预约编号手动重试。');
+        setSubmitting(false);
+        return;
+      }
     }
     catch (err) { setError(err instanceof Error ? err.message : '预约提交失败，请稍后重试。'); setSubmitting(false); }
   }
@@ -787,4 +832,4 @@ function App() {
   return <HomePage />;
 }
 
-createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);
+if (typeof document !== 'undefined') createRoot(document.getElementById('root')!).render(<React.StrictMode><App /></React.StrictMode>);

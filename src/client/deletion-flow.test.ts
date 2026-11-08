@@ -66,6 +66,8 @@ describe('聊天删除边界', () => {
     expect(bookingBody).toContain("savePendingBooking({ issueId: booking.issueId, requestId, status: 'submitted' })");
     expect(bookingBody).toContain('try { await markIssueBookingSubmitted');
     expect(bookingBody).toContain('remote success must not be reported as local/Feishu failure');
+    expect(bookingBody).toContain('submitAppointmentWithRecovery');
+    expect(source).toContain('isConfirmedAppointmentResponse');
   });
 
   it('预约响应不确定时只回查一次，并区分 404 与未知状态', () => {
@@ -73,7 +75,8 @@ describe('聊天删除边界', () => {
     const resultStart = source.indexOf('\nfunction ResultPage()', bookingStart);
     const bookingBody = source.slice(bookingStart, resultStart);
     expect(bookingBody).toContain("/api/appointments/${encodeURIComponent(requestId)}/status");
-    expect(bookingBody).toContain('statusError instanceof ApiError && statusError.status === 404');
+    expect(bookingBody).toContain("recovery === 'pending'");
+    expect(bookingBody).toContain("recovery === 'unknown'");
     expect(bookingBody).toContain('尚无法确认预约是否写入');
     expect(bookingBody).toContain('不要反复提交');
   });
