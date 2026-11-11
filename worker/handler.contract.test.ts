@@ -293,11 +293,20 @@ describe('worker handler API 契约', () => {
     expect(created.status).toBe(200);
     expect(await json(created)).toMatchObject({ status: 'submitted', recordId: 'rec-staging-contract-001' });
     expect(postedFields).toMatchObject({
+      预约编号: input.requestId,
+      昵称: input.nickname,
+      '微信/联系方式': input.contact,
+      当前困扰描述: input.concern,
+      预约时间: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
+      处理状态: '待分配',
+      希望获得什么帮助: input.desiredHelp,
       'Source Environment': 'staging',
       'Request ID': 'contract-request-001',
       'Issue ID': 'issue-contract-001',
       'Booking Case ID': 'booking-contract-001',
     });
+    expect(postedFields).not.toHaveProperty('微信 / 联系方式');
+    expect(postedFields).not.toHaveProperty('提交时间');
 
     const retried = await handleApi(request('/api/appointments', 'POST', input), baseEnv);
     expect(retried.status).toBe(200);

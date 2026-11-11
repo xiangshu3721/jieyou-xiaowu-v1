@@ -31,9 +31,9 @@ function fieldsFor(input: AppointmentInput) {
   const fields: Record<string, string> = {
     预约编号: input.requestId,
     昵称: input.nickname,
-    '微信 / 联系方式': input.contact,
+    '微信/联系方式': input.contact,
     当前困扰描述: input.concern,
-    提交时间: new Date().toISOString(),
+    预约时间: new Date().toISOString().slice(0, 19).replace('T', ' '),
     处理状态: '待分配',
   };
   if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
