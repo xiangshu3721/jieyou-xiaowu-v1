@@ -108,7 +108,7 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
   });
 
-  it('普通 Fallback 会直接回应求助或对上一条回复的质疑，而不是重复倾诉模板', () => {
+  it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {
     const first = analyzeConversation('工作压力很大怎么办？');
     const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
     expect(firstReply).toMatch(/任务|工作量|范围/);
@@ -125,15 +125,53 @@ describe('结构化 AI 输出校验', () => {
     expect(secondReply).not.toBe('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
   });
 
-  it('普通 Fallback 不连续逐字重复倾诉模板', () => {
-    const analysis = analyzeConversation('我只是想先说说');
-    const reply = fallbackReply(analysis, {
-      latestUserMessage: '我只是想先说说',
-      recentAssistantReplies: ['我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。'],
+  it('连续三轮普通降级不会在两个固定模板间循环', () => {
+    const first = fallbackReply(analyzeConversation('今天心里很乱'), {
+      latestUserMessage: '今天心里很乱',
       allowQuestion: false,
     });
-    expect(reply).toContain('不重复刚才那句');
-    expect(reply).not.toMatch(/建议你|可以先做|试试|应该/);
+    const second = fallbackReply(analyzeConversation('我不知道怎么说'), {
+      latestUserMessage: '我不知道怎么说',
+      recentUserMessages: ['今天心里很乱', '我不知道怎么说'],
+      recentAssistantReplies: [first],
+      allowQuestion: false,
+    });
+    const third = fallbackReply(analyzeConversation('我只是觉得很累'), {
+      latestUserMessage: '我只是觉得很累',
+      recentUserMessages: ['我不知道怎么说', '我只是觉得很累'],
+      recentAssistantReplies: [first, second],
+      allowQuestion: false,
+    });
+    expect(new Set([first, second, third]).size).toBe(3);
+    [first, second, third].forEach((reply) => expect(reply).not.toMatch(/我不重复刚才那句|建议你|可以先做|试试|应该/));
+  });
+
+  it('追问只解释真实上一条回复，不把话题拉回工作或强行给建议', () => {
+    const workAdvice = '先把今天必须完成的任务列出来，只推进最紧急的一件，必要时提前说明期限风险。';
+    const workExplanation = fallbackReply(analyzeConversation('你这话什么意思？'), {
+      latestUserMessage: '你这话什么意思？',
+      recentAssistantReplies: [workAdvice],
+      allowQuestion: false,
+    });
+    expect(workExplanation).toMatch(/任务|期限/);
+    expect(workExplanation).not.toContain('没有回答');
+
+    const relationshipReply = '听起来你和伴侣最近总在沟通时卡住，这会让人很疲惫。';
+    const relationshipExplanation = fallbackReply(analyzeConversation('你这话什么意思？', '用户：工作压力很大怎么办？'), {
+      latestUserMessage: '你这话什么意思？',
+      recentAssistantReplies: [relationshipReply],
+      allowQuestion: false,
+    });
+    expect(relationshipExplanation).toContain(relationshipReply);
+    expect(relationshipExplanation).not.toMatch(/工作|任务|期限/);
+
+    const noAdvice = fallbackReply(analyzeConversation('不要建议，只解释下'), {
+      latestUserMessage: '不要建议，只解释下',
+      recentAssistantReplies: [workAdvice],
+      allowQuestion: false,
+    });
+    expect(noAdvice).toMatch(/只解释|不再补充/);
+    expect(noAdvice).not.toMatch(/先把|推进|提前说明/);
   });
 
   it('Fallback 保留安全澄清和危机指引例外', () => {

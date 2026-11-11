@@ -155,6 +155,93 @@ describe('worker handler API 契约', () => {
     expect(body.reply).not.toMatch(/预约|真人|导师/);
   });
 
+  it('连续三轮普通解析失败不在旧新兜底之间循环', async () => {
+    fetchMock
+      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
+      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'))
+      .mockResolvedValueOnce(deepSeekResponse('模型再次未返回 JSON'));
+    const issue = { issue_id: 'issue-three-fallbacks', status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const firstResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issue.issue_id,
+      issue,
+      messages: [{ role: 'user', content: '今天心里很乱。', issueId: issue.issue_id }],
+    }), baseEnv);
+    const first = (await json(firstResponse)).reply as string;
+
+    const secondResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issue.issue_id,
+      issue,
+      messages: [
+        { role: 'user', content: '今天心里很乱。', issueId: issue.issue_id },
+        { role: 'assistant', content: first, issueId: issue.issue_id },
+        { role: 'user', content: '我不知道怎么说。', issueId: issue.issue_id },
+      ],
+    }), baseEnv);
+    const second = (await json(secondResponse)).reply as string;
+
+    const thirdResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issue.issue_id,
+      issue,
+      messages: [
+        { role: 'user', content: '今天心里很乱。', issueId: issue.issue_id },
+        { role: 'assistant', content: first, issueId: issue.issue_id },
+        { role: 'user', content: '我不知道怎么说。', issueId: issue.issue_id },
+        { role: 'assistant', content: second, issueId: issue.issue_id },
+        { role: 'user', content: '我只是觉得很累。', issueId: issue.issue_id },
+      ],
+    }), baseEnv);
+    const third = (await json(thirdResponse)).reply as string;
+
+    expect(new Set([first, second, third]).size).toBe(3);
+    [first, second, third].forEach((reply) => expect(reply).not.toContain('我不重复刚才那句'));
+  });
+
+  it('追问会解释上一条实际回复，不把已切换的话题拉回工作，也尊重拒绝建议', async () => {
+    fetchMock
+      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
+      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'))
+      .mockResolvedValueOnce(deepSeekResponse('模型再次未返回 JSON'));
+    const workAdvice = '先把今天必须完成的任务列出来，只推进最紧急的一件，必要时提前说明期限风险。';
+    const workResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-explain-work',
+      issue: { issue_id: 'issue-explain-work', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-explain-work' },
+        { role: 'assistant', content: workAdvice, issueId: 'issue-explain-work' },
+        { role: 'user', content: '你这话什么意思？', issueId: 'issue-explain-work' },
+      ],
+    }), baseEnv);
+    expect((await json(workResponse)).reply).toMatch(/任务|期限/);
+
+    const relationshipReply = '听起来你和伴侣最近总在沟通时卡住，这会让人很疲惫。';
+    const relationshipResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-relationship',
+      issue: { issue_id: 'issue-relationship', status: 'ACTIVE', topic_tags: ['INTIMACY'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-work' },
+        { role: 'user', content: '最近和伴侣说话总有些别扭。', issueId: 'issue-relationship' },
+        { role: 'assistant', content: relationshipReply, issueId: 'issue-relationship' },
+        { role: 'user', content: '你这话什么意思？', issueId: 'issue-relationship' },
+      ],
+    }), baseEnv);
+    const relationshipBody = await json(relationshipResponse);
+    expect(relationshipBody.reply).toContain(relationshipReply);
+    expect(relationshipBody.reply).not.toMatch(/工作|任务|期限/);
+
+    const noAdviceResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-explain-no-advice',
+      issue: { issue_id: 'issue-explain-no-advice', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-explain-no-advice' },
+        { role: 'assistant', content: workAdvice, issueId: 'issue-explain-no-advice' },
+        { role: 'user', content: '不要建议，只解释下。', issueId: 'issue-explain-no-advice' },
+      ],
+    }), baseEnv);
+    const noAdviceBody = await json(noAdviceResponse);
+    expect(noAdviceBody.reply).toMatch(/只解释|不再补充/);
+    expect(noAdviceBody.reply).not.toMatch(/先把|推进|提前说明/);
+  });
+
   it('真人交接 Handler 契约保持入口、状态和无提问回复一致', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你愿意先说说为什么想找真人吗？"}'));
     const directResponse = await handleApi(request('/api/chat', 'POST', {
