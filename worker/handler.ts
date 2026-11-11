@@ -238,9 +238,9 @@ function fieldsFor(input: AppointmentInput, includeMetadata = false) {
   const fields: Record<string, string | number> = {
     预约编号: input.requestId,
     昵称: input.nickname,
-    '微信 / 联系方式': input.contact,
+    '微信/联系方式': input.contact,
     当前困扰描述: input.concern,
-    提交时间: includeMetadata ? Date.now() : new Date().toISOString(),
+    预约时间: Date.now(),
     处理状态: '待分配',
   };
   if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
@@ -277,7 +277,13 @@ async function createFeishuAppointment(env: WorkerEnv, input: AppointmentInput) 
 
 function recordRequestId(record: { record_id?: string; id?: string; fields?: Record<string, unknown> }) {
   const value = record.fields?.['预约编号'];
-  return typeof value === 'string' ? value.trim() : '';
+  if (typeof value === 'string') return value.trim();
+  if (!Array.isArray(value)) return '';
+  return value.map((part) => {
+    if (typeof part === 'string') return part;
+    if (part && typeof part === 'object' && typeof (part as { text?: unknown }).text === 'string') return (part as { text: string }).text;
+    return '';
+  }).join('').trim();
 }
 
 async function findFeishuAppointmentByRequestId(env: WorkerEnv, requestId: string) {
