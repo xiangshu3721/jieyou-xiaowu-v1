@@ -47,6 +47,7 @@ describe('worker handler API 契约', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
@@ -250,9 +251,10 @@ describe('worker handler API 契约', () => {
     expect(await json(invalid)).toMatchObject({ error: '没有可整理的聊天内容' });
   });
 
-  it('appointments 支持 Staging 元数据、幂等重试和状态查询', async () => {
+  it('appointments 使用生产表字段、富文本预约ID幂等重试和状态查询', async () => {
     let listCalls = 0;
     let createCalls = 0;
+    const filters: string[] = [];
     let postedFields: Record<string, unknown> | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
@@ -262,7 +264,8 @@ describe('worker handler API 契约', () => {
       }
       if (url.includes('/records?filter=')) {
         listCalls += 1;
-        const items = listCalls === 1 ? [] : [{ record_id: 'rec-staging-contract-001', fields: { 预约编号: [{ text: 'contract-request-001', type: 'text' }] } }];
+        filters.push(decodeURIComponent(url.match(/[?&]filter=([^&]+)/)?.[1] || ''));
+        const items = listCalls === 1 ? [] : [{ record_id: 'rec-staging-contract-001', fields: { 预约ID: [{ text: 'contract-request-001', type: 'text' }] } }];
         return new Response(JSON.stringify({ code: 0, data: { items } }), { status: 200 });
       }
       if (method === 'POST' && url.endsWith('/records')) {
@@ -289,31 +292,32 @@ describe('worker handler API 契约', () => {
       issueId: 'issue-contract-001',
       bookingCaseId: 'booking-contract-001',
     };
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-01-02T00:03:04Z'));
     const created = await handleApi(request('/api/appointments', 'POST', input), baseEnv);
     expect(created.status).toBe(200);
     expect(await json(created)).toMatchObject({ status: 'submitted', recordId: 'rec-staging-contract-001' });
     expect(postedFields).toMatchObject({
-      预约编号: input.requestId,
-      昵称: input.nickname,
-      '微信/联系方式': input.contact,
-      当前困扰描述: input.concern,
-      预约时间: expect.any(Number),
+      预约ID: input.requestId,
+      客户昵称: input.nickname,
+      联系方式: input.contact,
+      当前困扰: input.concern,
+      预约时间: '2026-01-02 08:03:04',
       处理状态: '待分配',
       希望获得什么帮助: input.desiredHelp,
-      'Source Environment': 'staging',
-      'Request ID': 'contract-request-001',
-      'Issue ID': 'issue-contract-001',
-      'Booking Case ID': 'booking-contract-001',
     });
-    expect(Number.isInteger(postedFields?.['预约时间'])).toBe(true);
-    expect(Number(postedFields?.['预约时间'])).toBeGreaterThan(0);
-    expect(postedFields).not.toHaveProperty('微信 / 联系方式');
-    expect(postedFields).not.toHaveProperty('提交时间');
+    expect(postedFields).not.toHaveProperty('预约编号');
+    expect(postedFields).not.toHaveProperty('Source Environment');
+    expect(postedFields).not.toHaveProperty('Request ID');
 
     const retried = await handleApi(request('/api/appointments', 'POST', input), baseEnv);
     expect(retried.status).toBe(200);
     expect(await json(retried)).toMatchObject({ idempotent: true, recordId: 'rec-staging-contract-001' });
     expect(createCalls).toBe(1);
+    expect(filters).toEqual([
+      'CurrentValue.[预约ID]="contract-request-001"',
+      'CurrentValue.[预约ID]="contract-request-001"',
+    ]);
 
     const status = await handleApi(request('/api/appointments/contract-request-001/status'), baseEnv);
     expect(status.status).toBe(200);

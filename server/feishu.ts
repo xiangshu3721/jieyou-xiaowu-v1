@@ -28,12 +28,12 @@ async function getTenantToken() {
 }
 
 function fieldsFor(input: AppointmentInput) {
-  const fields: Record<string, string | number> = {
-    预约编号: input.requestId,
-    昵称: input.nickname,
-    '微信/联系方式': input.contact,
-    当前困扰描述: input.concern,
-    预约时间: Date.now(),
+  const fields: Record<string, string> = {
+    预约ID: input.requestId,
+    客户昵称: input.nickname,
+    联系方式: input.contact,
+    当前困扰: input.concern,
+    预约时间: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '),
     处理状态: '待分配',
   };
   if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
@@ -61,5 +61,5 @@ export async function getFeishuAppointment(recordId: string) {
   if (!response.ok || payload?.code || !payload?.data?.record) throw new FeishuUnavailableError(payload?.msg || `飞书查询失败 HTTP ${response.status}`);
   const fields = payload.data.record.fields || {};
   const text = (key: string) => typeof fields[key] === 'string' ? fields[key] as string : undefined;
-  return { status: text('处理状态'), assignedMentor: text('分配导师'), result: text('接待结果、最近跟进时间、备注') };
+  return { status: text('处理状态'), assignedMentor: text('当前导师'), result: text('接待结果、最近跟进时间、备注') };
 }
