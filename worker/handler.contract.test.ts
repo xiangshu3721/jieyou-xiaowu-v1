@@ -262,7 +262,7 @@ describe('worker handler API 契约', () => {
       }
       if (url.includes('/records?filter=')) {
         listCalls += 1;
-        const items = listCalls === 1 ? [] : [{ record_id: 'rec-staging-contract-001', fields: { 预约编号: 'contract-request-001' } }];
+        const items = listCalls === 1 ? [] : [{ record_id: 'rec-staging-contract-001', fields: { 预约编号: [{ text: 'contract-request-001', type: 'text' }] } }];
         return new Response(JSON.stringify({ code: 0, data: { items } }), { status: 200 });
       }
       if (method === 'POST' && url.endsWith('/records')) {
@@ -297,7 +297,7 @@ describe('worker handler API 契约', () => {
       昵称: input.nickname,
       '微信/联系方式': input.contact,
       当前困扰描述: input.concern,
-      预约时间: expect.stringMatching(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/),
+      预约时间: expect.any(Number),
       处理状态: '待分配',
       希望获得什么帮助: input.desiredHelp,
       'Source Environment': 'staging',
@@ -305,6 +305,8 @@ describe('worker handler API 契约', () => {
       'Issue ID': 'issue-contract-001',
       'Booking Case ID': 'booking-contract-001',
     });
+    expect(Number.isInteger(postedFields?.['预约时间'])).toBe(true);
+    expect(Number(postedFields?.['预约时间'])).toBeGreaterThan(0);
     expect(postedFields).not.toHaveProperty('微信 / 联系方式');
     expect(postedFields).not.toHaveProperty('提交时间');
 
