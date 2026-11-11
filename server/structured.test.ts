@@ -108,6 +108,34 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
   });
 
+  it('普通 Fallback 会直接回应求助或对上一条回复的质疑，而不是重复倾诉模板', () => {
+    const first = analyzeConversation('工作压力很大怎么办？');
+    const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
+    expect(firstReply).toMatch(/任务|工作量|范围/);
+    expect(firstReply).not.toContain('按自己的节奏继续说');
+
+    const second = analyzeConversation('你这话啥意思？', '用户：工作压力很大怎么办？');
+    const secondReply = fallbackReply(second, {
+      latestUserMessage: '你这话啥意思？',
+      recentUserMessages: ['工作压力很大怎么办？'],
+      recentAssistantReplies: ['我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。'],
+      allowQuestion: false,
+    });
+    expect(secondReply).toContain('没有回答');
+    expect(secondReply).not.toBe('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
+  });
+
+  it('普通 Fallback 不连续逐字重复倾诉模板', () => {
+    const analysis = analyzeConversation('我只是想先说说');
+    const reply = fallbackReply(analysis, {
+      latestUserMessage: '我只是想先说说',
+      recentAssistantReplies: ['我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。'],
+      allowQuestion: false,
+    });
+    expect(reply).toContain('不重复刚才那句');
+    expect(reply).not.toMatch(/建议你|可以先做|试试|应该/);
+  });
+
   it('Fallback 保留安全澄清和危机指引例外', () => {
     expect(fallbackReply(analyzeConversation('我现在正准备伤害自己'))).toBe(emergencyReply);
     expect(fallbackReply(analyzeConversation('我不想活了'))).toBe(safetyClarificationReply);

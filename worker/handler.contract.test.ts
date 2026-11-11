@@ -111,6 +111,50 @@ describe('worker handler API 契约', () => {
     expect(body.reply).not.toMatch(/[？?]/);
   });
 
+  it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
+    fetchMock
+      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
+      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'));
+    const helpResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-continuity',
+      issue: { issue_id: 'issue-continuity', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-continuity' }],
+    }), baseEnv);
+    expect(helpResponse.status).toBe(200);
+    expect((await json(helpResponse)).reply).toMatch(/任务|工作量|范围/);
+
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-continuity',
+      issue: { issue_id: 'issue-continuity', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-continuity' },
+        { role: 'assistant', content: '我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。', issueId: 'issue-continuity' },
+        { role: 'user', content: '你这话啥意思？', issueId: 'issue-continuity' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.reply).toContain('没有回答');
+    expect(body.reply).toMatch(/任务|工作量|范围/);
+    expect(body.reply).not.toBe('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('被回复校验拦截的普通模型回复也保留当前求助语境', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你可以预约真人导师。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-help',
+      issue: { issue_id: 'issue-help', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '工作压力很大怎么办？', issueId: 'issue-help' }],
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.reply).toMatch(/任务|工作量|范围/);
+    expect(body.reply).not.toMatch(/预约|真人|导师/);
+  });
+
   it('真人交接 Handler 契约保持入口、状态和无提问回复一致', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你愿意先说说为什么想找真人吗？"}'));
     const directResponse = await handleApi(request('/api/chat', 'POST', {
