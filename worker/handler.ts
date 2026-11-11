@@ -234,22 +234,16 @@ async function getTenantToken(env: WorkerEnv) {
   }
 }
 
-function fieldsFor(input: AppointmentInput, includeMetadata = false) {
-  const fields: Record<string, string | number> = {
-    预约编号: input.requestId,
-    昵称: input.nickname,
-    '微信/联系方式': input.contact,
-    当前困扰描述: input.concern,
-    预约时间: Date.now(),
+function fieldsFor(input: AppointmentInput) {
+  const fields: Record<string, string> = {
+    预约ID: input.requestId,
+    客户昵称: input.nickname,
+    联系方式: input.contact,
+    当前困扰: input.concern,
+    预约时间: new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 19).replace('T', ' '),
     处理状态: '待分配',
   };
   if (input.desiredHelp) fields['希望获得什么帮助'] = input.desiredHelp;
-  if (includeMetadata) {
-    fields['Source Environment'] = input.sourceEnvironment || 'staging';
-    fields['Request ID'] = input.requestId;
-    fields['Issue ID'] = input.issueId || '';
-    fields['Booking Case ID'] = input.bookingCaseId || input.requestId;
-  }
   return fields;
 }
 
@@ -261,7 +255,7 @@ async function createFeishuAppointment(env: WorkerEnv, input: AppointmentInput) 
     const response = await fetch(`${config.baseUrl}/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
-      body: JSON.stringify({ fields: fieldsFor(input, env.APPOINTMENT_INCLUDE_METADATA === 'true') }),
+      body: JSON.stringify({ fields: fieldsFor(input) }),
       signal: timeout.signal,
     });
     const payload = await response.json().catch(() => null) as { code?: number; msg?: string; data?: { record?: { record_id?: string } } } | null;
@@ -276,7 +270,7 @@ async function createFeishuAppointment(env: WorkerEnv, input: AppointmentInput) 
 }
 
 function recordRequestId(record: { record_id?: string; id?: string; fields?: Record<string, unknown> }) {
-  const value = record.fields?.['预约编号'];
+  const value = record.fields?.['预约ID'];
   if (typeof value === 'string') return value.trim();
   if (!Array.isArray(value)) return '';
   return value.map((part) => {
@@ -290,7 +284,7 @@ async function findFeishuAppointmentByRequestId(env: WorkerEnv, requestId: strin
   const config = assertFeishuConfigured(env);
   const token = await getTenantToken(env);
   const escapedRequestId = requestId.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
-  const filter = `CurrentValue.[预约编号]="${escapedRequestId}"`;
+  const filter = `CurrentValue.[预约ID]="${escapedRequestId}"`;
   const timeout = timeoutSignal(20_000);
   try {
     const response = await fetch(`${config.baseUrl}/open-apis/bitable/v1/apps/${config.appToken}/tables/${config.tableId}/records?filter=${encodeURIComponent(filter)}&page_size=10`, {
@@ -328,7 +322,7 @@ async function getFeishuAppointment(env: WorkerEnv, recordId: string) {
     if (!response.ok || payload?.code || !payload?.data?.record) throw new ExternalServiceError(payload?.msg || `飞书查询失败 HTTP ${response.status}`, 'FEISHU_UNAVAILABLE');
     const fields = payload.data.record.fields || {};
     const text = (key: string) => typeof fields[key] === 'string' ? fields[key] as string : undefined;
-    return { status: text('处理状态'), assignedMentor: text('分配导师'), result: text('接待结果、最近跟进时间、备注') };
+    return { status: text('处理状态'), assignedMentor: text('当前导师'), result: text('接待结果、最近跟进时间、备注') };
   } finally {
     timeout.clear();
   }
