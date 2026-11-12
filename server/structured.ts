@@ -221,9 +221,19 @@ export interface ReplyContext {
 
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis, context: ReplyContext = {}) {
   if (analysis) {
-    const duplicateField = questionField(reply);
-    if (duplicateField && isDuplicateQuestion(reply, analysis)) {
-      return warmContinuationFor(analysis, duplicateField);
+    // 去重仅针对提问子句，不能覆盖同条回复中已经给出的解释或帮助。
+    const clauses = reply.match(/[^。！？!?；;，,\n]+[。！？!?；;，,\n]?/g) || [reply];
+    let duplicateField: ReturnType<typeof questionField> = null;
+    const kept = clauses.filter((clause) => {
+      const field = questionField(clause);
+      if (!field || !isDuplicateQuestion(clause, analysis)) return true;
+      duplicateField ||= field;
+      return false;
+    });
+    if (duplicateField) {
+      const preservedReply = kept.join('').trim();
+      if (preservedReply) reply = preservedReply;
+      else return warmContinuationFor(analysis, duplicateField);
     }
   }
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
