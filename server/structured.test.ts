@@ -189,7 +189,7 @@ describe('结构化 AI 输出校验', () => {
     expect(normalized).not.toMatch(/记住了|不重复问/);
 
     const sameSentence = normalizeUserReply('我是在建议先确定今天的优先级，你最想先解决什么？', analysis);
-    expect(sameSentence).toBe('我是在建议先确定今天的优先级，');
+    expect(sameSentence).toBe('我是在建议先确定今天的优先级');
 
     const onlyDuplicate = normalizeUserReply('你现在最想先解决什么？', analysis);
     expect(onlyDuplicate).toMatch(/不重复问|记住/);
