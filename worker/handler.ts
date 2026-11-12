@@ -1,7 +1,7 @@
 import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage } from '../src/shared.js';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
-import { fallbackReply, mergeAnalysis, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
+import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
 import { createCloudBaseGrowthStore } from './growth-store.js';
@@ -181,7 +181,15 @@ function rateLimit(request: Request, pathname: string) {
   return null;
 }
 
-async function callDeepSeek(env: WorkerEnv, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, temperature = 0.4) {
+interface DeepSeekCompletion {
+  content: string;
+  model: string | null;
+  finishReason: string | null;
+}
+
+type ChatDiagnosticCode = 'MODEL_SUCCESS' | 'MODEL_EMPTY' | 'MODEL_PARSE_FAILED' | 'MODEL_OUTPUT_TRUNCATED' | 'MODEL_REPLY_REJECTED' | 'FALLBACK_USED';
+
+async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, temperature = 0.4): Promise<DeepSeekCompletion> {
   const config = apiConfig(env).deepseek;
   if (!config.apiKey) throw new ExternalServiceError('DeepSeek 尚未配置', 'DEEPSEEK_UNAVAILABLE');
   const timeout = timeoutSignal(35_000);
@@ -189,20 +197,40 @@ async function callDeepSeek(env: WorkerEnv, messages: Array<{ role: 'system' | '
     const response = await fetch(`${config.baseUrl}/chat/completions`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.apiKey}` },
-      body: JSON.stringify({ model: config.model, messages, temperature, stream: false }),
+      body: JSON.stringify({
+        model: config.model,
+        messages,
+        temperature,
+        stream: false,
+        response_format: { type: 'json_object' },
+        max_tokens: 1_600,
+      }),
       signal: timeout.signal,
     });
-    const payload = await response.json().catch(() => null) as { choices?: Array<{ message?: { content?: string } }>; error?: { message?: string } } | null;
+    const payload = await response.json().catch(() => null) as {
+      model?: string;
+      choices?: Array<{ finish_reason?: string | null; message?: { content?: string | null } }>;
+      error?: { message?: string };
+    } | null;
     if (!response.ok) throw new ExternalServiceError(payload?.error?.message || `DeepSeek HTTP ${response.status}`, 'DEEPSEEK_UNAVAILABLE');
-    const content = payload?.choices?.[0]?.message?.content?.trim();
-    if (!content) throw new ExternalServiceError('DeepSeek 返回内容为空', 'DEEPSEEK_UNAVAILABLE');
-    return content;
+    const choice = payload?.choices?.[0];
+    return {
+      content: choice?.message?.content?.trim() || '',
+      model: typeof payload?.model === 'string' ? payload.model : null,
+      finishReason: typeof choice?.finish_reason === 'string' ? choice.finish_reason : null,
+    };
   } catch (error) {
     if (error instanceof ExternalServiceError) throw error;
     throw new ExternalServiceError(error instanceof Error ? error.message : 'DeepSeek 请求失败', 'DEEPSEEK_UNAVAILABLE');
   } finally {
     timeout.clear();
   }
+}
+
+async function callDeepSeek(env: WorkerEnv, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, temperature = 0.4) {
+  const completion = await callDeepSeekCompletion(env, messages, temperature);
+  if (!completion.content) throw new ExternalServiceError('DeepSeek 返回内容为空', 'DEEPSEEK_UNAVAILABLE');
+  return completion.content;
 }
 
 function assertFeishuConfigured(env: WorkerEnv) {
@@ -532,20 +560,58 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         }
       }
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
-      const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
-      const parsed = parseAssistantOutput(raw);
+      const completion = await callDeepSeekCompletion(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
+      const diagnostics: { codes: ChatDiagnosticCode[]; model: string; finish_reason: string | null; fallback_used: boolean } = {
+        codes: ['MODEL_SUCCESS'],
+        model: completion.model || apiConfig(env).deepseek.model,
+        finish_reason: completion.finishReason,
+        fallback_used: false,
+      };
+      const parsed = completion.content && completion.finishReason !== 'length' ? parseAssistantOutput(completion.content) : null;
       const analysis = mergeAnalysis(baseline, parsed);
       const replyContext = {
         latestUserMessage: latestText,
         recentUserMessages: analysisMessages.filter((message) => message.role === 'user').slice(-2).map((message) => message.content),
         recentAssistantReplies: analysisMessages.filter((message) => message.role === 'assistant').slice(-2).map((message) => message.content),
       };
-      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED'
-        ? fallbackReply(analysis, replyContext)
-        : parsed
-          ? normalizeUserReply(parsed.reply, analysis, replyContext)
-          : fallbackReply(analysis, { ...replyContext, allowQuestion: false });
-      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: apiConfig(env).deepseek.model }, request);
+      const fallback = () => {
+        diagnostics.codes.push('FALLBACK_USED');
+        diagnostics.fallback_used = true;
+        return fallbackReply(analysis, { ...replyContext, allowQuestion: false });
+      };
+      let reply: string;
+      if (!completion.content) {
+        diagnostics.codes.push('MODEL_EMPTY');
+        reply = fallback();
+      } else if (completion.finishReason === 'length') {
+        diagnostics.codes.push('MODEL_OUTPUT_TRUNCATED');
+        reply = fallback();
+      } else if (!parsed) {
+        diagnostics.codes.push('MODEL_PARSE_FAILED');
+        const safeNaturalReply = naturalReply(completion.content);
+        if (safeNaturalReply) {
+          const normalized = normalizeUserReply(safeNaturalReply, analysis, replyContext);
+          const controlledFallback = fallbackReply(analysis, replyContext);
+          if (normalized === controlledFallback && safeNaturalReply !== normalized) {
+            diagnostics.codes.push('MODEL_REPLY_REJECTED');
+            reply = fallback();
+          } else {
+            reply = normalized;
+          }
+        } else {
+          reply = fallback();
+        }
+      } else {
+        const normalized = normalizeUserReply(parsed.reply, analysis, replyContext);
+        const controlledFallback = fallbackReply(analysis, replyContext);
+        if (normalized === controlledFallback && parsed.reply !== normalized) {
+          diagnostics.codes.push('MODEL_REPLY_REJECTED');
+          reply = fallback();
+        } else {
+          reply = normalized;
+        }
+      }
+      return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: diagnostics.model, diagnostics }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
