@@ -70,7 +70,7 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .compact-about-link:hover { transform: translateY(calc(-50% - 1px)); }
 @media (max-width: 760px) { .compact-about-link { right: max(20px, env(safe-area-inset-right)); } }
 
-.compact-header-brand > div { display: block; }
+.compact-header-brand > div:last-child { display: block; }
 .compact-header-brand small { display: block; margin-top: 2px; color: #8aa59a; font-size: 9px; font-weight: 400; }
 .message-stream { width: min(100%, 620px); margin: 44px auto 18px; padding: 0; }
 .message-row { align-items: flex-start; margin: 18px 0; }
