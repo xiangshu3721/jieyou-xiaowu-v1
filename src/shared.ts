@@ -1,3 +1,23 @@
+/** A question about *whether* to seek human help is not consent to book. */
+export function isUndecidedHumanHelpQuestion(input: string) {
+  const text = input.trim();
+  if (!/(?:真人|人工|导师|老师|咨询师|心理咨询|专业(?:人士|人员|的人)|咨询服务|找人聊|一对一|1\s*v\s*1)/i.test(text)) return false;
+  if (/(?:我(?:已经)?(?:决定|确定)|直接|现在就|马上|立刻|帮我|请帮我|给我).{0,12}(?:预约|安排)/.test(text)) return false;
+  return /要不要|该不该|需不需要|应不应该|是否(?:要|需要|应该|适合)|是不是(?:要|该|应该|需要)|有没有必要|有必要吗|有用吗|有帮助吗|适不适合|合不合适|合适吗|值不值得|拿不准|可以吗|行不行|不确定(?:要不要|是否)|(?:能不能|有没有|可不可以|可以).{0,10}(?:真人|咨询师|导师|老师|人工)|我(?:需要|应该|可以|该).{0,12}(?:吗|么)[？?]?/.test(text);
+}
+
+/** Only unambiguous human-service requests bypass the AI reply and open booking. */
+export function wantsHumanBooking(text: string) {
+  if (isUndecidedHumanHelpQuestion(text)) return false;
+  if (/(不想|不用|不需要|先不|拒绝).{0,8}(真人|预约|导师|老师|咨询师|人工)/.test(text)) return false;
+  return /(?:想|希望|需要|我要|帮我|可以).{0,8}(?:找真人|真人聊|真人导师|预约真人|找个人聊|找老师|找咨询师|心理咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
+    || /(?:预约|找|有没有|能不能).{0,8}(?:真人|导师|老师|咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
+    || /(?:有|有没有).{0,8}咨询服务/.test(text)
+    || /(?:有|有没有|能不能|可以).{0,8}(?:老师|导师).{0,8}(?:聊|咨询|沟通|安排)/.test(text)
+    || /(?:不想|不愿意).{0,4}(?:和|跟)\s*AI聊/i.test(text)
+    || /(?:AI|人工智能).{0,8}(?:没用|不行|聊不下去|不想聊)/i.test(text);
+}
+
 export type MessageRole = 'user' | 'assistant';
 
 export type ConversationState =
