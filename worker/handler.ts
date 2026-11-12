@@ -190,7 +190,6 @@ interface DeepSeekCompletion {
 type ChatDiagnosticCode = 'MODEL_SUCCESS' | 'MODEL_EMPTY' | 'MODEL_PARSE_FAILED' | 'MODEL_OUTPUT_TRUNCATED' | 'MODEL_REPLY_REJECTED' | 'FALLBACK_USED';
 
 interface DeepSeekCompletionOptions {
-  jsonMode?: boolean;
   maxTokens?: number;
 }
 
@@ -207,10 +206,7 @@ async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 's
         messages,
         temperature,
         stream: false,
-        ...(options.jsonMode ? {
-          response_format: { type: 'json_object' },
-          max_tokens: options.maxTokens ?? 1_600,
-        } : {}),
+        ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
       }),
       signal: timeout.signal,
     });
@@ -571,7 +567,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         env,
         [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))],
         0.4,
-        { jsonMode: true, maxTokens: 1_600 },
+        { maxTokens: 1_600 },
       );
       const diagnostics: { codes: ChatDiagnosticCode[]; model: string; finish_reason: string | null; fallback_used: boolean } = {
         codes: ['MODEL_SUCCESS'],
@@ -596,10 +592,10 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       let reply: string;
       if (!completion.content) {
         diagnostics.codes.push('MODEL_EMPTY');
-        reply = fallback();
+        return json(502, { error: 'AI 暂时没有有效回应，请稍后再试', code: 'DEEPSEEK_EMPTY_RESPONSE', diagnostics }, request);
       } else if (completion.finishReason === 'length') {
         diagnostics.codes.push('MODEL_OUTPUT_TRUNCATED');
-        reply = fallback();
+        return json(502, { error: 'AI 回复未完成，请稍后再试', code: 'DEEPSEEK_OUTPUT_TRUNCATED', diagnostics }, request);
       } else if (!parsed) {
         diagnostics.codes.push('MODEL_PARSE_FAILED');
         const safeNaturalReply = naturalReply(completion.content);
