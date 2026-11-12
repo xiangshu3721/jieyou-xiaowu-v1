@@ -29,6 +29,13 @@ describe('V1.6 Issue 上下文边界', () => {
     });
   });
 
+  it('询问要不要真人不是接受交接，明确要求时仍接受', () => {
+    expect(detectConversationControl('要不要找真人聊聊？', true)).toBe('GENERAL_CHAT');
+    expect(detectConversationControl('我是不是该找导师？', true)).toBe('GENERAL_CHAT');
+    expect(detectConversationControl('我想找真人导师聊聊', true)).toBe('ACCEPT_HANDOFF');
+    expect(detectConversationControl('我想预约真人导师', true)).toBe('ACCEPT_HANDOFF');
+  });
+
   it('TEST_A：旧 Issue 已推荐真人时，明确换话题会创建等待新话题的 Issue', () => {
     const resolution = resolveCurrentIssue({
       message: '算了跟你聊点别的吧',
