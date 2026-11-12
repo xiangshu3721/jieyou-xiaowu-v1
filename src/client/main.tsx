@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
+import { wantsHumanBooking } from '../shared.js';
 import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, readPendingBooking, savePendingBooking, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
 import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, setLearningConsent, sendLearningEvent, sendLearningReview } from './learning.js';
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
@@ -210,16 +211,6 @@ function wait(milliseconds: number) {
 }
 
 const quickPrompts = ['最近总是焦虑怎么办', '工作压力很大怎么办', '我想找真人聊聊'];
-
-function wantsHumanBooking(text: string) {
-  if (/(不想|不用|不需要|先不|拒绝).{0,8}(真人|预约|导师|老师|咨询师|人工)/.test(text)) return false;
-  return /(?:想|希望|需要|我要|帮我|可以).{0,8}(?:找真人|真人聊|真人导师|预约真人|找个人聊|找老师|找咨询师|心理咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
-    || /(?:预约|找|有没有|能不能).{0,8}(?:真人|导师|老师|咨询师|专业的人|一对一|1\s*v\s*1)/i.test(text)
-    || /(?:有|有没有).{0,8}咨询服务/.test(text)
-    || /(?:有|有没有|能不能|可以).{0,8}(?:老师|导师).{0,8}(?:聊|咨询|沟通|安排)/.test(text)
-    || /(?:不想|不愿意).{0,4}(?:和|跟)\s*AI聊/i.test(text)
-    || /(?:AI|人工智能).{0,8}(?:没用|不行|聊不下去|不想聊)/i.test(text);
-}
 
 function hasHumanServiceCta(text: string) {
   if (/(不(?:建议|适合|需要|推荐)|不要).{0,8}(真人|预约|导师)/.test(text)) return false;
