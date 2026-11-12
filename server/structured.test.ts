@@ -174,6 +174,27 @@ describe('结构化 AI 输出校验', () => {
     expect(noAdvice).not.toMatch(/先把|推进|提前说明/);
   });
 
+  it('已记录用户目标时只删除重复提问，保留对上一条建议的完整解释', () => {
+    const original = analyzeConversation('你刚才的建议是什么意思？', '用户：工作压力很大怎么办？');
+    const analysis = {
+      ...original,
+      known_facts: {
+        ...original.known_facts,
+        user_goal: { value: '希望得到一个现实可行的下一步', source: 'user_explicit' as const, confidence: 1 },
+      },
+    };
+    const reply = '我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。你现在最想先解决什么？';
+    const normalized = normalizeUserReply(reply, analysis, { latestUserMessage: '你刚才的建议是什么意思？' });
+    expect(normalized).toBe('我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。');
+    expect(normalized).not.toMatch(/记住了|不重复问/);
+
+    const sameSentence = normalizeUserReply('我是在建议先确定今天的优先级，你最想先解决什么？', analysis);
+    expect(sameSentence).toBe('我是在建议先确定今天的优先级，');
+
+    const onlyDuplicate = normalizeUserReply('你现在最想先解决什么？', analysis);
+    expect(onlyDuplicate).toMatch(/不重复问|记住/);
+  });
+
   it('Fallback 保留安全澄清和危机指引例外', () => {
     expect(fallbackReply(analyzeConversation('我现在正准备伤害自己'))).toBe(emergencyReply);
     expect(fallbackReply(analyzeConversation('我不想活了'))).toBe(safetyClarificationReply);
