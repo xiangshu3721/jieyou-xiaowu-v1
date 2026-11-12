@@ -613,9 +613,9 @@ function ChatPage() {
     <main className={`chat-page ${scrolled ? 'is-scrolled' : ''}`}>
       <div ref={chatScrollRef} className={`chat-scroll ${visibleMessages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
         <div className="compact-header" aria-hidden={!scrolled}>
-          <a className="compact-resource-link compact-resource-left" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于我们 <span aria-hidden="true">↗</span></a>
+          {growthEnabled && <a className="compact-resource-link compact-resource-left" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
           <div className="compact-header-brand"><div className="compact-avatar"><span>解<br />忧</span></div><div><strong>解忧小屋</strong><small>AI 倾听 · 温和陪伴</small></div></div>
-          {growthEnabled && <a className="compact-resource-link compact-resource-right" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
+          <a className="chat-about-link compact-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer" tabIndex={scrolled ? 0 : -1}>关于我们</a>
         </div>
         <header className="chat-topbar">
           <div className="chat-topbar-brand"><div className="chat-topbar-avatar"><span>解<br />忧</span></div><div><strong>解忧小屋</strong><span>AI 倾听 · 温和陪伴</span></div></div>

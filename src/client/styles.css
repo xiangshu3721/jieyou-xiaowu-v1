@@ -65,6 +65,11 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .chat-about-link { display: inline-flex; align-items: center; gap: 9px; padding: 13px 22px; border: 1px solid #e4ece7; border-radius: 999px; background: rgba(255, 255, 255, .88); color: #58766b; font-size: 16px; text-decoration: none; box-shadow: 0 5px 16px rgba(68, 105, 86, .05); transition: border-color .18s, background .18s, transform .18s; }
 .chat-about-link::before { width: 12px; height: 14px; border: 1.5px solid #5f8f7c; border-radius: 4px; content: ''; }
 .chat-about-link:hover { border-color: #b9d9c4; background: #f8fcf9; transform: translateY(-1px); }
+/* Keep the scrolled About link in its original top-right position and style. */
+.compact-about-link { position: absolute; top: 50%; right: max(24px, calc((100vw - 820px) / 2), env(safe-area-inset-right)); transform: translateY(-50%); }
+.compact-about-link:hover { transform: translateY(calc(-50% - 1px)); }
+@media (max-width: 760px) { .compact-about-link { right: max(20px, env(safe-area-inset-right)); } }
+
 .compact-header-brand > div { display: block; }
 .compact-header-brand small { display: block; margin-top: 2px; color: #8aa59a; font-size: 9px; font-weight: 400; }
 .message-stream { width: min(100%, 620px); margin: 44px auto 18px; padding: 0; }
