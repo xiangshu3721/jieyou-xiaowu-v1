@@ -10,6 +10,7 @@ describe('求助犹豫与明确预约意图区分', () => {
       '我需要找心理咨询师吗',
       '找咨询师有必要吗？',
       '有没有真人可以聊聊？',
+      '有咨询服务吗',
       '我想找真人聊聊，可以吗？',
     ]) {
       expect(isUndecidedHumanHelpQuestion(text)).toBe(true);
