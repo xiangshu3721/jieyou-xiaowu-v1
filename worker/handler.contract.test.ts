@@ -157,6 +157,28 @@ describe('worker handler API 契约', () => {
     expect((await json(rejected)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_REPLY_REJECTED', 'FALLBACK_USED'], fallback_used: true }));
   });
 
+  it('咨询师犹豫式询问正常回复并带可选预约入口，不被强制交接覆盖', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('不一定需要马上做决定。可以先看困扰有没有持续影响生活，也可以在这里继续聊聊。'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-optional-counselor',
+      issue: { issue_id: 'issue-optional-counselor', status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '要不要找咨询师啊？', issueId: 'issue-optional-counselor' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toContain('不一定需要马上做决定');
+    expect(body.reply).not.toMatch(/提交后|分配导师/);
+    expect(body.analysis).toMatchObject({
+      routing: 'AI_SUPPORT',
+      booking_preference: 'INTERESTED',
+      show_booking_button: true,
+      handoff_ready: false,
+      handoff_mode: 'NONE',
+    });
+    expect(body.diagnostics).toMatchObject({ fallback_used: false });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('chat 模型升级安全状态时优先返回既有安全回复', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"URGENT"}'));
     const urgent = await handleApi(request('/api/chat', 'POST', {
