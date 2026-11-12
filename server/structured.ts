@@ -239,12 +239,12 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
     return fallbackReply(analysis, context);
   }
-  if (analysis?.show_booking_button && !analysis.ask_question && /[？?]/.test(reply)) {
+  if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis, context);
   }
   let normalized = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, handoffCopyFor(analysis));
   normalized = replaceHandoffCopies(normalized, analysis);
-  if (analysis?.show_booking_button && !analysis.ask_question && !/预约.{0,12}免费|真人导师.{0,12}联系|免费预约真人聊聊/.test(normalized)) {
+  if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && !/预约.{0,12}免费|真人导师.{0,12}联系|免费预约真人聊聊/.test(normalized)) {
     const trimmed = normalized.trim().replace(/[。！？!?]+$/g, '');
     normalized = `${trimmed}${trimmed ? '。' : ''}${handoffCopyFor(analysis)}`;
   }
