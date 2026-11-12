@@ -1,3 +1,4 @@
+import { isUndecidedHumanHelpQuestion } from '../src/shared.js';
 import type { ChatMessage, ConversationAnalysis, ConversationControlIntent, HumanHandoffState, IssueAction, IssueLifecycle, IssueStatus, TopicCode } from '../src/shared.js';
 import { classifyConcern, detectIssueSwitch } from './rules.js';
 
@@ -57,7 +58,7 @@ export function detectConversationControl(text: string, handoffOffered = false):
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
   if (declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
-  if (acceptHandoffPatterns.some((pattern) => pattern.test(latest))) return 'ACCEPT_HANDOFF';
+  if (!isUndecidedHumanHelpQuestion(latest) && acceptHandoffPatterns.some((pattern) => pattern.test(latest))) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
   if (closeTopicPatterns.some((pattern) => pattern.test(latest))) return 'CLOSE_TOPIC';
   return 'GENERAL_CHAT';
