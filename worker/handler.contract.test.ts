@@ -112,7 +112,7 @@ describe('worker handler API 契约', () => {
     expect(body.diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false }));
   });
 
-  it('chat 用 JSON 模式区分空白、截断、解析失败和被拒绝回复，并保留安全自然语言', async () => {
+  it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {
     let postedBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
       postedBody = JSON.parse(String(init?.body));
@@ -129,11 +129,16 @@ describe('worker handler API 契约', () => {
       finish_reason: 'stop',
       fallback_used: false,
     }));
-    expect(postedBody).toMatchObject({ response_format: { type: 'json_object' }, max_tokens: 1_600, stream: false });
+    expect(postedBody).toMatchObject({ max_tokens: 1_600, stream: false });
+    expect(postedBody).not.toHaveProperty('response_format');
 
     fetchMock.mockResolvedValueOnce(deepSeekResponse(null));
     const empty = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
-    expect((await json(empty)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_EMPTY', 'FALLBACK_USED'], fallback_used: true }));
+    expect(empty.status).toBe(502);
+    expect(await json(empty)).toMatchObject({
+      code: 'DEEPSEEK_EMPTY_RESPONSE',
+      diagnostics: { codes: ['MODEL_SUCCESS', 'MODEL_EMPTY'], fallback_used: false },
+    });
 
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'));
     const incomplete = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
@@ -141,7 +146,11 @@ describe('worker handler API 契约', () => {
 
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"没有说完"', 200, 'length'));
     const truncated = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
-    expect((await json(truncated)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_OUTPUT_TRUNCATED', 'FALLBACK_USED'], finish_reason: 'length', fallback_used: true }));
+    expect(truncated.status).toBe(502);
+    expect(await json(truncated)).toMatchObject({
+      code: 'DEEPSEEK_OUTPUT_TRUNCATED',
+      diagnostics: { codes: ['MODEL_SUCCESS', 'MODEL_OUTPUT_TRUNCATED'], finish_reason: 'length', fallback_used: false },
+    });
 
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你可以预约真人导师。"}'));
     const rejected = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '工作压力很大怎么办？' }] }), baseEnv);
