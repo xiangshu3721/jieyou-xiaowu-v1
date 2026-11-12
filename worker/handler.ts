@@ -189,7 +189,12 @@ interface DeepSeekCompletion {
 
 type ChatDiagnosticCode = 'MODEL_SUCCESS' | 'MODEL_EMPTY' | 'MODEL_PARSE_FAILED' | 'MODEL_OUTPUT_TRUNCATED' | 'MODEL_REPLY_REJECTED' | 'FALLBACK_USED';
 
-async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, temperature = 0.4): Promise<DeepSeekCompletion> {
+interface DeepSeekCompletionOptions {
+  jsonMode?: boolean;
+  maxTokens?: number;
+}
+
+async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>, temperature = 0.4, options: DeepSeekCompletionOptions = {}): Promise<DeepSeekCompletion> {
   const config = apiConfig(env).deepseek;
   if (!config.apiKey) throw new ExternalServiceError('DeepSeek 尚未配置', 'DEEPSEEK_UNAVAILABLE');
   const timeout = timeoutSignal(35_000);
@@ -202,8 +207,10 @@ async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 's
         messages,
         temperature,
         stream: false,
-        response_format: { type: 'json_object' },
-        max_tokens: 1_600,
+        ...(options.jsonMode ? {
+          response_format: { type: 'json_object' },
+          max_tokens: options.maxTokens ?? 1_600,
+        } : {}),
       }),
       signal: timeout.signal,
     });
@@ -560,7 +567,12 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         }
       }
       const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
-      const completion = await callDeepSeekCompletion(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
+      const completion = await callDeepSeekCompletion(
+        env,
+        [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))],
+        0.4,
+        { jsonMode: true, maxTokens: 1_600 },
+      );
       const diagnostics: { codes: ChatDiagnosticCode[]; model: string; finish_reason: string | null; fallback_used: boolean } = {
         codes: ['MODEL_SUCCESS'],
         model: completion.model || apiConfig(env).deepseek.model,
@@ -569,6 +581,8 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       };
       const parsed = completion.content && completion.finishReason !== 'length' ? parseAssistantOutput(completion.content) : null;
       const analysis = mergeAnalysis(baseline, parsed);
+      if (analysis.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, request);
+      if (analysis.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, request);
       const replyContext = {
         latestUserMessage: latestText,
         recentUserMessages: analysisMessages.filter((message) => message.role === 'user').slice(-2).map((message) => message.content),

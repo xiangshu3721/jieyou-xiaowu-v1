@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { emergencyReply, safetyClarificationReply } from '../server/rules.js';
 import { handleApi, type WorkerEnv } from './handler.js';
 
 const baseEnv: WorkerEnv = {
@@ -145,6 +146,22 @@ describe('worker handler API 契约', () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你可以预约真人导师。"}'));
     const rejected = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '工作压力很大怎么办？' }] }), baseEnv);
     expect((await json(rejected)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_REPLY_REJECTED', 'FALLBACK_USED'], fallback_used: true }));
+  });
+
+  it('chat 模型升级安全状态时优先返回既有安全回复', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"URGENT"}'));
+    const urgent = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近工作压力很大。' }],
+    }), baseEnv);
+    expect(urgent.status).toBe(200);
+    expect(await json(urgent)).toMatchObject({ reply: emergencyReply, model: 'safety-rule', analysis: { safety_status: 'URGENT' } });
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"NEEDS_CLARIFICATION"}'));
+    const clarification = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近工作压力很大。' }],
+    }), baseEnv);
+    expect(clarification.status).toBe(200);
+    expect(await json(clarification)).toMatchObject({ reply: safetyClarificationReply, model: 'safety-rule', analysis: { safety_status: 'NEEDS_CLARIFICATION' } });
   });
 
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
@@ -405,13 +422,20 @@ describe('worker handler API 契约', () => {
   });
 
   it('booking-summary 返回摘要，并拒绝空消息请求', async () => {
-    fetchMock.mockResolvedValueOnce(deepSeekResponse('这是一段结构化的预约摘要。'));
+    let postedBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      postedBody = JSON.parse(String(init?.body));
+      return deepSeekResponse('这是一段纯文本预约摘要。');
+    });
     const response = await handleApi(request('/api/booking-summary', 'POST', {
       sessionId: 'contract-summary-session',
       messages: [{ role: 'user', content: '我想找人帮我理清下一步。' }],
     }), baseEnv);
     expect(response.status).toBe(200);
-    expect(await json(response)).toMatchObject({ summary: '这是一段结构化的预约摘要。', promptVersion: 'v1.9.0' });
+    expect(await json(response)).toMatchObject({ summary: '这是一段纯文本预约摘要。', promptVersion: 'v1.9.0' });
+    expect(postedBody).toEqual(expect.objectContaining({ stream: false }));
+    expect(postedBody).not.toHaveProperty('response_format');
+    expect(postedBody).not.toHaveProperty('max_tokens');
 
     const invalid = await handleApi(request('/api/booking-summary', 'POST', { messages: [] }), baseEnv);
     expect(invalid.status).toBe(400);
