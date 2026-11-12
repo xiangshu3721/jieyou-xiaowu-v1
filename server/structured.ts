@@ -231,7 +231,7 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
       return false;
     });
     if (duplicateField) {
-      const preservedReply = kept.join('').trim();
+      const preservedReply = kept.join('').trim().replace(/[，,；;：:\s]+$/g, '');
       if (preservedReply) reply = preservedReply;
       else return warmContinuationFor(analysis, duplicateField);
     }
