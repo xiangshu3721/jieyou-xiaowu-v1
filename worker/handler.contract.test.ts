@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { emergencyReply, safetyClarificationReply } from '../server/rules.js';
 import { handleApi, type WorkerEnv } from './handler.js';
 
 const baseEnv: WorkerEnv = {
@@ -29,8 +30,8 @@ function request(path: string, method = 'GET', body?: unknown) {
   });
 }
 
-function deepSeekResponse(content: string, status = 200) {
-  return new Response(JSON.stringify({ choices: [{ message: { content } }] }), {
+function deepSeekResponse(content: string | null, status = 200, finishReason: string | null = 'stop', model = 'deepseek-chat') {
+  return new Response(JSON.stringify({ model, choices: [{ finish_reason: finishReason, message: { content } }] }), {
     status,
     headers: { 'content-type': 'application/json' },
   });
@@ -98,7 +99,7 @@ describe('worker handler API 契约', () => {
     expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE' });
   });
 
-  it('chat 的结构化输出解析失败时使用无提问承接，不继续导诊', async () => {
+  it('chat 的结构化输出解析失败时保留通过校验的自然语言回复', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('我在听，你最想先说什么？'));
     const response = await handleApi(request('/api/chat', 'POST', {
       sessionId: 'contract-chat-fallback-session',
@@ -107,14 +108,66 @@ describe('worker handler API 契约', () => {
     const body = await json(response);
 
     expect(response.status).toBe(200);
-    expect(body.reply).toContain('先听着');
-    expect(body.reply).not.toMatch(/[？?]/);
+    expect(body.reply).not.toContain('我先听着，也接住你刚才说的这部分');
+    expect(body.diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false }));
+  });
+
+  it('chat 用 JSON 模式区分空白、截断、解析失败和被拒绝回复，并保留安全自然语言', async () => {
+    let postedBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      postedBody = JSON.parse(String(init?.body));
+      return deepSeekResponse('先把今天最紧急的一件事列出来，只做它的第一步。', 200, 'stop', 'deepseek-chat');
+    });
+    const plainText = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '工作很多，我接下来做什么？' }],
+    }), baseEnv);
+    const plainTextBody = await json(plainText);
+    expect(plainTextBody.reply).toContain('最紧急');
+    expect(plainTextBody.diagnostics).toEqual(expect.objectContaining({
+      codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'],
+      model: 'deepseek-chat',
+      finish_reason: 'stop',
+      fallback_used: false,
+    }));
+    expect(postedBody).toMatchObject({ response_format: { type: 'json_object' }, max_tokens: 1_600, stream: false });
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(null));
+    const empty = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
+    expect((await json(empty)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_EMPTY', 'FALLBACK_USED'], fallback_used: true }));
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'));
+    const incomplete = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
+    expect((await json(incomplete)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED', 'FALLBACK_USED'], fallback_used: true }));
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"没有说完"', 200, 'length'));
+    const truncated = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '我有点乱。' }] }), baseEnv);
+    expect((await json(truncated)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_OUTPUT_TRUNCATED', 'FALLBACK_USED'], finish_reason: 'length', fallback_used: true }));
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你可以预约真人导师。"}'));
+    const rejected = await handleApi(request('/api/chat', 'POST', { messages: [{ role: 'user', content: '工作压力很大怎么办？' }] }), baseEnv);
+    expect((await json(rejected)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_REPLY_REJECTED', 'FALLBACK_USED'], fallback_used: true }));
+  });
+
+  it('chat 模型升级安全状态时优先返回既有安全回复', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"URGENT"}'));
+    const urgent = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近工作压力很大。' }],
+    }), baseEnv);
+    expect(urgent.status).toBe(200);
+    expect(await json(urgent)).toMatchObject({ reply: emergencyReply, model: 'safety-rule', analysis: { safety_status: 'URGENT' } });
+
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"NEEDS_CLARIFICATION"}'));
+    const clarification = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近工作压力很大。' }],
+    }), baseEnv);
+    expect(clarification.status).toBe(200);
+    expect(await json(clarification)).toMatchObject({ reply: safetyClarificationReply, model: 'safety-rule', analysis: { safety_status: 'NEEDS_CLARIFICATION' } });
   });
 
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
-      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
-      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'));
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'));
     const helpResponse = await handleApi(request('/api/chat', 'POST', {
       currentIssueId: 'issue-continuity',
       issue: { issue_id: 'issue-continuity', status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
@@ -157,9 +210,9 @@ describe('worker handler API 契约', () => {
 
   it('连续三轮普通解析失败不在旧新兜底之间循环', async () => {
     fetchMock
-      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
-      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'))
-      .mockResolvedValueOnce(deepSeekResponse('模型再次未返回 JSON'));
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'));
     const issue = { issue_id: 'issue-three-fallbacks', status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' };
     const firstResponse = await handleApi(request('/api/chat', 'POST', {
       currentIssueId: issue.issue_id,
@@ -198,9 +251,9 @@ describe('worker handler API 契约', () => {
 
   it('追问会解释上一条实际回复，不把已切换的话题拉回工作，也尊重拒绝建议', async () => {
     fetchMock
-      .mockResolvedValueOnce(deepSeekResponse('模型未返回 JSON'))
-      .mockResolvedValueOnce(deepSeekResponse('模型仍未返回 JSON'))
-      .mockResolvedValueOnce(deepSeekResponse('模型再次未返回 JSON'));
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
+      .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'));
     const workAdvice = '先把今天必须完成的任务列出来，只推进最紧急的一件，必要时提前说明期限风险。';
     const workResponse = await handleApi(request('/api/chat', 'POST', {
       currentIssueId: 'issue-explain-work',
@@ -369,13 +422,20 @@ describe('worker handler API 契约', () => {
   });
 
   it('booking-summary 返回摘要，并拒绝空消息请求', async () => {
-    fetchMock.mockResolvedValueOnce(deepSeekResponse('这是一段结构化的预约摘要。'));
+    let postedBody: Record<string, unknown> | undefined;
+    fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      postedBody = JSON.parse(String(init?.body));
+      return deepSeekResponse('这是一段纯文本预约摘要。');
+    });
     const response = await handleApi(request('/api/booking-summary', 'POST', {
       sessionId: 'contract-summary-session',
       messages: [{ role: 'user', content: '我想找人帮我理清下一步。' }],
     }), baseEnv);
     expect(response.status).toBe(200);
-    expect(await json(response)).toMatchObject({ summary: '这是一段结构化的预约摘要。', promptVersion: 'v1.9.0' });
+    expect(await json(response)).toMatchObject({ summary: '这是一段纯文本预约摘要。', promptVersion: 'v1.9.0' });
+    expect(postedBody).toEqual(expect.objectContaining({ stream: false }));
+    expect(postedBody).not.toHaveProperty('response_format');
+    expect(postedBody).not.toHaveProperty('max_tokens');
 
     const invalid = await handleApi(request('/api/booking-summary', 'POST', { messages: [] }), baseEnv);
     expect(invalid.status).toBe(400);
