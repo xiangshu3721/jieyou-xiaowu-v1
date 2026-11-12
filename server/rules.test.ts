@@ -50,6 +50,22 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.booking_preference).toBe('ACCEPTED');
   });
 
+  it('询问是否需要咨询师时先继续对话，并提供可选预约按钮', () => {
+    for (const message of ['要不要找咨询师啊？', '我是不是该找真人聊聊？', '我需要找心理咨询师吗？']) {
+      const analysis = analyzeConversation(message, '', { issueId: 'issue-undecided' });
+      expect(analysis.user_intent).toBe('WANTS_CLARITY');
+      expect(analysis.routing).toBe('AI_SUPPORT');
+      expect(analysis.booking_preference).toBe('INTERESTED');
+      expect(analysis.handoff_mode).toBe('NONE');
+      expect(analysis.handoff_ready).toBe(false);
+      expect(analysis.show_booking_button).toBe(true);
+      expect(analysis.handoff_state).toBe('OFFERED');
+      expect(analysis.conversation_state).not.toBe('HUMAN_SERVICE');
+    }
+    expect(analyzeConversation('我想找真人导师聊聊').handoff_mode).toBe('DIRECT_HANDOFF');
+    expect(analyzeConversation('我现在正准备伤害自己，要不要找咨询师').show_booking_button).toBe(false);
+  });
+
   it('用户拒绝真人后不触发真人分流', () => {
     const analysis = analyzeConversation('我暂时不想找真人，先这样聊聊就好');
     expect(analysis.routing_state).toBe('AI_SELF_HELP');
