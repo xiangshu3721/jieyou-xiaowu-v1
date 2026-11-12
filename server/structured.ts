@@ -213,7 +213,13 @@ export function naturalReply(raw: string) {
   return trimmed.slice(0, 4_000);
 }
 
-export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis) {
+export interface ReplyContext {
+  latestUserMessage?: string;
+  recentUserMessages?: string[];
+  recentAssistantReplies?: string[];
+}
+
+export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis, context: ReplyContext = {}) {
   if (analysis) {
     const duplicateField = questionField(reply);
     if (duplicateField && isDuplicateQuestion(reply, analysis)) {
@@ -221,10 +227,10 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
     }
   }
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
-    return fallbackReply(analysis);
+    return fallbackReply(analysis, context);
   }
   if (analysis?.show_booking_button && !analysis.ask_question && /[？?]/.test(reply)) {
-    return fallbackReply(analysis);
+    return fallbackReply(analysis, context);
   }
   let normalized = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, handoffCopyFor(analysis));
   normalized = replaceHandoffCopies(normalized, analysis);
@@ -291,16 +297,93 @@ export function mergeAnalysis(baseline: ConversationAnalysis, parsed: ParsedAssi
   };
 }
 
-export function fallbackReply(analysis: ConversationAnalysis, options: { allowQuestion?: boolean } = {}) {
+function isReplyChallenge(text: string) {
+  return /这话.{0,4}(什么意思|啥意思)|什么意思|啥意思|没回答|答非所问|你在重复|又重复|复读|听不懂|解释(?:一下|下|清楚)|只解释/.test(text);
+}
+
+function asksForPracticalHelp(text: string) {
+  return /怎么办|怎么做|给.{0,4}(建议|办法)|有什么办法|如何解决|下一步/.test(text);
+}
+
+function sameVisibleReply(left: string, right: string) {
+  const compact = (value: string) => value.replace(/[\s，。！？!?、；：,;:]/g, '');
+  return Boolean(left && right && compact(left) === compact(right));
+}
+
+const listeningFallbackReply = '我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。';
+
+function latestAssistantReply(replies: string[] | undefined) {
+  return replies?.map((reply) => reply.trim()).filter(Boolean).at(-1) || '';
+}
+
+function explicitlyDeclinesAdvice(text: string) {
+  return /(?:别|不想|不要|不用).{0,3}建议|只想倾诉/.test(text);
+}
+
+function shortReply(reply: string) {
+  return reply.replace(/\s+/g, ' ').trim().slice(0, 220);
+}
+
+function continuationFor(latestUserMessage: string, recentUserMessages: string[] | undefined) {
+  const latest = shortReply(latestUserMessage);
+  const previous = shortReply(recentUserMessages?.slice(-2, -1)[0] || '');
+  if (latest && previous && latest !== previous) return `我听到你从“${previous}”说到“${latest}”。我们先停在这两点上，不急着把它们归结成别的结论。`;
+  if (latest) return `我听到你现在说“${latest}”。我们先停在这里，不急着给它下结论。`;
+  return '我在这里陪着你，我们可以先停一停。';
+}
+
+function isWorkSituation(analysis: ConversationAnalysis, contextText: string) {
+  return analysis.primary_topic === 'CAREER' || /工作|上班|职场|任务|同事|老板/.test(contextText);
+}
+
+function practicalFallback(analysis: ConversationAnalysis, contextText: string) {
+  if (isWorkSituation(analysis, contextText)) {
+    return '你是在问工作压力眼下怎么处理。先把今天的任务分成“必须今天完成”和“可以延后或需要协调”，只选一件最紧急、能在一小段时间内推进的事开始；如果期限或工作量确实超出承受范围，尽早把风险和你能完成的范围说清楚。先把一个可控动作落下来，不必一次解决全部压力。';
+  }
+  return '你是在问眼下能怎么做。先选一个最具体、最能减轻当下负担的小动作，在今天或接下来一小时内完成；其余要处理的事先写下来，分成现在能做和需要他人协助两部分。先让自己从“全都要解决”回到一个可执行的下一步。';
+}
+
+function challengeFallback(analysis: ConversationAnalysis, options: ReplyContext, contextText: string) {
+  const previousReply = latestAssistantReply(options.recentAssistantReplies);
+  const declinesAdvice = explicitlyDeclinesAdvice(options.latestUserMessage || '');
+  if (sameVisibleReply(previousReply, listeningFallbackReply)) {
+    if (declinesAdvice) return '刚才那句话的意思是：你不需要马上补充更多信息或回答问题，可以先按自己的节奏说。我不会因为这句话再给你行动建议。';
+    if (asksForPracticalHelp(contextText) && isWorkSituation(analysis, contextText)) {
+      return '你说得对，刚才那句没有回答“工作压力很大怎么办”。它本来只是想说你不用急着补充更多信息，但我应该先直接回应：先把今天的任务分出轻重缓急，只推进一件最紧急的；遇到明显超量或期限风险时，尽早说明你能完成的范围。这样先把压力从一团变成一个可处理的动作。';
+    }
+    return '刚才那句话的意思是：你不需要马上补充更多信息或回答问题，可以先按自己的节奏说。';
+  }
+  if (previousReply && /任务|最紧急|工作量|期限|完成的范围/.test(previousReply)) {
+    if (declinesAdvice) return '刚才那句是在说明怎样把工作压力拆成更可处理的部分。你已经说了不要建议，我只解释这句话本身，不再补充新的做法。';
+    return '刚才那句是在建议先把工作压力拆小：分出今天最紧急的一件，必要时说明期限或工作量的风险。它不是在要求你立刻解决所有事。';
+  }
+  if (previousReply) {
+    if (declinesAdvice) return `刚才那句是在回应你前面说的内容：“${shortReply(previousReply)}”。你已经说了不要建议，我只说明这句话本身。`;
+    return `刚才那句是在回应你前面说的内容：“${shortReply(previousReply)}”。我不会把它延伸成别的话题或判断。`;
+  }
+  if (declinesAdvice) return '我不想猜测你指的是哪句话。你已经说了不要建议，我会先停在解释上，不补充行动方案。';
+  return '我不想猜测你指的是哪句话。你可以把那句话贴出来，我会只解释它本身。';
+}
+
+function nonRepeatingFallback(candidate: string, options: ReplyContext) {
+  if (!options.recentAssistantReplies?.some((reply) => sameVisibleReply(reply, candidate))) return candidate;
+  return continuationFor(options.latestUserMessage || '', options.recentUserMessages);
+}
+
+export function fallbackReply(analysis: ConversationAnalysis, options: { allowQuestion?: boolean } & ReplyContext = {}) {
   const allowQuestion = options.allowQuestion !== false;
+  const latestUserMessage = options.latestUserMessage?.trim() || '';
+  const userContext = [latestUserMessage, ...(options.recentUserMessages || [])].join('\n');
   if (analysis.safety_status === 'URGENT') return emergencyReply;
   if (analysis.safety_status === 'NEEDS_CLARIFICATION') return safetyClarificationReply;
   if (analysis.routing === 'HUMAN_MENTOR' && analysis.show_booking_button) {
     return handoffCopyFor(analysis);
   }
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
+  if (isReplyChallenge(latestUserMessage)) return challengeFallback(analysis, options, userContext);
+  if (analysis.user_intent !== 'WANTS_COMFORT' && asksForPracticalHelp(latestUserMessage)) return practicalFallback(analysis, userContext);
   if (analysis.user_intent === 'WANTS_COMFORT' || !allowQuestion || !analysis.ask_question) {
-    return '我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。';
+    return nonRepeatingFallback(listeningFallbackReply, options);
   }
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';

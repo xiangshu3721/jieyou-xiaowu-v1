@@ -535,11 +535,16 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const raw = await callDeepSeek(env, [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
+      const replyContext = {
+        latestUserMessage: latestText,
+        recentUserMessages: analysisMessages.filter((message) => message.role === 'user').slice(-2).map((message) => message.content),
+        recentAssistantReplies: analysisMessages.filter((message) => message.role === 'assistant').slice(-2).map((message) => message.content),
+      };
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED'
-        ? fallbackReply(analysis)
+        ? fallbackReply(analysis, replyContext)
         : parsed
-          ? normalizeUserReply(parsed.reply, analysis)
-          : fallbackReply(analysis, { allowQuestion: false });
+          ? normalizeUserReply(parsed.reply, analysis, replyContext)
+          : fallbackReply(analysis, { ...replyContext, allowQuestion: false });
       return json(200, { reply, analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: apiConfig(env).deepseek.model }, request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
