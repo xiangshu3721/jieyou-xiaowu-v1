@@ -217,14 +217,17 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.no_more_questions).toBe(true);
   });
 
-  it('V1.4 覆盖咨询服务和老师沟通等明确真人表达', () => {
+  it('咨询服务可用性询问不视为明确预约，仍展示可选入口', () => {
     for (const text of ['有没有心理咨询师？', '有没有老师可以聊？', '有咨询服务吗']) {
       const analysis = analyzeConversation(text);
-      expect(analysis.handoff_mode).toBe('DIRECT_HANDOFF');
-      expect(analysis.human_intent).toBe('EXPLICIT');
+      expect(analysis.user_intent).toBe('WANTS_CLARITY');
+      expect(analysis.handoff_mode).toBe('NONE');
+      expect(analysis.human_intent).toBe('NOT_EXPLICIT');
+      expect(analysis.booking_preference).toBe('INTERESTED');
       expect(analysis.show_booking_button).toBe(true);
-      expect(analysis.ask_question).toBe(false);
+      expect(analysis.routing).toBe('AI_SUPPORT');
     }
+    expect(analyzeConversation('我想找心理咨询师聊聊').handoff_mode).toBe('DIRECT_HANDOFF');
   });
 
   it('V1.4 用户明确拒绝真人时不触发交接', () => {
