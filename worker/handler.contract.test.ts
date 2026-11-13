@@ -248,8 +248,8 @@ describe('worker handler API 契约', () => {
     expect(posted.messages.map((message) => message.content)).not.toContain('和伴侣沟通又有些分歧');
   });
 
-  it('恢复已提交预约的旧 Issue 时保留提交状态，不复用真人 CTA 或生成新 Issue', async () => {
-    fetchMock.mockResolvedValueOnce(deepSeekResponse('你之前提到工作方面很难受，我们可以接着聊。'));
+  it('已预约旧 Issue 永久封存，回到相同主题只创建新 Issue，不复用旧预约事实或 CTA', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('可以从你现在的工作状况重新说起，先聊最困扰你的部分。'));
     const response = await handleApi(request('/api/chat', 'POST', {
       currentIssueId: 'issue-other',
       issue: { issue_id: 'issue-other', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
@@ -266,9 +266,15 @@ describe('worker handler API 契约', () => {
     }), baseEnv);
     const body = await json(response);
     expect(response.status).toBe(200);
-    expect(body.analysis.current_issue_id).toBe('issue-booked');
-    expect(body.analysis.issue_status).toBe('BOOKING_SUBMITTED');
+    expect(body.analysis.issue_action).toBe('CREATE_NEW');
+    expect(body.analysis.current_issue_id).not.toBe('issue-booked');
+    expect(body.analysis.current_issue_id).not.toBe('issue-other');
+    expect(body.analysis.issue_status).toBe('ACTIVE');
     expect(body.analysis.show_booking_button).toBe(false);
+    expect(body.analysis.handoff_mode).toBe('NONE');
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.filter((message) => message.role === 'user').map((message) => message.content))
+      .toEqual(['我们回到之前工作的问题吧']);
   });
 
   it('旧 Issue 有未解除的危机状态时，回到旧 Issue 优先安全门禁，不调用模型', async () => {
