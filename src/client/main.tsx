@@ -512,7 +512,7 @@ function ChatPage() {
       const issueContexts = Object.values(session.issues).map((issue) => ({
         issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags,
         handoff_offered: issue.handoff_offered, handoff_state: issue.handoff_state,
-        booking_case_id: issue.booking_case_id,
+        booking_case_id: issue.booking_case_id, user_turn_count: issue.user_turn_count,
       }));
       const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
