@@ -202,6 +202,30 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(r.current_issue_id).toBe('issue-work');
   });
 
+  it('仅存在当前话题时“回到刚才”仍继续，不谎称历史记录不存在', () => {
+    const current = parseIssueContext({ issue_id: 'issue-current', status: 'ACTIVE', topic_tags: ['CAREER'] });
+    for (const message of ['回到刚才的话题', '回到之前工作的问题吧']) {
+      const resolution = resolveCurrentIssue({
+        message, currentIssueId: 'issue-current', currentIssue: current,
+        previousMessages: [{ role: 'user', content: '最近工作压力大', issueId: 'issue-current' }],
+        allPreviousMessages: [{ role: 'user', content: '最近工作压力大', issueId: 'issue-current' }],
+      });
+      expect(resolution.current_issue_id).toBe('issue-current');
+      expect(resolution.issue_action).toBe('CONTINUE_CURRENT');
+      expect(resolution.return_lookup).toBeUndefined();
+    }
+  });
+
+  it('恢复 Issue 可携带已保存的轮次数，不丢历史进展和预约状态', () => {
+    const issue = parseIssueContext({
+      issue_id: 'issue-old', status: 'BOOKING_SUBMITTED', handoff_state: 'ACCEPTED',
+      booking_case_id: 'case-old', user_turn_count: 61,
+    });
+    expect(issue.user_turn_count).toBe(61);
+    expect(issue.status).toBe('BOOKING_SUBMITTED');
+    expect(issue.booking_case_id).toBe('case-old');
+  });
+
   it('阶段 1.3：用户纠正 AI 理解时继续当前 Issue', () => {
     const resolution = resolveCurrentIssue({
       message: '你理解错了，不要往自我价值感上分析',
