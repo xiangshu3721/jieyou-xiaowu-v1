@@ -143,7 +143,13 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
     || (/(?:债务|房贷)/.test(latest) && previousTopicSet.has('MONEY'));
   const strongNewDomain = strongNewTopic && !strongTopicAlreadyInIssue;
   if (explicitSwitch) return { detected: true, confidence: 0.98 };
-  if ((novelTopics.length > 0 || strongNewDomain) && (strongNewDomain || !continuationSignals)) return { detected: true, confidence: 0.82 };
+  // A cause-effect link to the original domain is a continuation, not a new Issue:
+  // e.g. "工作压力影响了和伴侣的关系".
+  const causalLink = /因为|导致|影响|引起|牵连|连带|所以|因此/.test(latest)
+    && latestTopics.some((topic) => topic !== 'EMOTION' && previousTopicSet.has(topic));
+  if (causalLink) return { detected: false, confidence: 0.12 };
+  const novelDomains = novelTopics.filter((topic) => topic !== 'EMOTION');
+  if ((novelDomains.length > 0 || strongNewDomain) && (strongNewDomain || !continuationSignals)) return { detected: true, confidence: 0.82 };
   return { detected: false, confidence: explicitSwitch ? 0.35 : 0.12 };
 }
 

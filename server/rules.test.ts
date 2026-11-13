@@ -2,6 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, recentSafetyStatus, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
+  it('工作压力延伸到伴侣关系不自动拆成新 Issue，独立关系话题仍可切换', () => {
+    expect(detectIssueSwitch('工作压力已经影响了和伴侣的关系', '最近工作压力很大', ['CAREER', 'EMOTION']).detected).toBe(false);
+    expect(detectIssueSwitch('工作导致我和伴侣经常吵架', '最近工作压力很大', ['CAREER']).detected).toBe(false);
+    expect(detectIssueSwitch('我最近情绪低落', '最近工作压力很大', ['CAREER']).detected).toBe(false);
+    expect(detectIssueSwitch('我和伴侣最近频繁吵架', '最近工作压力很大', ['CAREER']).detected).toBe(true);
+    expect(detectIssueSwitch('另外我还想说感情关系问题', '最近工作压力很大', ['CAREER']).detected).toBe(true);
+  });
+
   it('支持多标签分类，并保留当前主题优先顺序', () => {
     expect(classifyConcern('最近工作压力很大，和伴侣也总是吵架')).toEqual(['EMOTION', 'CAREER', 'INTIMACY']);
   });

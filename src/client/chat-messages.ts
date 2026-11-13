@@ -27,3 +27,14 @@ export function createFirstWelcomeMessage(session: Pick<LocalSession, 'id' | 'cr
 export function messagesForDisplay(session: Pick<LocalSession, 'id' | 'createdAt' | 'currentIssueId'>, messages: LocalMessage[]) {
   return [createFirstWelcomeMessage(session), ...messages.filter((message) => message.id !== FIRST_WELCOME_MESSAGE_ID)];
 }
+
+
+/** Older conversation bubbles remain visible, but their old booking buttons must
+ * never submit an appointment for whichever unrelated Issue is active now. */
+export function canShowBookingCtaForMessage(
+  message: LocalMessage,
+  session: Pick<LocalSession, 'currentIssueId' | 'issues'> | null,
+) {
+  if (!session || message.role !== 'assistant' || message.issueId !== session.currentIssueId) return false;
+  return session.issues[message.issueId]?.status !== 'BOOKING_SUBMITTED';
+}

@@ -179,6 +179,136 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('跨工作、感情、亲子后回到工作时，模型只看到旧工作上下文与本轮消息', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('之前我们讨论了工作项目太多，建议先列最紧急的一项。'));
+    const allMessages = [
+      { role: 'user', content: '工作项目太多，我经常睡不着', issueId: 'issue-work' },
+      { role: 'assistant', content: '先列出今天最重要的一件事', issueId: 'issue-work' },
+      { role: 'user', content: '最近和伴侣关系紧张', issueId: 'issue-love' },
+      { role: 'assistant', content: '我们先看看冲突集中在哪儿', issueId: 'issue-love' },
+      { role: 'user', content: '孩子最近不愿意上学', issueId: 'issue-child' },
+      { role: 'assistant', content: '你最担心孩子的哪一部分', issueId: 'issue-child' },
+      { role: 'user', content: '我们回到之前工作的那个问题吧，接下来怎么办？', issueId: 'issue-child' },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-child',
+      issue: { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
+      issues: [
+        { issue_id: 'issue-work', status: 'PAUSED', topic_tags: ['CAREER', 'EMOTION'] },
+        { issue_id: 'issue-love', status: 'PAUSED', topic_tags: ['INTIMACY'] },
+        { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
+      ],
+      messages: allMessages,
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      current_issue_id: 'issue-work', previous_issue_id: 'issue-child',
+      issue_action: 'RESUME_PREVIOUS', new_issue_detected: false,
+      issue_status: 'ACTIVE', user_turn_count: 2,
+    });
+    expect(body.reply).toContain('工作项目太多');
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.slice(1)).toEqual([
+      { role: 'user', content: allMessages[0].content },
+      { role: 'assistant', content: allMessages[1].content },
+      { role: 'user', content: allMessages[6].content },
+    ]);
+    expect(JSON.stringify(posted.messages)).not.toContain('伴侣关系紧张');
+    expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
+  });
+
+  it('超过 40 条新消息之后仍能找回旧 Issue，而不是遗漏早期工作历史', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('我们之前说过先处理最紧急的工作任务，可以继续从那里开始。'));
+    const history = [
+      { role: 'user', content: '我负责一个大项目，工作排期一直很紧', issueId: 'issue-early-work' },
+      { role: 'assistant', content: '你可以先选一项最重要的工作任务', issueId: 'issue-early-work' },
+      ...Array.from({ length: 50 }, (_, index) => ({
+        role: index % 2 ? 'assistant' : 'user',
+        content: index % 2 ? '我们继续聊聊你的感情关系' : '和伴侣沟通又有些分歧',
+        issueId: 'issue-later-intimacy',
+      })),
+      { role: 'user', content: '我想回到之前工作的问题', issueId: 'issue-later-intimacy' },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-later-intimacy',
+      issue: { issue_id: 'issue-later-intimacy', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      issues: [
+        { issue_id: 'issue-early-work', status: 'PAUSED', topic_tags: ['CAREER'] },
+        { issue_id: 'issue-later-intimacy', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      ],
+      messages: history,
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.current_issue_id).toBe('issue-early-work');
+    expect(body.analysis.issue_action).toBe('RESUME_PREVIOUS');
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.map((message) => message.content)).toContain('我负责一个大项目，工作排期一直很紧');
+    expect(posted.messages.map((message) => message.content)).not.toContain('和伴侣沟通又有些分歧');
+  });
+
+  it('恢复已提交预约的旧 Issue 时保留提交状态，不复用真人 CTA 或生成新 Issue', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你之前提到工作方面很难受，我们可以接着聊。'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-other',
+      issue: { issue_id: 'issue-other', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      issues: [
+        { issue_id: 'issue-booked', status: 'BOOKING_SUBMITTED', topic_tags: ['CAREER'], handoff_offered: true, handoff_state: 'ACCEPTED', booking_case_id: 'case-123' },
+        { issue_id: 'issue-other', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      ],
+      messages: [
+        { role: 'user', content: '我的工作压力很大', issueId: 'issue-booked' },
+        { role: 'assistant', content: '可以联系真人继续聊', issueId: 'issue-booked' },
+        { role: 'user', content: '现在有感情关系烦恼', issueId: 'issue-other' },
+        { role: 'user', content: '我们回到之前工作的问题吧', issueId: 'issue-other' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.current_issue_id).toBe('issue-booked');
+    expect(body.analysis.issue_status).toBe('BOOKING_SUBMITTED');
+    expect(body.analysis.show_booking_button).toBe(false);
+  });
+
+  it('旧 Issue 有未解除的危机状态时，回到旧 Issue 优先安全门禁，不调用模型', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-other',
+      issue: { issue_id: 'issue-other', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      issues: [{ issue_id: 'issue-risk', status: 'PAUSED', topic_tags: ['CAREER'] }],
+      messages: [
+        { role: 'user', content: '我现在正准备伤害自己，工作压力太大了', issueId: 'issue-risk' },
+        { role: 'user', content: '最近感情关系很紧张', issueId: 'issue-other' },
+        { role: 'user', content: '回到之前工作的问题吧', issueId: 'issue-other' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.current_issue_id).toBe('issue-risk');
+    expect(body.analysis.safety_status).toBe('URGENT');
+    expect(body.reply).toBe(emergencyReply);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('多个同领域历史 Issue 或找不到旧 Issue 时不擅自恢复或新建', async () => {
+    const history = [
+      { role: 'user', content: '工作中和同事冲突', issueId: 'issue-a' },
+      { role: 'user', content: '我在求职', issueId: 'issue-b' },
+      { role: 'user', content: '和伴侣关系很紧张', issueId: 'issue-c' },
+      { role: 'user', content: '回到之前工作的问题吧', issueId: 'issue-c' },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-c',
+      issue: { issue_id: 'issue-c', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      messages: history,
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toContain('哪一件');
+    expect(body.analysis.current_issue_id).toBe('issue-c');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('chat 模型升级安全状态时优先返回既有安全回复', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"先继续聊工作安排。","safety_status":"URGENT"}'));
     const urgent = await handleApi(request('/api/chat', 'POST', {

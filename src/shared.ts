@@ -68,7 +68,7 @@ export type HumanIntentLevel = 'EXPLICIT' | 'NOT_EXPLICIT' | 'DECLINED';
 export type ValueLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 export type IssueStatus = 'ACTIVE' | 'HANDOFF_OFFERED' | 'BOOKING_SUBMITTED' | 'PAUSED' | 'AWAITING_TOPIC' | 'CLOSED';
 export type ConversationControlIntent = 'SWITCH_TOPIC' | 'CONTINUE_CURRENT_TOPIC' | 'DECLINE_HANDOFF' | 'ACCEPT_HANDOFF' | 'NEW_ISSUE' | 'CLOSE_TOPIC' | 'GENERAL_CHAT';
-export type IssueAction = 'CREATE_NEW' | 'CONTINUE_CURRENT';
+export type IssueAction = 'CREATE_NEW' | 'CONTINUE_CURRENT' | 'RESUME_PREVIOUS';
 
 export interface ProblemMap {
   main_issue: string | null;

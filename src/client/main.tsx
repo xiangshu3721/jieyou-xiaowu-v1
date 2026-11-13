@@ -8,7 +8,7 @@ import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import { readAppRoute } from './router.js';
 import { requestSafetyGate } from './safety-gate.js';
-import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay } from './chat-messages.js';
+import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay, canShowBookingCtaForMessage } from './chat-messages.js';
 import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -509,7 +509,12 @@ function ChatPage() {
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
       const requestIssueId = session.currentIssueId;
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
+      const issueContexts = Object.values(session.issues).map((issue) => ({
+        issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags,
+        handoff_offered: issue.handoff_offered, handoff_state: issue.handoff_state,
+        booking_case_id: issue.booking_case_id, user_turn_count: issue.user_turn_count,
+      }));
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
       if (result.analysis.current_issue_id !== requestIssueId) {
@@ -517,7 +522,13 @@ function ChatPage() {
         messagesRef.current = messagesRef.current.map((message) => message.id === userMessage.id ? { ...message, issueId: result.analysis.current_issue_id } : message);
       }
       const previousIssue = session.issues[result.analysis.current_issue_id];
-      const nextIssue: IssueLifecycle = { ...issueFromAnalysis(result.analysis, previousIssue?.started_at), booking_case_id: previousIssue?.booking_case_id || null, booking_submitted_at: previousIssue?.booking_submitted_at || null };
+      const nextIssue: IssueLifecycle = {
+        ...issueFromAnalysis(result.analysis, previousIssue?.started_at),
+        // A resumed issue retains its original booking snapshot and submitted status.
+        ...(previousIssue?.status === 'BOOKING_SUBMITTED' ? { status: 'BOOKING_SUBMITTED' as const, handoff_state: 'ACCEPTED' as const, handoff_offered: true } : {}),
+        booking_case_id: previousIssue?.booking_case_id || null,
+        booking_submitted_at: previousIssue?.booking_submitted_at || null,
+      };
       const nextIssues = { ...session.issues };
       if (result.analysis.previous_issue_id && nextIssues[result.analysis.previous_issue_id] && nextIssues[result.analysis.previous_issue_id].status !== 'BOOKING_SUBMITTED') {
         nextIssues[result.analysis.previous_issue_id] = { ...nextIssues[result.analysis.previous_issue_id], status: 'PAUSED' };
@@ -613,7 +624,7 @@ function ChatPage() {
           <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
         </header>
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
-          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div></div>)}
+          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && canShowBookingCtaForMessage(message, session) && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div></div>)}
           {sending && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
