@@ -248,7 +248,15 @@ export async function createFreshIssue(sessionId: string, startedAt = new Date()
   const session = await getSession(sessionId);
   if (!session) return null;
   const issue = newIssue(startedAt);
-  await saveSessionLifecycle(sessionId, { currentIssueId: issue.issue_id, issues: { ...session.issues, [issue.issue_id]: issue } });
+  const issues = { ...session.issues };
+  const previous = issues[session.currentIssueId];
+  // Remote Feishu success may precede the local lifecycle write. Seal that
+  // previous Issue from the confirmed requestId before moving to the new one.
+  // Do not invent a Feishu recordId or overwrite an existing booking snapshot.
+  if (previous && readPendingBooking(previous.issue_id)?.status === 'submitted') {
+    issues[previous.issue_id] = { ...previous, status: 'BOOKING_SUBMITTED', handoff_offered: true, handoff_state: 'ACCEPTED' };
+  }
+  await saveSessionLifecycle(sessionId, { currentIssueId: issue.issue_id, issues: { ...issues, [issue.issue_id]: issue } });
   return issue;
 }
 
