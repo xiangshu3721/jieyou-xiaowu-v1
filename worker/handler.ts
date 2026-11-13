@@ -508,6 +508,10 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       if (!messages.length || !latestText) return json(400, { error: '请先输入你想聊的内容' }, request);
       const requestedIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : undefined;
       const issueContext = parseIssueContext(body.issue, requestedIssueId || 'issue-current');
+      const knownIssues = Array.isArray(body.issues)
+        ? body.issues.filter((item: unknown) => item && typeof item === 'object' && typeof (item as Record<string, unknown>).issue_id === 'string')
+          .slice(0, 50).map((item: unknown) => parseIssueContext(item))
+        : [];
       const issueMessages = messagesForIssue(messages, issueContext.issue_id);
       const safetyStatus = recentSafetyStatus(issueMessages);
       const currentUserMessages = userMessagesForIssue(messages, issueContext.issue_id);
@@ -517,39 +521,58 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         currentIssueId: issueContext.issue_id,
         currentIssue: issueContext,
         previousMessages: previousUserMessages,
+        allPreviousMessages: messages.slice(0, -1),
+        knownIssues,
         previousTopics: issueContext.topic_tags,
         safetyDetected: safetyStatus !== 'NO_SIGNAL_DETECTED',
       });
-      const analysisMessages = resolution.issue_action === 'CREATE_NEW'
+      const resuming = resolution.issue_action === 'RESUME_PREVIOUS';
+      const targetIssue = resuming
+        ? knownIssues.find((issue) => issue.issue_id === resolution.current_issue_id)
+          || parseIssueContext({ issue_id: resolution.current_issue_id })
+        : issueContext;
+      const analysisMessages = resuming
+        ? [...messagesForIssue(messages.slice(0, -1), resolution.current_issue_id),
+          { role: 'user' as const, content: latestText, issueId: resolution.current_issue_id }]
+        : resolution.issue_action === 'CREATE_NEW'
         ? (resolution.awaiting_topic ? [] : [{ role: 'user' as const, content: latestText }])
         : issueContext.status === 'AWAITING_TOPIC'
           ? [{ role: 'user' as const, content: latestText }]
           : issueMessages;
       const contextText = userContextText(analysisMessages.slice(0, -1));
-      const userTurnCount = resolution.awaiting_topic
+      const activeSafetyStatus = resuming ? recentSafetyStatus(analysisMessages) : safetyStatus;
+      const userTurnCount = resuming
+        ? analysisMessages.filter((message) => message.role === 'user').length
+        : resolution.awaiting_topic
         ? 0
         : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC'
           ? 1
           : Math.max(1, currentUserMessages.length);
-      const issueTopicTags = resolution.issue_action === 'CREATE_NEW' ? [] : issueContext.topic_tags;
+      const issueTopicTags = resolution.issue_action === 'CREATE_NEW' ? [] : targetIssue.topic_tags;
       const understanding = buildConversationUnderstanding(analysisMessages, issueTopicTags);
       const rawBaseline = analyzeConversation(latestText, contextText, {
         issueId: resolution.current_issue_id,
-        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC' ? 'ACTIVE' : issueContext.status,
+        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || targetIssue.status === 'AWAITING_TOPIC' ? 'ACTIVE' : resuming && targetIssue.status === 'PAUSED' ? 'ACTIVE' : targetIssue.status,
         userTurnCount,
-        handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : issueContext.handoff_state === 'DECLINED' ? false : issueContext.handoff_offered,
-        previousTopics: issueContext.topic_tags,
+        handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : targetIssue.handoff_state === 'DECLINED' ? false : targetIssue.handoff_offered,
+        previousTopics: targetIssue.topic_tags,
         issueTopicTags,
         newIssueDetected: resolution.new_issue_detected,
         newIssueConfidence: resolution.new_issue_confidence,
         controlIntent: resolution.control_intent,
         understanding,
-        safetyStatus,
+        safetyStatus: activeSafetyStatus,
       });
       let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
-      if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
+      if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action !== 'CREATE_NEW' && targetIssue.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
       if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
       if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
+      if (resolution.return_lookup) return json(200, {
+        reply: resolution.return_lookup === 'AMBIGUOUS'
+          ? '我们前面聊过不止一件事。你想回到哪一件？说说那个主题，我就接着之前的内容聊。'
+          : '我在这次聊天记录里没找到那个旧话题。你可以简单提醒我之前聊到了哪儿。',
+        analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule',
+      }, request);
       if (resolution.awaiting_topic) return json(200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
       if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
       let watchGuidance = '';
