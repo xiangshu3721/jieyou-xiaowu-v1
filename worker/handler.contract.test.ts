@@ -227,7 +227,7 @@ describe('worker handler API 契约', () => {
       { role: 'user', content: '孩子最近不愿意上学', issueId: 'issue-child' },
       { role: 'user', content: '最近工作压力又大起来了', issueId: 'issue-child' },
     ];
-    const result = await handleApi(request('/api/chat', 'POST', {
+    const testRequest = request('/api/chat', 'POST', {
       currentIssueId: 'issue-child',
       issue: { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
       issues: [
@@ -236,7 +236,10 @@ describe('worker handler API 契约', () => {
         { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
       ],
       messages: history,
-    }), baseEnv);
+    });
+    // Isolate this added scenario from the production-style per-IP quota used by other contract tests.
+    testRequest.headers.set('CF-Connecting-IP', '192.0.2.38');
+    const result = await handleApi(testRequest, baseEnv);
     const body = await json(result);
     expect(result.status).toBe(200);
     expect(body.analysis).toMatchObject({
