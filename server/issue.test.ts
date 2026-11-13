@@ -190,6 +190,62 @@ describe('V1.6 Issue 上下文边界', () => {
     });
   });
 
+  it('阶段 2：工作 → 感情 → 亲子，提及“之前聊的工作”可恢复未预约的旧 Issue', () => {
+    const knownIssues = [
+      parseIssueContext({ issue_id: 'issue-work', status: 'PAUSED', topic_tags: ['CAREER'] }),
+      parseIssueContext({ issue_id: 'issue-love', status: 'PAUSED', topic_tags: ['INTIMACY'] }),
+      parseIssueContext({ issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+    ];
+    const resolution = resolveCurrentIssue({
+      message: '之前聊的工作压力我还想接着说',
+      currentIssueId: 'issue-child', currentIssue: knownIssues[2],
+      previousMessages: [{ role: 'user', content: '孩子最近不愿去学校', issueId: 'issue-child' }],
+      allPreviousMessages: [
+        { role: 'user', content: '工作压力很大', issueId: 'issue-work' },
+        { role: 'assistant', content: '先找最重要的一项', issueId: 'issue-work' },
+        { role: 'user', content: '亲密关系最近有些紧张', issueId: 'issue-love' },
+        { role: 'user', content: '孩子最近不愿去学校', issueId: 'issue-child' },
+      ], knownIssues, previousTopics: ['PARENTING'],
+    });
+    expect(resolution.issue_action).toBe('RESUME_PREVIOUS');
+    expect(resolution.current_issue_id).toBe('issue-work');
+  });
+
+  it('阶段 2：预约成功的历史 Issue 被封存，明确说回旧话题也创建全新 Issue', () => {
+    const knownIssues = [
+      parseIssueContext({ issue_id: 'issue-work', status: 'BOOKING_SUBMITTED', topic_tags: ['CAREER'], booking_case_id: 'booked-001' }),
+      parseIssueContext({ issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+    ];
+    const resolution = resolveCurrentIssue({
+      message: '回到之前工作的问题吧',
+      currentIssueId: 'issue-child', currentIssue: knownIssues[1],
+      previousMessages: [{ role: 'user', content: '孩子学习压力大', issueId: 'issue-child' }],
+      allPreviousMessages: [
+        { role: 'user', content: '工作上的领导让我很焦虑', issueId: 'issue-work' },
+        { role: 'assistant', content: '可以先分清工作职责', issueId: 'issue-work' },
+        { role: 'user', content: '孩子学习压力大', issueId: 'issue-child' },
+      ], knownIssues, previousTopics: ['PARENTING'],
+    });
+    expect(resolution.issue_action).toBe('CREATE_NEW');
+    expect(resolution.current_issue_id).not.toBe('issue-work');
+    expect(resolution.current_issue_id).not.toBe('issue-child');
+    expect(resolution.previous_issue_id).toBe('issue-child');
+    expect(resolution.awaiting_topic).toBe(false);
+  });
+
+  it('阶段 2：当前 Issue 已预约后任何新普通消息均应进入新 Issue', () => {
+    const current = parseIssueContext({ issue_id: 'issue-work', status: 'BOOKING_SUBMITTED', topic_tags: ['CAREER'], booking_case_id: 'booked-002' });
+    const resolution = resolveCurrentIssue({
+      message: '最近又出现一个新的烦恼',
+      currentIssueId: current.issue_id, currentIssue: current,
+      previousMessages: [{ role: 'user', content: '工作很紧张', issueId: current.issue_id }],
+      allPreviousMessages: [{ role: 'user', content: '工作很紧张', issueId: current.issue_id }],
+    });
+    expect(resolution.issue_action).toBe('CREATE_NEW');
+    expect(resolution.current_issue_id).not.toBe(current.issue_id);
+    expect(resolution.previous_issue_id).toBe(current.issue_id);
+  });
+
   it('未发生明确回顾时，工作压力导致睡眠问题仍留在原 Issue', () => {
     const r = resolveCurrentIssue({
       message: '工作压力让我晚上一直失眠',

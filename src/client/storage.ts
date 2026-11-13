@@ -236,6 +236,14 @@ export async function markIssueBookingSubmitted(sessionId: string, issueId: stri
   db.close();
 }
 
+export function shouldStartFreshIssueAfterBooking(session: Pick<LocalSession, 'currentIssueId'> & {
+  issues: Record<string, Pick<IssueLifecycle, 'status'>>;
+}) {
+  const issueId = session.currentIssueId;
+  return session.issues[issueId]?.status === 'BOOKING_SUBMITTED'
+    || readPendingBooking(issueId)?.status === 'submitted';
+}
+
 export async function createFreshIssue(sessionId: string, startedAt = new Date().toISOString()) {
   const session = await getSession(sessionId);
   if (!session) return null;

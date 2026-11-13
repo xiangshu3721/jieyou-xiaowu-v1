@@ -85,8 +85,8 @@ function previousIssueReference(
   currentTopics: TopicCode[],
   history: ChatMessage[],
   knownIssues: IssueRequestContext[],
-): { issueId?: string; lookup?: 'AMBIGUOUS' | 'NOT_FOUND' } | null {
-  if (!/(?:回到|聊回|说回|再说回|回过头|重新聊|接着之前|接着刚才|继续之前|继续上次)/.test(message)) return null;
+): { issueId?: string; lookup?: 'AMBIGUOUS' | 'NOT_FOUND'; sealed?: boolean } | null {
+  if (!/(?:回到|聊回|说回|再说回|回过头|重新聊|接着之前|接着刚才|继续之前|继续上次|之前(?:聊|说|提|那个|的)|上次(?:聊|说|提|那个|的))/.test(message)) return null;
 
   const previous = new Map<string, { lastIndex: number; tags: Set<TopicCode> }>();
   for (const [index, item] of history.entries()) {
@@ -104,10 +104,15 @@ function previousIssueReference(
     if (candidate) for (const topic of known.topic_tags) if (topic !== 'OTHER') candidate.tags.add(topic);
   }
 
-  const candidates = [...previous.entries()].sort((a, b) => b[1].lastIndex - a[1].lastIndex);
+  // A submitted booking seals its Issue. The old transcript remains locally visible
+  // but can never become the context or booking_case_id of a later conversation.
+  const sealedIds = new Set(knownIssues.filter((issue) => issue.status === 'BOOKING_SUBMITTED').map((issue) => issue.issue_id));
+  const previousByRecency = [...previous.entries()].sort((a, b) => b[1].lastIndex - a[1].lastIndex);
+  const candidates = previousByRecency.filter(([id]) => !sealedIds.has(id));
+  const sealedCandidates = previousByRecency.filter(([id]) => sealedIds.has(id));
   const latestTopics = classifyConcern(message).filter((topic) => topic !== 'OTHER');
-  if (!candidates.length && (/刚才/.test(message) || latestTopics.some((topic) => currentTopics.includes(topic)))) return null;
-  if (!candidates.length) return { lookup: 'NOT_FOUND' };
+  if (!candidates.length && !sealedCandidates.length && (/刚才/.test(message) || latestTopics.some((topic) => currentTopics.includes(topic)))) return null;
+  if (!candidates.length && !sealedCandidates.length) return { lookup: 'NOT_FOUND' };
   // Generic emotion words (e.g. 压力) should not overpower an explicit domain (工作).
   const domainTopics = latestTopics.filter((topic) => topic !== 'EMOTION');
   const hints = domainTopics.length ? domainTopics : latestTopics;
@@ -115,9 +120,11 @@ function previousIssueReference(
     const matching = candidates.filter(([, candidate]) => hints.some((topic) => candidate.tags.has(topic)));
     if (matching.length === 1) return { issueId: matching[0][0] };
     if (matching.length > 1 && /刚才|上一个/.test(message)) return { issueId: matching[0][0] };
+    if (!matching.length && sealedCandidates.some(([, candidate]) => hints.some((topic) => candidate.tags.has(topic)))) return { sealed: true };
     if (!matching.length && hints.some((topic) => currentTopics.includes(topic))) return null;
     return { lookup: matching.length ? 'AMBIGUOUS' : 'NOT_FOUND' };
   }
+  if (!candidates.length && sealedCandidates.length) return { sealed: true };
   if (candidates.length === 1 || /刚才|上一个/.test(message)) return { issueId: candidates[0][0] };
   return { lookup: 'AMBIGUOUS' };
 }
@@ -154,6 +161,17 @@ export function resolveCurrentIssue(input: {
       previous_issue_id: input.currentIssueId,
       new_issue_detected: false,
       new_issue_confidence: 0,
+      awaiting_topic: false,
+    };
+  }
+  if (returnReference?.sealed || input.currentIssue.status === 'BOOKING_SUBMITTED') {
+    return {
+      control_intent: 'NEW_ISSUE',
+      issue_action: 'CREATE_NEW',
+      current_issue_id: createIssueId(),
+      previous_issue_id: input.currentIssueId,
+      new_issue_detected: true,
+      new_issue_confidence: 1,
       awaiting_topic: false,
     };
   }
