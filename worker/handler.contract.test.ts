@@ -218,6 +218,36 @@ describe('worker handler API 契约', () => {
     expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
   });
 
+  it('超过 40 条新消息之后仍能找回旧 Issue，而不是遗漏早期工作历史', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('我们之前说过先处理最紧急的工作任务，可以继续从那里开始。'));
+    const history = [
+      { role: 'user', content: '我负责一个大项目，工作排期一直很紧', issueId: 'issue-early-work' },
+      { role: 'assistant', content: '你可以先选一项最重要的工作任务', issueId: 'issue-early-work' },
+      ...Array.from({ length: 50 }, (_, index) => ({
+        role: index % 2 ? 'assistant' : 'user',
+        content: index % 2 ? '我们继续聊聊你的感情关系' : '和伴侣沟通又有些分歧',
+        issueId: 'issue-later-intimacy',
+      })),
+      { role: 'user', content: '我想回到之前工作的问题', issueId: 'issue-later-intimacy' },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-later-intimacy',
+      issue: { issue_id: 'issue-later-intimacy', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      issues: [
+        { issue_id: 'issue-early-work', status: 'PAUSED', topic_tags: ['CAREER'] },
+        { issue_id: 'issue-later-intimacy', status: 'ACTIVE', topic_tags: ['INTIMACY'] },
+      ],
+      messages: history,
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.current_issue_id).toBe('issue-early-work');
+    expect(body.analysis.issue_action).toBe('RESUME_PREVIOUS');
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.map((message) => message.content)).toContain('我负责一个大项目，工作排期一直很紧');
+    expect(posted.messages.map((message) => message.content)).not.toContain('和伴侣沟通又有些分歧');
+  });
+
   it('恢复已提交预约的旧 Issue 时保留提交状态，不复用真人 CTA 或生成新 Issue', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('你之前提到工作方面很难受，我们可以接着聊。'));
     const response = await handleApi(request('/api/chat', 'POST', {
