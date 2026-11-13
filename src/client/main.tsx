@@ -521,15 +521,18 @@ function ChatPage() {
       const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: activeSession.id, currentIssueId: requestIssueId, issue: issuePayload(activeSession), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
+      // Fail closed if a mismatched/older backend ever attempts to write into
+      // a sealed booking. Keep the user's local message, but never mutate that Issue.
+      const previousIssue = activeSession.issues[result.analysis.current_issue_id];
+      if (previousIssue?.status === 'BOOKING_SUBMITTED') {
+        throw new Error('这次预约已提交，请重新发送消息以开始新的话题。');
+      }
       if (result.analysis.current_issue_id !== requestIssueId) {
         await moveMessageToIssue(session.id, userMessage.id, result.analysis.current_issue_id);
         messagesRef.current = messagesRef.current.map((message) => message.id === userMessage.id ? { ...message, issueId: result.analysis.current_issue_id } : message);
       }
-      const previousIssue = activeSession.issues[result.analysis.current_issue_id];
       const nextIssue: IssueLifecycle = {
         ...issueFromAnalysis(result.analysis, previousIssue?.started_at),
-        // A resumed issue retains its original booking snapshot and submitted status.
-        ...(previousIssue?.status === 'BOOKING_SUBMITTED' ? { status: 'BOOKING_SUBMITTED' as const, handoff_state: 'ACCEPTED' as const, handoff_offered: true } : {}),
         booking_case_id: previousIssue?.booking_case_id || null,
         booking_submitted_at: previousIssue?.booking_submitted_at || null,
       };
