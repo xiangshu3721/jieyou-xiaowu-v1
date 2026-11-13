@@ -569,7 +569,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const contextText = userContextText(analysisMessages.slice(0, -1));
       const activeSafetyStatus = resuming ? recentSafetyStatus(analysisMessages) : safetyStatus;
       const userTurnCount = resuming
-        ? analysisMessages.filter((message) => message.role === 'user').length
+        ? Math.max(targetIssue.user_turn_count ?? 0, analysisMessages.filter((message) => message.role === 'user').length - 1) + 1
         : resolution.awaiting_topic
         ? 0
         : resolution.issue_action === 'CREATE_NEW' || issueContext.status === 'AWAITING_TOPIC'
