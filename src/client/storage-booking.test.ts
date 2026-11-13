@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { readPendingBooking, savePendingBooking, shouldStartFreshIssueAfterBooking } from './storage.js';
+import { readPendingBooking, savePendingBooking, sealConfirmedBookingIssue, shouldStartFreshIssueAfterBooking } from './storage.js';
 
 describe('pending booking requestId', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -33,6 +33,15 @@ describe('pending booking requestId', () => {
     });
     savePendingBooking({ issueId: 'old', requestId: 'req-old', status: 'submitted' });
     expect(shouldStartFreshIssueAfterBooking({ currentIssueId: 'old', issues: { old: { status: 'ACTIVE' } } })).toBe(true);
+  });
+
+  it('本地持久化异常时只恢复提交状态，不伪造飞书 recordId 或预约详情', () => {
+    const original = { status: 'ACTIVE' as const, handoff_offered: false, handoff_state: 'NOT_READY' as const, booking_case_id: null };
+    expect(sealConfirmedBookingIssue(original, 'submitted')).toEqual({
+      ...original, status: 'BOOKING_SUBMITTED', handoff_offered: true, handoff_state: 'ACCEPTED',
+    });
+    expect(sealConfirmedBookingIssue(original, 'pending')).toEqual(original);
+    expect(sealConfirmedBookingIssue(original, 'unknown')).toEqual(original);
   });
 
   it('localStorage 不可用时不阻断预约页面', () => {
