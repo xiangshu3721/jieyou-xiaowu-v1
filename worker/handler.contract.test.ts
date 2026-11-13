@@ -218,6 +218,45 @@ describe('worker handler API 契约', () => {
     expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
   });
 
+  it('第二阶段：不说回到之前也能自然恢复唯一旧工作 Issue，模型看不到关系和亲子内容', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('我们之前讨论过工作任务太多，可以继续从最紧急的一项开始。'));
+    const history = [
+      { role: 'user', content: '工作任务太多，我常常焦虑', issueId: 'issue-work' },
+      { role: 'assistant', content: '先圈出今天必须完成的一件事', issueId: 'issue-work' },
+      { role: 'user', content: '最近我和伴侣有矛盾', issueId: 'issue-love' },
+      { role: 'user', content: '孩子最近不愿意上学', issueId: 'issue-child' },
+      { role: 'user', content: '最近工作压力又大起来了', issueId: 'issue-child' },
+    ];
+    const testRequest = request('/api/chat', 'POST', {
+      currentIssueId: 'issue-child',
+      issue: { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
+      issues: [
+        { issue_id: 'issue-work', status: 'PAUSED', topic_tags: ['CAREER', 'EMOTION'], user_turn_count: 2 },
+        { issue_id: 'issue-love', status: 'PAUSED', topic_tags: ['INTIMACY'] },
+        { issue_id: 'issue-child', status: 'ACTIVE', topic_tags: ['PARENTING'] },
+      ],
+      messages: history,
+    });
+    // Isolate this added scenario from the production-style per-IP quota used by other contract tests.
+    testRequest.headers.set('CF-Connecting-IP', '192.0.2.38');
+    const result = await handleApi(testRequest, baseEnv);
+    const body = await json(result);
+    expect(result.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      issue_action: 'RESUME_PREVIOUS', current_issue_id: 'issue-work',
+      previous_issue_id: 'issue-child', new_issue_detected: false,
+    });
+    expect(body.diagnostics).toMatchObject({ fallback_used: false });
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.slice(1)).toEqual([
+      { role: 'user', content: history[0].content },
+      { role: 'assistant', content: history[1].content },
+      { role: 'user', content: history[4].content },
+    ]);
+    expect(JSON.stringify(posted.messages)).not.toContain('伴侣有矛盾');
+    expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
+  });
+
   it('超过 40 条新消息之后仍能找回旧 Issue，而不是遗漏早期工作历史', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('我们之前说过先处理最紧急的工作任务，可以继续从那里开始。'));
     const history = [

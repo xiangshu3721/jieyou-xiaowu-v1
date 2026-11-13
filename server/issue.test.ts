@@ -246,6 +246,81 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(resolution.previous_issue_id).toBe(current.issue_id);
   });
 
+  it('第二阶段：自然重谈唯一旧困扰时，恢复已有 Issue 而非再建一个', () => {
+    const messages = [
+      { role: 'user' as const, content: '工作压力特别大，任务做不完', issueId: 'work' },
+      { role: 'assistant' as const, content: '先整理本周重要的任务', issueId: 'work' },
+      { role: 'user' as const, content: '我和伴侣最近总吵架', issueId: 'relationship' },
+      { role: 'user' as const, content: '孩子上学让我很担心', issueId: 'parenting' },
+    ];
+    const context = {
+      currentIssueId: 'parenting',
+      currentIssue: parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      previousMessages: [{ role: 'user' as const, content: '孩子上学让我很担心', issueId: 'parenting' }],
+      allPreviousMessages: messages,
+      previousTopics: ['PARENTING' as const],
+      knownIssues: [
+        parseIssueContext({ issue_id: 'work', status: 'PAUSED', topic_tags: ['CAREER', 'EMOTION'], user_turn_count: 5 }),
+        parseIssueContext({ issue_id: 'relationship', status: 'PAUSED', topic_tags: ['INTIMACY'] }),
+        parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      ],
+    };
+    expect(resolveCurrentIssue({ ...context, message: '最近工作压力又大起来了' })).toMatchObject({
+      issue_action: 'RESUME_PREVIOUS', current_issue_id: 'work',
+      previous_issue_id: 'parenting', new_issue_detected: false,
+    });
+    expect(resolveCurrentIssue({ ...context, message: '我和伴侣最近又吵架了' })).toMatchObject({
+      issue_action: 'RESUME_PREVIOUS', current_issue_id: 'relationship',
+    });
+    // Explicitly starting another concern must not merge it into a historical one.
+    expect(resolveCurrentIssue({ ...context, message: '另外我还有一个工作上的新烦恼' }).issue_action).toBe('CREATE_NEW');
+  });
+
+  it('第二阶段：多个同类旧困扰保持隔离，不猜测恢复哪一个', () => {
+    const messages = [
+      { role: 'user' as const, content: '工作里和同事发生冲突', issueId: 'colleague' },
+      { role: 'user' as const, content: '求职面试总失败', issueId: 'job-hunt' },
+      { role: 'user' as const, content: '孩子最近不愿上学', issueId: 'parenting' },
+    ];
+    const common = {
+      currentIssueId: 'parenting',
+      currentIssue: parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      previousMessages: [{ role: 'user' as const, content: '孩子最近不愿上学', issueId: 'parenting' }],
+      allPreviousMessages: messages,
+      previousTopics: ['PARENTING' as const],
+      knownIssues: [
+        parseIssueContext({ issue_id: 'colleague', status: 'PAUSED', topic_tags: ['CAREER'] }),
+        parseIssueContext({ issue_id: 'job-hunt', status: 'PAUSED', topic_tags: ['CAREER'] }),
+        parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      ],
+    };
+    expect(resolveCurrentIssue({ ...common, message: '最近工作又让我焦虑了' })).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: 'parenting', return_lookup: 'AMBIGUOUS',
+    });
+  });
+
+  it('第二阶段：已预约的历史 Issue 不自动恢复，不跨话题泄漏预约', () => {
+    const allPreviousMessages = [
+      { role: 'user' as const, content: '工作让我焦虑', issueId: 'booked' },
+      { role: 'user' as const, content: '孩子最近不愿意上学', issueId: 'parenting' },
+    ];
+    const result = resolveCurrentIssue({
+      message: '工作又让我很难受',
+      currentIssueId: 'parenting',
+      currentIssue: parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      previousMessages: [allPreviousMessages[1]],
+      allPreviousMessages,
+      knownIssues: [
+        parseIssueContext({ issue_id: 'booked', status: 'BOOKING_SUBMITTED', topic_tags: ['CAREER'], booking_case_id: 'case-1' }),
+        parseIssueContext({ issue_id: 'parenting', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      ],
+      previousTopics: ['PARENTING'],
+    });
+    expect(result.issue_action).toBe('CREATE_NEW');
+    expect(result.current_issue_id).not.toBe('booked');
+    expect(result.new_issue_detected).toBe(true);
+  });
+
   it('未发生明确回顾时，工作压力导致睡眠问题仍留在原 Issue', () => {
     const r = resolveCurrentIssue({
       message: '工作压力让我晚上一直失眠',
