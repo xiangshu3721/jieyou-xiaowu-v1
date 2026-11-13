@@ -76,12 +76,39 @@ function stringValue(value: unknown, max = 4_000) {
   return typeof value === 'string' ? value.trim().slice(0, max) : '';
 }
 
-function messagesValue(value: unknown): ChatMessage[] {
+function messagesValue(value: unknown, preserveIssueHistory = false): ChatMessage[] {
   if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is ChatMessage => Boolean(item && typeof item === 'object' && ((item as ChatMessage).role === 'user' || (item as ChatMessage).role === 'assistant') && typeof (item as ChatMessage).content === 'string'))
-    .slice(-40)
-    .map((item) => ({ role: item.role, content: item.content.slice(0, 4_000), id: typeof item.id === 'string' ? item.id.slice(0, 120) : undefined, issueId: typeof item.issueId === 'string' ? item.issueId.slice(0, 120) : undefined, createdAt: typeof item.createdAt === 'string' ? item.createdAt.slice(0, 40) : undefined }));
+  const valid = value.filter((item): item is ChatMessage => Boolean(item && typeof item === 'object'
+    && ((item as ChatMessage).role === 'user' || (item as ChatMessage).role === 'assistant')
+    && typeof (item as ChatMessage).content === 'string'));
+  let selected: ChatMessage[];
+  if (!preserveIssueHistory) {
+    selected = valid.slice(-40);
+  } else {
+    // Keep a bounded sample of each old Issue even when many newer chat turns
+    // push it out of the global last-40 window. Keep the first two facts and
+    // the latest 18 exchanges per Issue, plus the latest 40 messages overall.
+    const keep = new Set<number>();
+    const byIssue = new Map<string, number[]>();
+    valid.forEach((item, index) => {
+      const key = item.issueId || 'issue-legacy';
+      const indices = byIssue.get(key) || [];
+      indices.push(index);
+      byIssue.set(key, indices);
+    });
+    for (const indices of byIssue.values()) {
+      for (const index of [...indices.slice(0, 2), ...indices.slice(-18)]) keep.add(index);
+    }
+    for (let index = Math.max(0, valid.length - 40); index < valid.length; index++) keep.add(index);
+    // A single request is already capped at 1.5 MB; bound retained chat rows too.
+    selected = [...keep].sort((a, b) => a - b).slice(-400).map((index) => valid[index]);
+  }
+  return selected.map((item) => ({
+    role: item.role, content: item.content.slice(0, 4_000),
+    id: typeof item.id === 'string' ? item.id.slice(0, 120) : undefined,
+    issueId: typeof item.issueId === 'string' ? item.issueId.slice(0, 120) : undefined,
+    createdAt: typeof item.createdAt === 'string' ? item.createdAt.slice(0, 40) : undefined,
+  }));
 }
 
 function conversationText(messages: ChatMessage[]) {
@@ -503,7 +530,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
   if (request.method === 'POST' && url.pathname === '/api/chat') {
     try {
       const body = await readBody(request);
-      const messages = messagesValue(body.messages);
+      const messages = messagesValue(body.messages, true);
       const latestText = messages.filter((item) => item.role === 'user').at(-1)?.content || '';
       if (!messages.length || !latestText) return json(400, { error: '请先输入你想聊的内容' }, request);
       const requestedIssueId = typeof body.currentIssueId === 'string' && body.currentIssueId.trim() ? body.currentIssueId.trim() : undefined;
