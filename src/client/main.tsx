@@ -280,7 +280,9 @@ function ChatPage() {
     if (!shouldStartFreshIssueAfterBooking(session)) return session.currentIssueId;
     const fresh = await createFreshIssue(session.id);
     if (!fresh) return session.currentIssueId;
-    setSession((value) => value ? { ...value, currentIssueId: fresh.issue_id, issues: { ...value.issues, [fresh.issue_id]: fresh } } : value);
+    // Refresh the whole session: its previous Issue may also have been sealed
+    // from a remotely confirmed pending booking.
+    setSession(await getOrCreateSession());
     return fresh.issue_id;
   }
 
