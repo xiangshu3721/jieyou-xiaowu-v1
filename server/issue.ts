@@ -129,6 +129,45 @@ function previousIssueReference(
   return { lookup: 'AMBIGUOUS' };
 }
 
+/**
+ * A clear, independent return to exactly one locally retained older concern
+ * can resume that Issue without requiring the phrase "回到之前".
+ * Do not guess when several older concerns share the same broad topic.
+ * A submitted booking is never silently reopened by natural topic matching.
+ */
+function naturalPreviousIssue(
+  message: string,
+  currentIssueId: string,
+  allPreviousMessages: ChatMessage[],
+  knownIssues: IssueRequestContext[],
+): { issueId?: string; lookup?: 'AMBIGUOUS' } | null {
+  const latest = message.trim();
+  if (/(?:另外|还有(?:一|另)个|还有一件|另一个|新(?:的)?(?:话题|问题|烦恼|困扰)|换个话题|再说一个)/.test(latest)) return null;
+  // Cross-topic cause/effect statements are not enough to infer a return.
+  if (/(?:因为|导致|影响|引起|牵连|连带|因此|所以)/.test(latest)) return null;
+  const domains = [...new Set(classifyConcern(latest).filter((topic) => topic !== 'OTHER' && topic !== 'EMOTION' && topic !== 'BODY_LIFE'))];
+  if (domains.length !== 1) return null;
+
+  // Historical user messages are necessary: a caller-supplied Issue ID alone
+  // is not evidence of a real old conversation.
+  const discussed = new Map<string, Set<TopicCode>>();
+  for (const item of allPreviousMessages) {
+    if (item.role !== 'user' || !item.issueId || item.issueId === currentIssueId) continue;
+    const tags = discussed.get(item.issueId) || new Set<TopicCode>();
+    for (const tag of classifyConcern(item.content)) if (tag !== 'OTHER') tags.add(tag);
+    discussed.set(item.issueId, tags);
+  }
+
+  const candidates = knownIssues.filter((issue) => {
+    if (issue.issue_id === currentIssueId || issue.status !== 'PAUSED' || !discussed.has(issue.issue_id)) return false;
+    const tags = new Set([...(discussed.get(issue.issue_id) || []), ...issue.topic_tags]);
+    return tags.has(domains[0]);
+  });
+  if (candidates.length === 1) return { issueId: candidates[0].issue_id };
+  if (candidates.length > 1) return { lookup: 'AMBIGUOUS' };
+  return null;
+}
+
 export function resolveCurrentIssue(input: {
   message: string;
   currentIssueId: string;
@@ -212,6 +251,26 @@ export function resolveCurrentIssue(input: {
   }
   const switchResult = detectIssueSwitch(input.message, previousText, input.previousTopics || input.currentIssue.topic_tags);
   if (switchResult.detected) {
+    const previous = naturalPreviousIssue(input.message, input.currentIssueId, input.allPreviousMessages || [], input.knownIssues || []);
+    if (previous?.issueId) return {
+      control_intent: 'CONTINUE_CURRENT_TOPIC',
+      issue_action: 'RESUME_PREVIOUS',
+      current_issue_id: previous.issueId,
+      previous_issue_id: input.currentIssueId,
+      new_issue_detected: false,
+      new_issue_confidence: 0,
+      awaiting_topic: false,
+    };
+    if (previous?.lookup) return {
+      control_intent: 'CONTINUE_CURRENT_TOPIC',
+      issue_action: 'CONTINUE_CURRENT',
+      current_issue_id: input.currentIssueId,
+      previous_issue_id: null,
+      new_issue_detected: false,
+      new_issue_confidence: 0,
+      awaiting_topic: false,
+      return_lookup: previous.lookup,
+    };
     return {
       control_intent: 'NEW_ISSUE',
       issue_action: 'CREATE_NEW',
