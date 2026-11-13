@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
 import { wantsHumanBooking } from '../shared.js';
-import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, readPendingBooking, savePendingBooking, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, type LocalMessage, type LocalSession } from './storage.js';
+import { addMessage, clearLocalMessages, createFreshIssue, getOrCreateSession, issueFromAnalysis, listMessages, markIssueBookingSubmitted, moveMessageToIssue, readPendingBooking, savePendingBooking, saveSessionLifecycle, saveSessionProfile, saveSessionUnderstanding, shouldStartFreshIssueAfterBooking, type LocalMessage, type LocalSession } from './storage.js';
 import { deleteLearningSession, getLearningConsent, getLearningSessionId, LearningMetricsTracker, setLearningConsent, sendLearningEvent, sendLearningReview } from './learning.js';
 import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
@@ -277,8 +277,7 @@ function ChatPage() {
 
   async function ensureBookingIssueId() {
     if (!session) return null;
-    const current = session.issues[session.currentIssueId];
-    if (current?.status !== 'BOOKING_SUBMITTED') return session.currentIssueId;
+    if (!shouldStartFreshIssueAfterBooking(session)) return session.currentIssueId;
     const fresh = await createFreshIssue(session.id);
     if (!fresh) return session.currentIssueId;
     setSession((value) => value ? { ...value, currentIssueId: fresh.issue_id, issues: { ...value.issues, [fresh.issue_id]: fresh } } : value);
@@ -499,29 +498,34 @@ function ChatPage() {
       return;
     }
     setInput(''); setError(''); setSending(true); setSendingPhase('listening');
-    const userMessage = await addMessage(session.id, 'user', content);
-    messagesRef.current = [...messagesRef.current, userMessage];
-    learningTrackerRef.current.recordUser(content);
-    setMessages(messagesRef.current);
     try {
+      // Booking success closes the previous Issue even if the user stayed on this chat page.
+      // Use the newly persisted Issue for the current turn; never send new text under the old booking.
+      const preparedIssueId = await ensureBookingIssueId();
+      const activeSession = preparedIssueId && preparedIssueId !== session.currentIssueId
+        ? await getOrCreateSession() : session;
+      const userMessage = await addMessage(activeSession.id, 'user', content, activeSession.currentIssueId);
+      messagesRef.current = [...messagesRef.current, userMessage];
+      learningTrackerRef.current.recordUser(content);
+      setMessages(messagesRef.current);
       const listeningDuration = Math.min(1_300, 700 + content.length * 24);
       await wait(listeningDuration);
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
-      const requestIssueId = session.currentIssueId;
-      const issueContexts = Object.values(session.issues).map((issue) => ({
+      const requestIssueId = activeSession.currentIssueId;
+      const issueContexts = Object.values(activeSession.issues).map((issue) => ({
         issue_id: issue.issue_id, status: issue.status, topic_tags: issue.topic_tags,
         handoff_offered: issue.handoff_offered, handoff_state: issue.handoff_state,
         booking_case_id: issue.booking_case_id, user_turn_count: issue.user_turn_count,
       }));
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: session.id, currentIssueId: requestIssueId, issue: issuePayload(session), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: activeSession.id, currentIssueId: requestIssueId, issue: issuePayload(activeSession), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
       if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
       if (result.analysis.current_issue_id !== requestIssueId) {
         await moveMessageToIssue(session.id, userMessage.id, result.analysis.current_issue_id);
         messagesRef.current = messagesRef.current.map((message) => message.id === userMessage.id ? { ...message, issueId: result.analysis.current_issue_id } : message);
       }
-      const previousIssue = session.issues[result.analysis.current_issue_id];
+      const previousIssue = activeSession.issues[result.analysis.current_issue_id];
       const nextIssue: IssueLifecycle = {
         ...issueFromAnalysis(result.analysis, previousIssue?.started_at),
         // A resumed issue retains its original booking snapshot and submitted status.
@@ -529,7 +533,7 @@ function ChatPage() {
         booking_case_id: previousIssue?.booking_case_id || null,
         booking_submitted_at: previousIssue?.booking_submitted_at || null,
       };
-      const nextIssues = { ...session.issues };
+      const nextIssues = { ...activeSession.issues };
       if (result.analysis.previous_issue_id && nextIssues[result.analysis.previous_issue_id] && nextIssues[result.analysis.previous_issue_id].status !== 'BOOKING_SUBMITTED') {
         nextIssues[result.analysis.previous_issue_id] = { ...nextIssues[result.analysis.previous_issue_id], status: 'PAUSED' };
       }
