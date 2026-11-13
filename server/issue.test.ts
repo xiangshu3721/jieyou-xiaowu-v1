@@ -122,17 +122,84 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(continued.show_booking_button).toBe(false);
   });
 
-  it('TEST_G：回到刚才的话题时不创建异常 Issue', () => {
+  it('TEST_G：工作 → 感情 → 亲子后，提到以前工作应恢复原 Issue 而不是创建新的', () => {
+    const allPreviousMessages = [
+      { role: 'user' as const, content: '工作项目太多，我已经有点睡不着', issueId: 'issue-a' },
+      { role: 'assistant' as const, content: '先列出最紧急的一件事', issueId: 'issue-a' },
+      { role: 'user' as const, content: '和伴侣关系很紧张', issueId: 'issue-b' },
+      { role: 'user' as const, content: '孩子最近不愿意上学', issueId: 'issue-c' },
+    ];
     const resolution = resolveCurrentIssue({
-      message: '我们回到刚才工作的问题吧',
-      currentIssueId: 'issue-b',
-      currentIssue: parseIssueContext({ issue_id: 'issue-b', status: 'ACTIVE' }),
-      previousMessages: [{ role: 'user', content: '感情关系让我很烦', issueId: 'issue-b' }],
-      previousTopics: ['INTIMACY'],
+      message: '我们回到之前工作的问题吧',
+      currentIssueId: 'issue-c',
+      currentIssue: parseIssueContext({ issue_id: 'issue-c', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      previousMessages: [{ role: 'user', content: '孩子最近不愿意上学', issueId: 'issue-c' }],
+      allPreviousMessages,
+      knownIssues: [
+        parseIssueContext({ issue_id: 'issue-a', status: 'PAUSED', topic_tags: ['EMOTION', 'CAREER'] }),
+        parseIssueContext({ issue_id: 'issue-b', status: 'PAUSED', topic_tags: ['INTIMACY'] }),
+        parseIssueContext({ issue_id: 'issue-c', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      ],
+      previousTopics: ['PARENTING'],
     });
-    expect(resolution.control_intent).toBe('CONTINUE_CURRENT_TOPIC');
-    expect(resolution.issue_action).toBe('CONTINUE_CURRENT');
-    expect(resolution.current_issue_id).toBe('issue-b');
+    expect(resolution).toMatchObject({
+      control_intent: 'CONTINUE_CURRENT_TOPIC',
+      issue_action: 'RESUME_PREVIOUS',
+      current_issue_id: 'issue-a',
+      previous_issue_id: 'issue-c',
+      new_issue_detected: false,
+      awaiting_topic: false,
+    });
+    expect(allPreviousMessages).toHaveLength(4);
+  });
+
+  it('回到刚才的旧话题取最近的上一 Issue，继续当前则不误切', () => {
+    const allPreviousMessages = [
+      { role: 'user' as const, content: '工作压力很大', issueId: 'issue-a' },
+      { role: 'user' as const, content: '我和伴侣吵架了', issueId: 'issue-b' },
+      { role: 'user' as const, content: '孩子最近不愿上学', issueId: 'issue-c' },
+    ];
+    const common = {
+      currentIssueId: 'issue-c',
+      currentIssue: parseIssueContext({ issue_id: 'issue-c', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+      previousMessages: [{ role: 'user' as const, content: '孩子最近不愿上学', issueId: 'issue-c' }],
+      allPreviousMessages,
+      previousTopics: ['PARENTING' as const],
+    };
+    expect(resolveCurrentIssue({ ...common, message: '回到刚才那个话题' }).current_issue_id).toBe('issue-b');
+    expect(resolveCurrentIssue({ ...common, message: '继续聊这个问题' }).current_issue_id).toBe('issue-c');
+  });
+
+  it('多个旧工作困扰时不擅自归并；从未有过的旧主题也不虚构', () => {
+    const prior = [
+      { role: 'user' as const, content: '工作里的同事冲突', issueId: 'issue-a' },
+      { role: 'user' as const, content: '我因为求职很迷茫', issueId: 'issue-b' },
+      { role: 'user' as const, content: '我和伴侣最近不合', issueId: 'issue-c' },
+    ];
+    const common = {
+      currentIssueId: 'issue-c',
+      currentIssue: parseIssueContext({ issue_id: 'issue-c', status: 'ACTIVE' }),
+      previousMessages: [{ role: 'user' as const, content: '我和伴侣最近不合', issueId: 'issue-c' }],
+      allPreviousMessages: prior,
+    };
+    expect(resolveCurrentIssue({ ...common, message: '回到之前的工作问题吧' })).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', return_lookup: 'AMBIGUOUS', current_issue_id: 'issue-c',
+    });
+    expect(resolveCurrentIssue({ ...common, message: '回到之前的亲子问题吧' })).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', return_lookup: 'NOT_FOUND', current_issue_id: 'issue-c',
+    });
+  });
+
+  it('未发生明确回顾时，工作压力导致睡眠问题仍留在原 Issue', () => {
+    const r = resolveCurrentIssue({
+      message: '工作压力让我晚上一直失眠',
+      currentIssueId: 'issue-work',
+      currentIssue: parseIssueContext({ issue_id: 'issue-work', status: 'ACTIVE', topic_tags: ['CAREER', 'EMOTION'] }),
+      previousMessages: [{ role: 'user', content: '最近工作压力太大', issueId: 'issue-work' }],
+      previousTopics: ['CAREER', 'EMOTION'],
+    });
+    expect(r.issue_action).toBe('CONTINUE_CURRENT');
+    expect(r.current_issue_id).toBe('issue-work');
   });
 
   it('阶段 1.3：用户纠正 AI 理解时继续当前 Issue', () => {
