@@ -9,6 +9,7 @@ export interface IssueRequestContext {
   handoff_offered: boolean;
   handoff_state: HumanHandoffState;
   booking_case_id: string | null;
+  user_turn_count?: number;
 }
 
 export interface IssueResolution {
@@ -52,6 +53,8 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
     handoff_offered: item.handoff_offered === true || status === 'HANDOFF_OFFERED' || status === 'BOOKING_SUBMITTED',
     handoff_state: item.handoff_state === 'DECLINED' || item.handoff_state === 'ACCEPTED' || item.handoff_state === 'OFFERED' || item.handoff_state === 'READY' ? item.handoff_state : status === 'BOOKING_SUBMITTED' ? 'ACCEPTED' : status === 'HANDOFF_OFFERED' || item.handoff_offered === true ? 'OFFERED' : 'NOT_READY',
     booking_case_id: typeof item.booking_case_id === 'string' && item.booking_case_id.trim() ? item.booking_case_id.trim().slice(0, 120) : null,
+    ...(typeof item.user_turn_count === 'number' && Number.isFinite(item.user_turn_count)
+      ? { user_turn_count: Math.max(0, Math.min(200, Math.round(item.user_turn_count))) } : {}),
   };
 }
 
@@ -79,6 +82,7 @@ function containsNewConcern(text: string) {
 function previousIssueReference(
   message: string,
   currentIssueId: string,
+  currentTopics: TopicCode[],
   history: ChatMessage[],
   knownIssues: IssueRequestContext[],
 ): { issueId?: string; lookup?: 'AMBIGUOUS' | 'NOT_FOUND' } | null {
@@ -101,8 +105,9 @@ function previousIssueReference(
   }
 
   const candidates = [...previous.entries()].sort((a, b) => b[1].lastIndex - a[1].lastIndex);
-  if (!candidates.length) return { lookup: 'NOT_FOUND' };
   const latestTopics = classifyConcern(message).filter((topic) => topic !== 'OTHER');
+  if (!candidates.length && (/刚才/.test(message) || latestTopics.some((topic) => currentTopics.includes(topic)))) return null;
+  if (!candidates.length) return { lookup: 'NOT_FOUND' };
   // Generic emotion words (e.g. 压力) should not overpower an explicit domain (工作).
   const domainTopics = latestTopics.filter((topic) => topic !== 'EMOTION');
   const hints = domainTopics.length ? domainTopics : latestTopics;
@@ -110,6 +115,7 @@ function previousIssueReference(
     const matching = candidates.filter(([, candidate]) => hints.some((topic) => candidate.tags.has(topic)));
     if (matching.length === 1) return { issueId: matching[0][0] };
     if (matching.length > 1 && /刚才|上一个/.test(message)) return { issueId: matching[0][0] };
+    if (!matching.length && hints.some((topic) => currentTopics.includes(topic))) return null;
     return { lookup: matching.length ? 'AMBIGUOUS' : 'NOT_FOUND' };
   }
   if (candidates.length === 1 || /刚才|上一个/.test(message)) return { issueId: candidates[0][0] };
@@ -139,7 +145,7 @@ export function resolveCurrentIssue(input: {
       awaiting_topic: false,
     };
   }
-  const returnReference = previousIssueReference(input.message, input.currentIssueId, input.allPreviousMessages || [], input.knownIssues || []);
+  const returnReference = previousIssueReference(input.message, input.currentIssueId, input.currentIssue.topic_tags, input.allPreviousMessages || [], input.knownIssues || []);
   if (returnReference?.issueId) {
     return {
       control_intent: 'CONTINUE_CURRENT_TOPIC',
