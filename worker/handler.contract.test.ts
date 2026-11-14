@@ -225,7 +225,7 @@ describe('worker handler API 契约', () => {
       { role: 'assistant', content: '先圈出今天必须完成的一件事', issueId: 'issue-work' },
       { role: 'user', content: '最近我和伴侣有矛盾', issueId: 'issue-love' },
       { role: 'user', content: '孩子最近不愿意上学', issueId: 'issue-child' },
-      { role: 'user', content: '最近工作压力又大起来了', issueId: 'issue-child' },
+      { role: 'user', content: '最近工作压力又大起来了，那个排期我还是不知道怎么处理。', issueId: 'issue-child' },
     ];
     const testRequest = request('/api/chat', 'POST', {
       currentIssueId: 'issue-child',
