@@ -269,11 +269,53 @@ describe('V1.6 Issue 上下文边界', () => {
       issue_action: 'RESUME_PREVIOUS', current_issue_id: 'work',
       previous_issue_id: 'parenting', new_issue_detected: false,
     });
+    // The exact failed Production sentence contains "还" (还是): it must
+    // not suppress recovery to the existing work Issue.
+    expect(resolveCurrentIssue({
+      ...context,
+      message: '最近工作压力又大起来了，那个排期我还是不知道怎么处理。',
+    })).toMatchObject({
+      issue_action: 'RESUME_PREVIOUS', current_issue_id: 'work',
+      previous_issue_id: 'parenting', new_issue_detected: false,
+    });
     expect(resolveCurrentIssue({ ...context, message: '我和伴侣最近又吵架了' })).toMatchObject({
       issue_action: 'RESUME_PREVIOUS', current_issue_id: 'relationship',
     });
     // Explicitly starting another concern must not merge it into a historical one.
     expect(resolveCurrentIssue({ ...context, message: '另外我还有一个工作上的新烦恼' }).issue_action).toBe('CREATE_NEW');
+  });
+
+  it('当前话题延续与跨领域因果关系不能误恢复旧 Issue', () => {
+    const history = [
+      { role: 'user' as const, content: '工作项目排期太紧', issueId: 'old-work' },
+      { role: 'user' as const, content: '工作上的同事让我焦虑', issueId: 'current-work' },
+      { role: 'user' as const, content: '孩子不愿意上学', issueId: 'current-child' },
+    ];
+    const knownIssues = [
+      parseIssueContext({ issue_id: 'old-work', status: 'PAUSED', topic_tags: ['CAREER'] }),
+      parseIssueContext({ issue_id: 'current-work', status: 'ACTIVE', topic_tags: ['CAREER'] }),
+      parseIssueContext({ issue_id: 'current-child', status: 'ACTIVE', topic_tags: ['PARENTING'] }),
+    ];
+    const sameDomain = resolveCurrentIssue({
+      message: '我还是不知道怎么和同事处理工作关系',
+      currentIssueId: 'current-work', currentIssue: knownIssues[1],
+      previousMessages: [history[1]],
+      allPreviousMessages: history,
+      knownIssues,
+      previousTopics: ['CAREER'],
+    });
+    expect(sameDomain).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: 'current-work',
+    });
+    const linked = resolveCurrentIssue({
+      message: '工作压力导致孩子不愿意上学',
+      currentIssueId: 'current-child', currentIssue: knownIssues[2],
+      previousMessages: [history[2]], allPreviousMessages: history, knownIssues,
+      previousTopics: ['PARENTING'],
+    });
+    expect(linked).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: 'current-child',
+    });
   });
 
   it('第二阶段：多个同类旧困扰保持隔离，不猜测恢复哪一个', () => {
