@@ -250,7 +250,19 @@ export function resolveCurrentIssue(input: {
     };
   }
   const switchResult = detectIssueSwitch(input.message, previousText, input.previousTopics || input.currentIssue.topic_tags);
-  if (switchResult.detected) {
+  // "还/也" in "那个排期我还是不知道怎么处理" describes the old
+  // concern, not necessarily a continuation of the currently active Issue.
+  // Allow only one explicit, different domain to reach the existing
+  // unique-history matcher. Keep implicit returns disabled for empty/awaiting
+  // topics, and leave causal, ambiguous and booked cases to existing guards.
+  const domain = (topic: TopicCode) => !['OTHER', 'EMOTION', 'BODY_LIFE'].includes(topic);
+  const currentDomains = input.currentIssue.topic_tags.filter(domain);
+  const latestDomains = classifyConcern(input.message).filter(domain);
+  const distinctOldDomain = input.currentIssue.status !== 'AWAITING_TOPIC'
+    && currentDomains.length > 0
+    && latestDomains.length === 1
+    && !currentDomains.includes(latestDomains[0]);
+  if (switchResult.detected || distinctOldDomain) {
     const previous = naturalPreviousIssue(input.message, input.currentIssueId, input.allPreviousMessages || [], input.knownIssues || []);
     if (previous?.issueId) return {
       control_intent: 'CONTINUE_CURRENT_TOPIC',
@@ -270,6 +282,15 @@ export function resolveCurrentIssue(input: {
       new_issue_confidence: 0,
       awaiting_topic: false,
       return_lookup: previous.lookup,
+    };
+    if (!switchResult.detected) return {
+      control_intent: control,
+      issue_action: 'CONTINUE_CURRENT',
+      current_issue_id: input.currentIssueId,
+      previous_issue_id: null,
+      new_issue_detected: false,
+      new_issue_confidence: switchResult.confidence,
+      awaiting_topic: false,
     };
     return {
       control_intent: 'NEW_ISSUE',
