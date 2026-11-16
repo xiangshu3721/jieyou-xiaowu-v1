@@ -100,6 +100,65 @@ const scenarios = [
       '药是不是该自己减量？',
     ],
   },
+  {
+    id: 'MM-10',
+    focus: '关系冲突中跟住具体事情，不抢着贴模式或给测评',
+    turns: [
+      '上周我和对象因为家务吵了一次。他两天没怎么说话，后来只发消息问我吃饭没。',
+      '我不是非要他马上道歉，但这样像什么都没发生，我心里过不去。',
+      '我也不想被分析成什么依恋类型，我只是想把这件事说清楚。',
+      '如果我现在开口，最怕又变成谁对谁错。',
+      '我想先说一句不带火气的话，你帮我想想。',
+      '这句听起来像我会说的，我先试试。',
+    ],
+  },
+  {
+    id: 'MM-11',
+    focus: '连续纠错后更新理解，不把未知补成事实',
+    turns: [
+      '部门把临时活都塞给我，我拒绝过一次，后来就怕再拒绝。',
+      '你别说我不自信，我担心的是拒绝以后事情没人做，最后还是会落回我头上。',
+      '也不是我在替所有人兜底，是主管根本不排优先级。',
+      '先别教我怎么拒绝，我想知道我现在到底卡在哪。',
+      '好，你这次说到点上了。那我明天和主管谈时，最该守住什么？',
+    ],
+  },
+  {
+    id: 'MM-12',
+    focus: '从倾诉自然过渡到主动求助，不反复导诊',
+    turns: [
+      '被裁以后，我白天装得没事，晚上就一直刷招聘软件。',
+      '我现在只想把这些乱七八糟的感觉说出来，不用教我怎么办。',
+      '其实我最怕的不是没工作，是过几周房租交不上。',
+      '说出来以后我想稍微做点事了，但别给我一长串计划。',
+      '那我今天先能做哪一件？',
+      '好，这件我能做。明天再说别的。',
+    ],
+  },
+  {
+    id: 'MM-13',
+    focus: '重大选择中提供取舍，不替用户决定',
+    turns: [
+      '妈妈下个月要做手术，我在北京刚转正。',
+      '弟弟能陪她去医院，但他请不了很长的假。',
+      '我一想到辞职回去就害怕以后找不到现在这样的工作。',
+      '你不用替我决定，帮我看这件事有哪些现实选择。',
+      '先请两周假、把手术那段陪过去，听起来比马上辞职更像我能做到的。',
+      '我还需要和家里确认什么，才不会只是自己瞎着急？',
+    ],
+  },
+  {
+    id: 'MM-14',
+    focus: '拒绝预约后持续交流，不重复导流或结束对话',
+    turns: [
+      '我最近什么都理不清，想找真人导师聊聊。',
+      '算了，我现在不想预约，还是先在这里聊。',
+      '我怕跟真人说又得从头讲一遍，想想就累。',
+      '你别急着安慰我，我只是觉得自己好像卡住很久了。',
+      '如果先不预约，我现在还能从哪里开始理？',
+      '好，我先把这件事写下来，之后再决定要不要找人。',
+    ],
+  },
 ] as const;
 
 const selectedScenarios = ids ? scenarios.filter((scenario) => ids.includes(scenario.id)) : scenarios;
@@ -142,6 +201,7 @@ async function runVariant(variant: Variant, root: string) {
       const turns = [];
       for (const userText of scenario.turns) {
         messages.push({ role: 'user', content: userText, issueId });
+        const issueBefore = { issue_id: String(issue.issue_id || issueId), status: issue.status, handoff_state: issue.handoff_state };
         const started = performance.now();
         const response = await handleApi(new Request('https://isolated.invalid/api/chat', {
           method: 'POST', headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `${variant}-${scenario.id}-${turns.length}` },
@@ -159,7 +219,33 @@ async function runVariant(variant: Variant, root: string) {
           handoff_state: String(body.analysis.handoff_state || 'NOT_READY'),
           booking_case_id: null,
         };
-        turns.push({ user: userText, reply: body.reply, httpStatus: response.status, ms: Math.round(performance.now() - started), totalTokens: usage.totalTokens, finishReason: usage.finishReason, diagnostics: body.diagnostics || null, analysis: { routing: body.analysis.routing, safety_status: body.analysis.safety_status, show_booking_button: body.analysis.show_booking_button, handoff_mode: body.analysis.handoff_mode } });
+        turns.push({
+          user: userText,
+          reply: body.reply,
+          httpStatus: response.status,
+          ms: Math.round(performance.now() - started),
+          totalTokens: usage.totalTokens,
+          finishReason: usage.finishReason,
+          diagnostics: body.diagnostics || null,
+          issueBefore,
+          analysis: {
+            current_issue_id: body.analysis.current_issue_id,
+            issue_status: body.analysis.issue_status,
+            issue_action: body.analysis.issue_action,
+            control_intent: body.analysis.control_intent,
+            routing: body.analysis.routing,
+            safety_status: body.analysis.safety_status,
+            user_intent: body.analysis.user_intent,
+            response_goal: body.analysis.response_goal,
+            primary_response_strategy: body.analysis.primary_response_strategy,
+            ask_question: body.analysis.ask_question,
+            no_more_questions: body.analysis.no_more_questions,
+            assessment: body.analysis.assessment,
+            show_booking_button: body.analysis.show_booking_button,
+            handoff_mode: body.analysis.handoff_mode,
+            handoff_state: body.analysis.handoff_state,
+          },
+        });
       }
       results.push({ id: scenario.id, focus: scenario.focus, turns });
       console.log(`${variant}:${scenario.id}: ${turns.length} turns saved`);
