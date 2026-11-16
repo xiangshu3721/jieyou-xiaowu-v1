@@ -1,8 +1,9 @@
+import { approvedLearningGuidance } from '../server/learning.js';
 import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage } from '../src/shared.js';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from '../server/structured.js';
-import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
+import { decideLearningCandidate, deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
 import { createCloudBaseGrowthStore } from './growth-store.js';
 import { clearGrowthWatch, deleteGrowthMemory, generateGrowthSnapshot, recordGrowthEvent, recordGrowthFeedback, recentGrowth, saveGrowthWatch } from '../server/growth-service.js';
@@ -27,6 +28,7 @@ export interface WorkerEnv {
   GROWTH_TABLE_PREFIX?: string;
   GROWTH_ENABLED?: string;
   LEARNING_ENABLED?: string;
+  LEARNING_APPLY_ENABLED?: string;
   DB?: D1Database;
 }
 
@@ -56,6 +58,24 @@ const requestCounts = new Map<string, { count: number; resetAt: number }>();
 let feishuTokenCache: { token: string; expiresAt: number } | null = null;
 let learningStoreCache: { key: string; store: ReturnType<typeof createCloudBaseLearningStore> } | null = null;
 let growthStoreCache: { key: string; store: ReturnType<typeof createCloudBaseGrowthStore> } | null = null;
+let learningAdviceCache: { key: string; expiresAt: number; value: string } | null = null;
+
+async function approvedAdviceFor(env: WorkerEnv): Promise<string> {
+  if (env.LEARNING_APPLY_ENABLED !== 'true') return '';
+  const key = env.CLOUDBASE_ENV_ID || '';
+  const now = Date.now();
+  if (learningAdviceCache && learningAdviceCache.key === key && learningAdviceCache.expiresAt > now) return learningAdviceCache.value;
+  try {
+    const store = learningStoreFor(env);
+    const value = store ? approvedLearningGuidance(await store.listCandidateRules(20), true) : '';
+    learningAdviceCache = { key, expiresAt: now + 60_000, value };
+    return value;
+  } catch {
+    // Learning data must never affect chat availability.
+    return '';
+  }
+}
+
 
 function json(status: number, body: unknown, request?: Request) {
   const corsHeaders: Record<string, string> = request?.headers.get('Origin') === productionOrigin
@@ -461,6 +481,14 @@ export async function handleApi(request: Request, env: WorkerEnv) {
     return json(result.status, result.body, request);
   }
 
+  if (request.method === 'POST' && url.pathname === '/api/learning/candidates/decision') {
+    if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
+    const body = await readBody(request);
+    const result = await decideLearningCandidate(body, learningStoreFor(env));
+    if (result.status === 200) learningAdviceCache = null;
+    return json(result.status, result.body, request);
+  }
+
   if (request.method === 'POST' && url.pathname === '/api/learning/mentor-feedback') {
     if (!isDevAuthorized(request, env)) return json(401, { error: '需要 /dev 调试口令' }, request);
     const body = await readBody(request);
@@ -612,7 +640,9 @@ export async function handleApi(request: Request, env: WorkerEnv) {
           if (relevant) watchGuidance = `\n用户曾选择本周一起留意“${watch.title}”。只有在当前内容确实相关时，才自然地轻轻带到这个观察方向，不要提“观察项”或后台记忆，也不要强行引导。`;
         }
       }
-      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
+      const learningGuidance = baseline.routing === 'AI_SUPPORT' && !baseline.show_booking_button
+        ? await approvedAdviceFor(env) : '';
+      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}${learningGuidance}`;
       const completion = await callDeepSeekCompletion(
         env,
         [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))],

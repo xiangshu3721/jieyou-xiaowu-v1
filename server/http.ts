@@ -1,3 +1,4 @@
+import { approvedLearningGuidance } from './learning.js';
 import http from 'node:http';
 import { hasRequiredAppointmentFields, type ConversationAnalysis, type AppointmentInput, type ChatMessage } from '../src/shared.js';
 import { config, configurationStatus } from './config.js';
@@ -9,7 +10,7 @@ import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
 import { FileLearningStore } from './learning-store.js';
-import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from './learning-service.js';
+import { decideLearningCandidate, deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from './learning-service.js';
 import { FileGrowthStore } from './growth-store.js';
 import { clearGrowthWatch, deleteGrowthMemory, generateGrowthSnapshot, recordGrowthEvent, recordGrowthFeedback, recentGrowth, saveGrowthWatch } from './growth-service.js';
 
@@ -94,6 +95,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
   if (request.method === 'POST' && url.pathname === '/api/learning/insights/run') {
     if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
     const result = await runLearningInsights(learningStore, config.promptVersion);
+    return send(response, result.status, result.body);
+  }
+
+  if (request.method === 'POST' && url.pathname === '/api/learning/candidates/decision') {
+    if (!isDevAuthorized(request)) return send(response, 401, { error: '需要 /dev 调试口令' });
+    const body = await readBody(request);
+    const result = await decideLearningCandidate(body, learningStore);
     return send(response, result.status, result.body);
   }
 
@@ -216,7 +224,13 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
           if (relevant) watchGuidance = `\n用户曾选择本周一起留意“${watch.title}”。只有在当前内容确实相关时，才自然地轻轻带到这个观察方向，不要提“观察项”或后台记忆，也不要强行引导。`;
         }
       }
-      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}`;
+      let learningGuidance = '';
+      if (process.env.LEARNING_APPLY_ENABLED === 'true' && baseline.routing === 'AI_SUPPORT' && !baseline.show_booking_button) {
+        try {
+          learningGuidance = approvedLearningGuidance(await learningStore.listCandidateRules(20), true);
+        } catch { /* 学习系统故障绝不影响实时对话。 */ }
+      }
+      const serverGuidance = `\n\n服务端内部校验基线（不要原样展示给用户）：\n${JSON.stringify(baseline)}${watchGuidance}${learningGuidance}`;
       const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
