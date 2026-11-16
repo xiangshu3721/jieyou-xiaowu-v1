@@ -38,7 +38,7 @@ describe('中国本土对话示范（仅候选分支）', () => {
   it('隐私承诺禁止位于最高优先级，纠错与行动数量规则明确', () => {
     expect(serverPrompts.chat).toContain('不得对隐私作绝对保证');
     expect(serverPrompts.chat).toContain('纠正 AI 理解时，本轮直接承认误解并更新事实，停止追问');
-    expect(serverPrompts.chat).toContain('先提供最多三项');
+    expect(serverPrompts.chat).toContain('整轮回复合计最多三项优先行动');
     expect(examples).toContain('关心家人和能负担多少是两回事');
   });
 
