@@ -29,7 +29,6 @@ on:
 permissions:
   contents: write
   pull-requests: read
-  issues: write
 
 concurrency:
   group: agent-loop-test-writeback-${{ inputs.target_pr }}
@@ -43,10 +42,8 @@ jobs:
       TARGET_BRANCH: codex/jy-agent-loop-test-target-20261116
       ALLOWED_PATH: docs/agent-loop-test-20261116.md
       EXPECTED_PR: '46'
-      EXPECTED_ACTUAL: blue
-      DESIRED_ACTUAL: green
     steps:
-      - name: Validate dispatch, PR, deduplication, and run limit
+      - name: Validate dispatch and fixed PR scope
         id: validate
         env:
           GH_TOKEN: ${{ github.token }}
@@ -83,42 +80,17 @@ jobs:
             throw new Error('PR scope is not exactly the allowed test file');
           }
           NODE
-          echo 'receipt_allowed=true' >> "$GITHUB_OUTPUT"
-
-          COMMENTS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments?per_page=100")"
-          export COMMENTS_JSON TARGET_PR EXPECTED_HEAD_SHA
-          DEDUP_STATE="$(node --input-type=module <<'NODE'
-          const comments = JSON.parse(process.env.COMMENTS_JSON);
-          const marker = `agent-loop-test-writeback:pr=${process.env.TARGET_PR};base=${process.env.EXPECTED_HEAD_SHA}`;
-          const matching = comments.filter((comment) => comment.body?.includes(marker));
-          if (matching.some((comment) => comment.body.includes('state=SUCCESS'))) process.stdout.write('success');
-          else if (matching.some((comment) => comment.body.includes('state=STOPPED'))) process.stdout.write('stopped');
-          else if (matching.filter((comment) => comment.body.includes('state=STARTED')).length >= 3) process.stdout.write('limit');
-          else process.stdout.write('run');
-          NODE
-          )"
-          if [ "$DEDUP_STATE" = 'success' ]; then
-            echo 'skip=true' >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          if [ "$DEDUP_STATE" = 'stopped' ]; then
-            echo 'A prior attempt for this PR and base SHA stopped; retry is forbidden.' >&2
-            exit 1
-          fi
-          if [ "$DEDUP_STATE" = 'limit' ]; then
-            echo 'The maximum of three attempts for this PR and base SHA has been reached.' >&2
-            exit 1
-          fi
-          test "$DEDUP_STATE" = 'run'
-
-          START_MARKER="<!-- agent-loop-test-writeback:pr=$TARGET_PR;base=$EXPECTED_HEAD_SHA;state=STARTED -->"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments" \
-            -f body="$START_MARKER\n受限确定性写回开始：仅允许 $ALLOWED_PATH。"
-          echo 'skip=false' >> "$GITHUB_OUTPUT"
           echo "head_sha=$EXPECTED_HEAD_SHA" >> "$GITHUB_OUTPUT"
+          {
+            echo '## Agent Loop Test Writeback'
+            echo '- Result: RUNNING (controlled manual verification)'
+            echo "- PR: #$TARGET_PR"
+            echo "- Base SHA: $EXPECTED_HEAD_SHA"
+            echo "- Allowed path: $ALLOWED_PATH"
+            echo '- Retry policy: no persistent STOPPED or dedup state is stored; this is not automatic-retry protected.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Check out exact Draft PR head without running repository code
-        if: steps.validate.outputs.skip != 'true'
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.validate.outputs.head_sha }}
@@ -127,7 +99,6 @@ jobs:
 
       - name: Apply fixed test-only mutation
         id: mutate
-        if: steps.validate.outputs.skip != 'true'
         run: |
           set -euo pipefail
           node --input-type=module <<'NODE'
@@ -141,7 +112,6 @@ jobs:
 
       - name: Reject scope or content drift
         id: guard
-        if: steps.validate.outputs.skip != 'true'
         run: |
           set -euo pipefail
           git diff --check
@@ -152,7 +122,6 @@ jobs:
 
       - name: Commit and push only the fixed test file
         id: push
-        if: steps.validate.outputs.skip != 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
@@ -178,7 +147,6 @@ jobs:
 
       - name: Re-read remote SHA, file, and PR diff
         id: verify_remote
-        if: steps.validate.outputs.skip != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           TARGET_PR: ${{ inputs.target_pr }}
@@ -202,23 +170,35 @@ jobs:
           if (files.length !== 1 || files[0]?.filename !== process.env.ALLOWED_PATH) throw new Error('remote PR diff escaped allowed file');
           NODE
 
-      - name: Post success or stop receipt
-        if: always() && steps.validate.outputs.receipt_allowed == 'true' && steps.validate.outputs.skip != 'true'
+      - name: Emit success receipt
+        if: success()
         env:
-          GH_TOKEN: ${{ github.token }}
           TARGET_PR: ${{ inputs.target_pr }}
           EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
           COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
-          JOB_STATUS: ${{ job.status }}
         run: |
           set -euo pipefail
-          if [ "$JOB_STATUS" = 'success' ]; then
-            STATE='SUCCESS'
-            DETAIL="远端 SHA、文件内容与 PR diff 已重新读取并核对。commit: $COMMIT_SHA"
-          else
-            STATE='STOPPED'
-            DETAIL='校验或推送失败；未进行自动重试。请查看本次 workflow 日志。'
-          fi
-          MARKER="<!-- agent-loop-test-writeback:pr=$TARGET_PR;base=$EXPECTED_HEAD_SHA;state=$STATE -->"
-          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments" \
-            -f body="$MARKER\n$DETAIL"
+          {
+            echo '## Agent Loop Test Writeback'
+            echo '- Result: SUCCESS'
+            echo "- PR: #$TARGET_PR"
+            echo "- Base SHA: $EXPECTED_HEAD_SHA"
+            echo "- Remote commit SHA: $COMMIT_SHA"
+            echo '- Remote file content and PR diff were re-read and verified.'
+            echo '- Retry policy: this was a one-time controlled manual verification, not automatic-retry protected.'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Emit stop receipt
+        if: failure()
+        env:
+          TARGET_PR: ${{ inputs.target_pr }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+        run: |
+          {
+            echo '## Agent Loop Test Writeback'
+            echo '- Result: STOPPED'
+            echo "- PR: #$TARGET_PR"
+            echo "- Base SHA: $EXPECTED_HEAD_SHA"
+            echo '- A validation, mutation, guard, push, or remote-readback step failed; no automatic retry was started.'
+            echo '- Retry policy: no persistent STOPPED state is stored, so any new dispatch requires manual review.'
+          } >> "$GITHUB_STEP_SUMMARY"
