@@ -113,6 +113,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             docs/codex-action-loop-test-20261116.md
+          sparse-checkout-cone-mode: false
 
       # v1 resolved to this immutable commit from the official repository on 2026-11-16.
       - name: Ask Codex to repair only the fixed fixture
@@ -168,6 +169,7 @@ jobs:
           persist-credentials: false
           sparse-checkout: |
             docs/codex-action-loop-test-20261116.md
+          sparse-checkout-cone-mode: false
 
       - name: Download AI candidate patch
         uses: actions/download-artifact@v4
