@@ -37,6 +37,9 @@ jobs:
       - name: Unit and handler contract tests
         run: npm test -- --reporter=dot
 
+      - name: Validate dialogue A/B test runner without API calls
+        run: npm run eval:dialogue -- --dry-run
+
       - name: Build frontend
         run: npm run build
 
