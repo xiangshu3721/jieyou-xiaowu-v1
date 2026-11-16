@@ -10,10 +10,10 @@ const examplePath = 'ai/examples/candidate-prompt-v1.md';
 const examples = fs.readFileSync(path.join(root, examplePath), 'utf8').trim();
 
 describe('中国本土对话示范（仅候选分支）', () => {
-  it('Node 与 Worker 的实时 chat Prompt 内容相同且含有 10 条示范', () => {
+  it('Node 与 Worker 的实时 chat Prompt 内容相同且含有 7 条精简示范', () => {
     expect(serverPrompts.chat).toBe(workerPrompts.chat);
     expect(serverPrompts.chat).toContain('CN_DIALOGUE_EXPERIMENT_V1');
-    expect([...examples.matchAll(/^### \d+\./gm)]).toHaveLength(10);
+    expect([...examples.matchAll(/^### \d+\./gm)]).toHaveLength(7);
     expect(serverMetadata.files).toContain(examplePath);
     expect(workerMetadata.files).toContain(examplePath);
   });
@@ -29,16 +29,21 @@ describe('中国本土对话示范（仅候选分支）', () => {
   });
 
   it('倾诉时允许自然留白，需要澄清时限制为单一关键信息', () => {
-    expect(examples).toContain('可以只承接、不问句收尾');
-    expect(examples).toContain('一次只问一个最关键的信息点');
-    expect(examples).toContain('好，那我先听着，不急着帮你想办法。');
+    expect(examples).toContain('不要用问句、选择题或“从哪说起”收尾');
+    expect(examples).toContain('只问一个会改变下一步的关键信息');
+    expect(examples).toContain('今天就先说说，不急着解决。');
   });
 
   it('不把盲测样本、整套训练数据、敏感客户记录导入实时 Prompt', () => {
     expect(examples.length).toBeLessThan(2600);
     expect(examples).not.toMatch(/CN-EVAL-\d+/);
     expect(examples).not.toMatch(/CN-TRAIN-\d+/);
-    expect(examples).toContain('原创虚构情境');
-    expect(examples).toContain('未经导师审核');
+    expect(examples).toContain('虚构中文示范');
+    expect(examples).toContain('待审核');
+    expect(examples).toContain('先给可直接尝试的 1～3 步');
+    expect(examples).toContain('财务及过渡安排');
+    expect(examples).toContain('不承诺“绝不会被任何人看到”');
+    expect(examples.length).toBeLessThan(1300);
+
   });
 });
