@@ -59,14 +59,14 @@ export class FileLearningStore implements LearningStore {
     const filePath = path.resolve(config.rootDir, 'data/learning', files.candidates);
     const raw = await fs.readFile(filePath, 'utf8');
     let found = false;
-    const lines = raw.split(/\\r?\\n/).filter(Boolean).map((line) => {
+    const lines = raw.split(/\r?\n/).filter(Boolean).map((line) => {
       const previous = JSON.parse(line) as CandidateRule;
       if (previous.candidate_id !== rule.candidate_id) return line;
       found = true;
       return JSON.stringify(rule);
     });
     if (!found) throw new Error('候选经验不存在');
-    await fs.writeFile(filePath, `${lines.join('\\n')}\\n`, 'utf8');
+    await fs.writeFile(filePath, `${lines.join('\n')}\n`, 'utf8');
   }
 
   async deleteBySession(sessionHash: string) {
