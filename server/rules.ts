@@ -135,6 +135,17 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   const latestTopics = classifyConcern(latest);
   const novelTopics = latestTopics.filter((topic) => topic !== 'OTHER' && !previousTopicSet.has(topic));
   const continuationSignals = /(?:所以|因此|也|还|同时|影响|导致|因为|晚上|睡眠|失眠|白天|这件事)/.test(latest);
+  // A practical decision can be part of an active care concern even when it
+  // introduces work or money words. For example, after discussing a parent's
+  // surgery, “一想到辞职回去就害怕以后找不到现在这样的工作” is weighing a
+  // care option, not opening an unrelated career Issue. Keep this narrow: it
+  // needs both a concrete care context and decision/solution language, and an
+  // explicit separation still takes the normal topic-switch path.
+  const careContext = /(?:手术|住院|看病|医院|生病|病情|照顾|陪护|康复|治疗|身体不好|身体状况)/.test(previous);
+  const workOrMoneyDecision = /(?:辞职|换工作|求职|请假|回去|收入|工作安排|工作)/.test(latest);
+  const decisionOrSolutionLanguage = /(?:一想到|要不要|该不该|是不是|考虑|打算|准备|决定|害怕|担心|怎么安排|怎么办|如何|以后|如果|辞职后|请假后)/.test(latest);
+  const explicitlySeparateConcern = /(?:和|跟).{0,20}(?:无关|不是一回事)|(?:不是|并非).{0,12}(?:因为|为了).{0,12}(?:照顾|手术|住院|看病|医院|生病|病情)/.test(latest);
+  const careDecisionContinuation = careContext && workOrMoneyDecision && decisionOrSolutionLanguage && !explicitlySeparateConcern;
   const strongNewTopic = /(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣|孩子|亲子|父母|原生家庭|辞职|换工作|求职|债务|房贷|法律|诉讼)/.test(latest);
   const strongTopicAlreadyInIssue = (/(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣)/.test(latest) && previousTopicSet.has('INTIMACY'))
     || (/(?:孩子|亲子)/.test(latest) && previousTopicSet.has('PARENTING'))
@@ -148,6 +159,7 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   const causalLink = /因为|导致|影响|引起|牵连|连带|所以|因此/.test(latest)
     && latestTopics.some((topic) => topic !== 'EMOTION' && previousTopicSet.has(topic));
   if (causalLink) return { detected: false, confidence: 0.12 };
+  if (careDecisionContinuation) return { detected: false, confidence: 0.12 };
   const novelDomains = novelTopics.filter((topic) => topic !== 'EMOTION');
   if ((novelDomains.length > 0 || strongNewDomain) && (strongNewDomain || !continuationSignals)) return { detected: true, confidence: 0.82 };
   return { detected: false, confidence: explicitSwitch ? 0.35 : 0.12 };
