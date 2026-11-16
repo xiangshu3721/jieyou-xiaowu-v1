@@ -37,7 +37,7 @@ concurrency:
 
 jobs:
   writeback:
-    if: github.repository == 'xiangshu3721/jieyou-xiaowu-v1'
+    if: github.repository == 'xiangshu3721/jieyou-xiaowu-v1' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-22.04
     env:
       TARGET_BRANCH: codex/jy-agent-loop-test-target-20261116
@@ -92,6 +92,7 @@ jobs:
           const marker = `agent-loop-test-writeback:pr=${process.env.TARGET_PR};base=${process.env.EXPECTED_HEAD_SHA}`;
           const matching = comments.filter((comment) => comment.body?.includes(marker));
           if (matching.some((comment) => comment.body.includes('state=SUCCESS'))) process.stdout.write('success');
+          else if (matching.some((comment) => comment.body.includes('state=STOPPED'))) process.stdout.write('stopped');
           else if (matching.filter((comment) => comment.body.includes('state=STARTED')).length >= 3) process.stdout.write('limit');
           else process.stdout.write('run');
           NODE
@@ -99,6 +100,14 @@ jobs:
           if [ "$DEDUP_STATE" = 'success' ]; then
             echo 'skip=true' >> "$GITHUB_OUTPUT"
             exit 0
+          fi
+          if [ "$DEDUP_STATE" = 'stopped' ]; then
+            echo 'A prior attempt for this PR and base SHA stopped; retry is forbidden.' >&2
+            exit 1
+          fi
+          if [ "$DEDUP_STATE" = 'limit' ]; then
+            echo 'The maximum of three attempts for this PR and base SHA has been reached.' >&2
+            exit 1
           fi
           test "$DEDUP_STATE" = 'run'
 
@@ -114,7 +123,7 @@ jobs:
         with:
           ref: ${{ steps.validate.outputs.head_sha }}
           fetch-depth: 1
-          persist-credentials: true
+          persist-credentials: false
 
       - name: Apply fixed test-only mutation
         id: mutate
@@ -144,6 +153,8 @@ jobs:
       - name: Commit and push only the fixed test file
         id: push
         if: steps.validate.outputs.skip != 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           git config user.name 'github-actions[bot]'
@@ -151,7 +162,18 @@ jobs:
           git add -- "$ALLOWED_PATH"
           git commit -m 'test: set agent loop fixture green'
           COMMIT_SHA="$(git rev-parse HEAD)"
-          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          ASKPASS="$RUNNER_TEMP/agent-loop-git-askpass.sh"
+          trap 'rm -f "$ASKPASS"' EXIT
+          cat > "$ASKPASS" <<'EOF'
+          #!/usr/bin/env sh
+          case "$1" in
+            *Username*) printf '%s\n' x-access-token ;;
+            *Password*) printf '%s\n' "$GITHUB_TOKEN" ;;
+            *) exit 1 ;;
+          esac
+          EOF
+          chmod 700 "$ASKPASS"
+          GIT_ASKPASS="$ASKPASS" GIT_TERMINAL_PROMPT=0 git push origin "HEAD:refs/heads/$TARGET_BRANCH"
           echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
 
       - name: Re-read remote SHA, file, and PR diff
