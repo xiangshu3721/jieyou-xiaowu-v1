@@ -4,4 +4,4 @@
 不涉及业务代码、真实数据、Production、CloudBase 或 Pages。
 
 expected: green
-actual: blue
+actual: green
