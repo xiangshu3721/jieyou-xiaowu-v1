@@ -1,0 +1,202 @@
+name: Agent Loop Test Writeback (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_pr:
+        description: 'Draft PR number; only PR #46 is accepted in phase 1.'
+        required: true
+        type: string
+      expected_head_sha:
+        description: 'Current full 40-character head SHA of the test PR.'
+        required: true
+        type: string
+      operation:
+        description: 'Fixed deterministic mutation; arbitrary commands are not accepted.'
+        required: true
+        type: choice
+        default: set_actual_green
+        options:
+          - set_actual_green
+      allowed_path:
+        description: 'The only repository path this workflow may change.'
+        required: true
+        type: choice
+        default: docs/agent-loop-test-20261116.md
+        options:
+          - docs/agent-loop-test-20261116.md
+
+permissions:
+  contents: write
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: agent-loop-test-writeback-${{ inputs.target_pr }}
+  cancel-in-progress: false
+
+jobs:
+  writeback:
+    if: github.repository == 'xiangshu3721/jieyou-xiaowu-v1'
+    runs-on: ubuntu-22.04
+    env:
+      TARGET_BRANCH: codex/jy-agent-loop-test-target-20261116
+      ALLOWED_PATH: docs/agent-loop-test-20261116.md
+      EXPECTED_PR: '46'
+      EXPECTED_ACTUAL: blue
+      DESIRED_ACTUAL: green
+    steps:
+      - name: Validate dispatch, PR, deduplication, and run limit
+        id: validate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          REQUESTED_OPERATION: ${{ inputs.operation }}
+          REQUESTED_PATH: ${{ inputs.allowed_path }}
+        run: |
+          set -euo pipefail
+          test "$TARGET_PR" = "$EXPECTED_PR"
+          test "$REQUESTED_OPERATION" = "set_actual_green"
+          test "$REQUESTED_PATH" = "$ALLOWED_PATH"
+          [[ "$EXPECTED_HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]
+
+          PR_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$TARGET_PR")"
+          export PR_JSON EXPECTED_HEAD_SHA TARGET_BRANCH GITHUB_REPOSITORY
+          node --input-type=module <<'NODE'
+          const pr = JSON.parse(process.env.PR_JSON);
+          const failures = [];
+          if (pr.state !== 'open') failures.push('PR must be open');
+          if (pr.draft !== true) failures.push('PR must be a draft');
+          if (pr.base?.ref !== 'main') failures.push('base branch must be main');
+          if (pr.head?.ref !== process.env.TARGET_BRANCH) failures.push('unexpected head branch');
+          if (pr.head?.repo?.full_name !== process.env.GITHUB_REPOSITORY) failures.push('fork PRs are forbidden');
+          if (pr.head?.sha !== process.env.EXPECTED_HEAD_SHA) failures.push('head SHA does not match dispatch input');
+          if (failures.length) throw new Error(failures.join('; '));
+          NODE
+
+          FILES_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$TARGET_PR/files?per_page=100")"
+          export FILES_JSON ALLOWED_PATH
+          node --input-type=module <<'NODE'
+          const files = JSON.parse(process.env.FILES_JSON);
+          if (files.length !== 1 || files[0]?.filename !== process.env.ALLOWED_PATH) {
+            throw new Error('PR scope is not exactly the allowed test file');
+          }
+          NODE
+          echo 'receipt_allowed=true' >> "$GITHUB_OUTPUT"
+
+          COMMENTS_JSON="$(gh api "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments?per_page=100")"
+          export COMMENTS_JSON TARGET_PR EXPECTED_HEAD_SHA
+          DEDUP_STATE="$(node --input-type=module <<'NODE'
+          const comments = JSON.parse(process.env.COMMENTS_JSON);
+          const marker = `agent-loop-test-writeback:pr=${process.env.TARGET_PR};base=${process.env.EXPECTED_HEAD_SHA}`;
+          const matching = comments.filter((comment) => comment.body?.includes(marker));
+          if (matching.some((comment) => comment.body.includes('state=SUCCESS'))) process.stdout.write('success');
+          else if (matching.filter((comment) => comment.body.includes('state=STARTED')).length >= 3) process.stdout.write('limit');
+          else process.stdout.write('run');
+          NODE
+          )"
+          if [ "$DEDUP_STATE" = 'success' ]; then
+            echo 'skip=true' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          test "$DEDUP_STATE" = 'run'
+
+          START_MARKER="<!-- agent-loop-test-writeback:pr=$TARGET_PR;base=$EXPECTED_HEAD_SHA;state=STARTED -->"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments" \
+            -f body="$START_MARKER\n受限确定性写回开始：仅允许 $ALLOWED_PATH。"
+          echo 'skip=false' >> "$GITHUB_OUTPUT"
+          echo "head_sha=$EXPECTED_HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Check out exact Draft PR head without running repository code
+        if: steps.validate.outputs.skip != 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.validate.outputs.head_sha }}
+          fetch-depth: 1
+          persist-credentials: true
+
+      - name: Apply fixed test-only mutation
+        id: mutate
+        if: steps.validate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = process.env.ALLOWED_PATH;
+          const text = readFileSync(path, 'utf8');
+          if ((text.match(/^expected: green$/gm) ?? []).length !== 1) throw new Error('expected fixture line is missing or duplicated');
+          if ((text.match(/^actual: blue$/gm) ?? []).length !== 1) throw new Error('fixture is not at the expected blue state');
+          writeFileSync(path, text.replace(/^actual: blue$/m, 'actual: green'));
+          NODE
+
+      - name: Reject scope or content drift
+        id: guard
+        if: steps.validate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          git diff --check
+          test "$(git diff --name-only)" = "$ALLOWED_PATH"
+          test "$(git diff --numstat | awk '{print $1 ":" $2 ":" $3}')" = "1:1:$ALLOWED_PATH"
+          test "$(grep -cx 'actual: green' "$ALLOWED_PATH")" = '1'
+          test "$(grep -cx 'actual: blue' "$ALLOWED_PATH" || true)" = '0'
+
+      - name: Commit and push only the fixed test file
+        id: push
+        if: steps.validate.outputs.skip != 'true'
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -- "$ALLOWED_PATH"
+          git commit -m 'test: set agent loop fixture green'
+          COMMIT_SHA="$(git rev-parse HEAD)"
+          git push origin "HEAD:refs/heads/$TARGET_BRANCH"
+          echo "commit_sha=$COMMIT_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Re-read remote SHA, file, and PR diff
+        id: verify_remote
+        if: steps.validate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          REMOTE_SHA="$(git ls-remote origin "refs/heads/$TARGET_BRANCH" | awk '{print $1}')"
+          test "$REMOTE_SHA" = "$COMMIT_SHA"
+
+          gh api "repos/$GITHUB_REPOSITORY/contents/$ALLOWED_PATH?ref=$REMOTE_SHA" --jq .content | base64 --decode > /tmp/remote-test-file.md
+          cmp --silent "$ALLOWED_PATH" /tmp/remote-test-file.md
+          test "$(grep -cx 'actual: green' /tmp/remote-test-file.md)" = '1'
+
+          PR_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$TARGET_PR")"
+          FILES_JSON="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$TARGET_PR/files?per_page=100")"
+          export PR_JSON FILES_JSON COMMIT_SHA ALLOWED_PATH
+          node --input-type=module <<'NODE'
+          const pr = JSON.parse(process.env.PR_JSON);
+          const files = JSON.parse(process.env.FILES_JSON);
+          if (pr.head?.sha !== process.env.COMMIT_SHA) throw new Error('PR head does not equal pushed SHA');
+          if (files.length !== 1 || files[0]?.filename !== process.env.ALLOWED_PATH) throw new Error('remote PR diff escaped allowed file');
+          NODE
+
+      - name: Post success or stop receipt
+        if: always() && steps.validate.outputs.receipt_allowed == 'true' && steps.validate.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TARGET_PR: ${{ inputs.target_pr }}
+          EXPECTED_HEAD_SHA: ${{ inputs.expected_head_sha }}
+          COMMIT_SHA: ${{ steps.push.outputs.commit_sha }}
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          set -euo pipefail
+          if [ "$JOB_STATUS" = 'success' ]; then
+            STATE='SUCCESS'
+            DETAIL="远端 SHA、文件内容与 PR diff 已重新读取并核对。commit: $COMMIT_SHA"
+          else
+            STATE='STOPPED'
+            DETAIL='校验或推送失败；未进行自动重试。请查看本次 workflow 日志。'
+          fi
+          MARKER="<!-- agent-loop-test-writeback:pr=$TARGET_PR;base=$EXPECTED_HEAD_SHA;state=$STATE -->"
+          gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$TARGET_PR/comments" \
+            -f body="$MARKER\n$DETAIL"
