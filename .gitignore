@@ -7,3 +7,4 @@ dist/
 data/appointment-state.json
 data/learning/
 cloudbase/functions/api/index.js
+data/dialogue-ab-reports/

@@ -10,6 +10,7 @@
     "build": "vite build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "eval:dialogue": "node --import tsx scripts/dialogue-ab.mjs",
     "verify:staging": "node scripts/verify-staging-safety.mjs",
     "verify:staging-build": "node scripts/verify-staging-build.mjs",
     "verify:production-build": "node scripts/verify-production-build.mjs",
