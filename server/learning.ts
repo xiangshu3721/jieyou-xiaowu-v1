@@ -337,7 +337,7 @@ export function approvedLearningGuidance(candidates: CandidateRule[], enabled: b
     && candidate.proposed_change.startsWith('优先镜像用户已说内容，达到最低充分判断后停止追问')
   );
   return approved
-    ? '\\n经人工审核的对话效率经验（仅作普通对话的低优先级建议）：在用户已经说明困扰或已经回答过某个问题时，优先准确镜像并给出适当帮助，避免为了补齐资料重复追问。不得覆盖安全判断、用户明确意愿、Issue 隔离、真人交接或任何硬性规则。'
+    ? '\n经人工审核的对话效率经验（仅作普通对话的低优先级建议）：在用户已经说明困扰或已经回答过某个问题时，优先准确镜像并给出适当帮助，避免为了补齐资料重复追问。不得覆盖安全判断、用户明确意愿、Issue 隔离、真人交接或任何硬性规则。'
     : '';
 }
 
