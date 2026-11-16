@@ -15,7 +15,7 @@ const requestedIds = idsArg ? idsArg.slice('--ids='.length).split(',') : null;
 const requestedLimit = limitArg ? Number(limitArg.slice('--limit='.length)) : (all ? 15 : 6);
 if (args.some((value) => value !== '--dry-run' && value !== '--all' && !value.startsWith('--limit=') && !value.startsWith('--ids='))
   || !Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 15
-  || (requestedIds && (all || limitArg || requestedIds.length > 15 || requestedIds.length === 0 || new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !/^CN-EVAL-\\d{3}$/.test(id))))) {
+  || (requestedIds && (all || limitArg || requestedIds.length > 15 || requestedIds.length === 0 || new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !/^CN-EVAL-\d{3}$/.test(id))))) {
   console.error('用法：npm run eval:dialogue -- --dry-run | --limit=6 | --all | --ids=CN-EVAL-009,CN-EVAL-012');
   process.exit(2);
 }
