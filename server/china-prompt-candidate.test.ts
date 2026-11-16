@@ -42,6 +42,15 @@ describe('中国本土对话示范（仅候选分支）', () => {
     expect(examples).toContain('关心家人和能负担多少是两回事');
   });
 
+  it('三条失败点在优先规则中明确，而非依赖示范数量', () => {
+    expect(serverPrompts.chat).toContain('变相求证');
+    expect(serverPrompts.chat).toContain('只承接已经说出的具体事实');
+    expect(serverPrompts.chat).toContain('可持续上限');
+    expect(serverPrompts.chat).toContain('给一句可用的边界表达');
+    expect(serverPrompts.chat).toContain('整轮回复合计最多三项优先行动');
+    expect(serverPrompts.chat).toContain('子任务也计入总数');
+  });
+
   it('旧版基线由 main 原提交固定，不混入候选实验规则', () => {
     expect(pinnedBaseline).toContain('# 解忧小屋 V1.4');
     expect(pinnedBaseline).not.toContain('CN_DIALOGUE_EXPERIMENT_V1');
