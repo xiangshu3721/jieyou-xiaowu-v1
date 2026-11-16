@@ -40,6 +40,9 @@ jobs:
       - name: Validate dialogue A/B test runner without API calls
         run: npm run eval:dialogue -- --dry-run
 
+      - name: Validate focused dialogue regression selection without API calls
+        run: npm run eval:dialogue -- --dry-run --ids=CN-EVAL-009,CN-EVAL-012
+
       - name: Build frontend
         run: npm run build
 
