@@ -77,6 +77,30 @@ export async function runLearningInsights(store: LearningStore | null, promptVer
   return { status: 200, body: { ok: true, created: true, insight: result.insight, candidate: result.candidate } };
 }
 
+/** The reviewer never changes production rules. A privileged operator must explicitly
+ * attest regression coverage before enabling a bounded, reversible gray experience. */
+export async function decideLearningCandidate(body: Record<string, unknown>, store: LearningStore | null): Promise<LearningServiceResult> {
+  if (!store) return { status: 503, body: { error: '学习数据存储尚未配置', code: 'LEARNING_STORE_UNAVAILABLE' } };
+  const candidateId = typeof body.candidateId === 'string' ? body.candidateId.trim() : '';
+  const decision = body.decision;
+  const note = typeof body.note === 'string' ? body.note.trim().slice(0, 300) : '';
+  if (!candidateId || !['APPROVED_FOR_GRAY', 'REJECTED'].includes(String(decision))) {
+    return { status: 400, body: { error: '候选经验标识或审核决定无效' } };
+  }
+  const candidates = await store.listCandidateRules(100);
+  const candidate = candidates.find((item) => item.candidate_id === candidateId);
+  if (!candidate) return { status: 404, body: { error: '候选经验不存在' } };
+  if (candidate.status === decision) return { status: 200, body: { ok: true, candidate } };
+  if (decision === 'APPROVED_FOR_GRAY') {
+    if (candidate.status !== 'PENDING_HUMAN_REVIEW') return { status: 409, body: { error: '已决定的候选经验不可重复批准' } };
+    if (candidate.target !== 'learnable_experience') return { status: 400, body: { error: '首版仅允许通用对话经验进入灰度' } };
+    if (body.testsPassed !== true || note.length < 8) return { status: 400, body: { error: '批准前需完成回归案例，并填写至少8字审核依据' } };
+  }
+  const updated = { ...candidate, status: decision as 'APPROVED_FOR_GRAY' | 'REJECTED', decision_at: new Date().toISOString(), decision_note: note };
+  await store.updateCandidateRule(updated);
+  return { status: 200, body: { ok: true, candidate: updated } };
+}
+
 export async function learningDashboard(store: LearningStore | null, promptVersion: string): Promise<LearningServiceResult> {
   if (!store) return { status: 503, body: { error: '学习数据存储尚未配置', code: 'LEARNING_STORE_UNAVAILABLE' } };
   const [events, reviews, feedback, insights, candidates] = await Promise.all([
