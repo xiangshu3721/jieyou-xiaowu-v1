@@ -129,6 +129,14 @@ export class CloudBaseLearningStore implements LearningStore {
     return this.add('candidates', rule.candidate_id, rule.created_at, '', rule);
   }
 
+  async updateCandidateRule(rule: CandidateRule) {
+    await this.ensureSchema();
+    const rows = rowsFromResult(await this.execute(
+      `UPDATE public.${tableNames.candidates} SET document = ${jsonText(rule)} WHERE _id = ${sqlString(rule.candidate_id)} RETURNING _id`,
+    ));
+    if (!rows.length) throw new Error('候选经验不存在');
+  }
+
   async deleteBySession(sessionHash: string) {
     await this.ensureSchema();
     let deleted = 0;
