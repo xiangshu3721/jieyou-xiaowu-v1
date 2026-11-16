@@ -10,9 +10,13 @@ const args = process.argv.slice(2);
 const dryRun = args.includes('--dry-run');
 const all = args.includes('--all');
 const limitArg = args.find((value) => value.startsWith('--limit='));
+const idsArg = args.find((value) => value.startsWith('--ids='));
+const requestedIds = idsArg ? idsArg.slice('--ids='.length).split(',') : null;
 const requestedLimit = limitArg ? Number(limitArg.slice('--limit='.length)) : (all ? 15 : 6);
-if (args.some((value) => value !== '--dry-run' && value !== '--all' && !value.startsWith('--limit=')) || !Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 15) {
-  console.error('用法：npm run eval:dialogue -- --dry-run | --limit=6 | --all');
+if (args.some((value) => value !== '--dry-run' && value !== '--all' && !value.startsWith('--limit=') && !value.startsWith('--ids='))
+  || !Number.isInteger(requestedLimit) || requestedLimit < 1 || requestedLimit > 15
+  || (requestedIds && (all || limitArg || requestedIds.length > 15 || requestedIds.length === 0 || new Set(requestedIds).size !== requestedIds.length || requestedIds.some((id) => !/^CN-EVAL-\\d{3}$/.test(id))))) {
+  console.error('用法：npm run eval:dialogue -- --dry-run | --limit=6 | --all | --ids=CN-EVAL-009,CN-EVAL-012');
   process.exit(2);
 }
 
@@ -56,7 +60,10 @@ const cases = parseCsv(fs.readFileSync(path.join(root, 'ai/datasets/china-holdou
 if (cases.length !== 15 || new Set(cases.map((item) => item['编号'])).size !== 15 || cases.some((item) => !item['编号']?.startsWith('CN-EVAL-') || !item['用户输入'] || !item['必须做到'])) {
   throw new Error('需要 15 条完整、唯一的 CN-EVAL 盲测案例');
 }
-const selected = cases.slice(0, requestedLimit);
+const selected = requestedIds ? cases.filter((item) => requestedIds.includes(item['编号'])) : cases.slice(0, requestedLimit);
+if (requestedIds && (selected.length !== requestedIds.length || !requestedIds.every((id) => selected.some((item) => item['编号'] === id)))) {
+  throw new Error('指定的案例 ID 不存在于当前回归集');
+}
 console.log(JSON.stringify({
   phase: dryRun ? 'DRY_RUN_VALIDATED' : 'REAL_DEEPSEEK_PROMPT_AB',
   model: config.deepseek.model,
