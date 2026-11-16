@@ -28,6 +28,12 @@ describe('中国本土对话示范（仅候选分支）', () => {
     }
   });
 
+  it('倾诉时允许自然留白，需要澄清时限制为单一关键信息', () => {
+    expect(examples).toContain('可以只承接、不问句收尾');
+    expect(examples).toContain('一次只问一个最关键的信息点');
+    expect(examples).toContain('好，那我先听着，不急着帮你想办法。');
+  });
+
   it('不把盲测样本、整套训练数据、敏感客户记录导入实时 Prompt', () => {
     expect(examples.length).toBeLessThan(2600);
     expect(examples).not.toMatch(/CN-EVAL-\d+/);
