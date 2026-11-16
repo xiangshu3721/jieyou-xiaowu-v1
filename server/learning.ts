@@ -93,6 +93,8 @@ export interface CandidateRule {
   possible_risk: string;
   required_tests: string[];
   status: 'PENDING_HUMAN_REVIEW' | 'REJECTED' | 'APPROVED_FOR_GRAY' | 'RELEASED';
+  decision_at?: string;
+  decision_note?: string;
 }
 
 export interface LearningDashboard {
@@ -129,6 +131,7 @@ export interface LearningStore {
   saveInsight(insight: LearningInsight): Promise<void>;
   listCandidateRules(limit?: number): Promise<CandidateRule[]>;
   saveCandidateRule(rule: CandidateRule): Promise<void>;
+  updateCandidateRule(rule: CandidateRule): Promise<void>;
   deleteBySession(sessionHash: string): Promise<number>;
 }
 
@@ -321,6 +324,21 @@ export function insightFromMetrics(events: LearningEventRecord[], promptVersion:
     status: 'PENDING_HUMAN_REVIEW',
   };
   return { insight, candidate };
+}
+
+/** Only a known, aggregate, human-approved pattern may influence a live reply.
+ * Never inject candidate free text or user-derived case text as instructions. */
+export function approvedLearningGuidance(candidates: CandidateRule[], enabled: boolean): string {
+  if (!enabled) return '';
+  const approved = candidates.some((candidate) =>
+    candidate.target === 'learnable_experience'
+    && (candidate.status === 'APPROVED_FOR_GRAY' || candidate.status === 'RELEASED')
+    && candidate.observed_problem === '近期会话中，连续提问或提问数量偏高的比例较高，可能增加对话负担。'
+    && candidate.proposed_change.startsWith('优先镜像用户已说内容，达到最低充分判断后停止追问')
+  );
+  return approved
+    ? '\\n经人工审核的对话效率经验（仅作普通对话的低优先级建议）：在用户已经说明困扰或已经回答过某个问题时，优先准确镜像并给出适当帮助，避免为了补齐资料重复追问。不得覆盖安全判断、用户明确意愿、Issue 隔离、真人交接或任何硬性规则。'
+    : '';
 }
 
 export function dashboardFromRecords(input: {
