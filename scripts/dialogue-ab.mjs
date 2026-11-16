@@ -22,9 +22,12 @@ if (prompts.chat.split(needle).length !== 2 || !examples.includes('CN_DIALOGUE_E
   throw new Error('候选示范必须在 chat Prompt 中恰好出现一次，且有实验标记');
 }
 const candidatePrompt = prompts.chat;
-const baselinePrompt = candidatePrompt.replace(needle, '\n\n');
-if (baselinePrompt.includes('CN_DIALOGUE_EXPERIMENT_V1') || candidatePrompt.includes('CN-EVAL-')) {
-  throw new Error('基线构造失败或盲测集进入实时 Prompt');
+const baselinePrompt = fs.readFileSync(path.join(root, 'ai/baselines/chat-main-883d85f.md'), 'utf8').trim();
+if (!baselinePrompt.startsWith('# 解忧小屋 V1.4') || baselinePrompt.includes('CN_DIALOGUE_EXPERIMENT_V1') || candidatePrompt.includes('CN-EVAL-')) {
+  throw new Error('冻结的原版基线不正确，或盲测材料进入实时 Prompt');
+}
+if (baselinePrompt === candidatePrompt.replace(needle, '\n\n')) {
+  throw new Error('新版基础规则已改变，但旧版基线未被冻结；请检查快照');
 }
 
 function parseCsv(text) {
@@ -59,6 +62,7 @@ console.log(JSON.stringify({
   model: config.deepseek.model,
   selectedCases: selected.map((item) => item['编号']),
   totalApiCalls: dryRun ? 0 : selected.length * 2,
+  baselineSource: 'main@883d85f (frozen, not modified by candidate rules)',
   baselineChars: baselinePrompt.length,
   candidateChars: candidatePrompt.length,
   note: '只测系统 Prompt 的直接回答，不等于 /api/chat 完整 Issue、导诊和安全端到端验收',
