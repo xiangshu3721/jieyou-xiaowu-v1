@@ -8,6 +8,7 @@ import { prompts as workerPrompts, promptMetadata as workerMetadata } from '../w
 const root = fileURLToPath(new URL('../', import.meta.url));
 const examplePath = 'ai/examples/candidate-prompt-v1.md';
 const examples = fs.readFileSync(path.join(root, examplePath), 'utf8').trim();
+const pinnedBaseline = fs.readFileSync(path.join(root, 'ai/baselines/chat-main-883d85f.md'), 'utf8').trim();
 
 describe('中国本土对话示范（仅候选分支）', () => {
   it('Node 与 Worker 的实时 chat Prompt 内容相同且含有 7 条精简示范', () => {
@@ -34,6 +35,20 @@ describe('中国本土对话示范（仅候选分支）', () => {
     expect(examples).toContain('今天就先说说，不急着解决。');
   });
 
+  it('隐私承诺禁止位于最高优先级，纠错与行动数量规则明确', () => {
+    expect(serverPrompts.chat).toContain('不得对隐私作绝对保证');
+    expect(serverPrompts.chat).toContain('纠正 AI 理解时，本轮直接承认误解并更新事实，停止追问');
+    expect(serverPrompts.chat).toContain('先提供最多三项');
+    expect(examples).toContain('关心家人和能负担多少是两回事');
+  });
+
+  it('旧版基线由 main 原提交固定，不混入候选实验规则', () => {
+    expect(pinnedBaseline).toContain('# 解忧小屋 V1.4');
+    expect(pinnedBaseline).not.toContain('CN_DIALOGUE_EXPERIMENT_V1');
+    expect(pinnedBaseline).not.toContain('不得对隐私作绝对保证');
+    expect(pinnedBaseline).not.toBe(serverPrompts.chat);
+  });
+
   it('不把盲测样本、整套训练数据、敏感客户记录导入实时 Prompt', () => {
     expect(examples.length).toBeLessThan(2600);
     expect(examples).not.toMatch(/CN-EVAL-\d+/);
@@ -42,7 +57,7 @@ describe('中国本土对话示范（仅候选分支）', () => {
     expect(examples).toContain('待审核');
     expect(examples).toContain('先给可直接尝试的 1～3 步');
     expect(examples).toContain('财务及过渡安排');
-    expect(examples).toContain('不承诺“绝不会被任何人看到”');
+    expect(examples).toContain('禁说“我不会告诉你爸妈”');
     expect(examples.length).toBeLessThan(1300);
 
   });
