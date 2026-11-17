@@ -590,10 +590,24 @@ function humanHelpLevel(text: string, intent: UserIntent, complexity: Complexity
   return 'LOW' as const;
 }
 
+function hasSustainedHandoffEvidence(problemMap: ProblemMap) {
+  const duration = problemMap.onset_duration || '';
+  const sustainedDuration = /(?:半个?月|[一二两三四五六七八九十\d]+(?:周|个?月|年)|半年|长期|很久|一直)/.test(duration);
+  const impactful = problemMap.functional_impacts.length > 0;
+  return impactful && (sustainedDuration || isRepeated('', problemMap) || problemMap.attempts.length > 0);
+}
+
 function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1) {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
   if (userTurnCount < 3) return false;
+  // A user who is actively asking to clarify or work through a concrete next
+  // step still has a useful AI-support path. Three turns and a populated
+  // problem map alone are not enough to interrupt that work with a handoff.
+  if (intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') return false;
+  // A short-lived event and a single emotional impact do not establish that
+  // human support is already more suitable than continuing the conversation.
+  if (!hasSustainedHandoffEvidence(problemMap)) return false;
   return minimumSufficientJudgment(text, complexity, problemMap, sufficiency)
     && aiFurtherValue(text, complexity, problemMap, supportFeedback) === 'LOW'
     && humanHelpLevel(text, intent, complexity, problemMap, supportFeedback) === 'HIGH';
