@@ -21,11 +21,12 @@ const baseEnv: WorkerEnv = {
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let testClient = 0;
 
 function request(path: string, method = 'GET', body?: unknown) {
   return new Request(`https://staging.test${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${testClient}` },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -43,6 +44,7 @@ async function json(response: Response) {
 
 describe('worker handler API 契约', () => {
   beforeEach(() => {
+    testClient += 1;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -112,6 +114,109 @@ describe('worker handler API 契约', () => {
     expect(body.diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false }));
   });
 
+  it('P2：纠正理解不追问，明确求助即时切换为实际帮助', async () => {
+    const cases = [
+      {
+        issueId: 'issue-mm03',
+        rawReply: '明白了，我不再把它理解成自信问题。你在说的是被打断之后，自己慢慢不想开口这件事。',
+        messages: [
+          { role: 'user', content: '我开会总被同事打断，后来我就不想说了。', issueId: 'issue-mm03' },
+          { role: 'assistant', content: '这会不会让你怀疑自己的能力？', issueId: 'issue-mm03' },
+          { role: 'user', content: '你别往自信上分析，不是这个问题。', issueId: 'issue-mm03' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-mm11',
+        rawReply: '你说得对，关键不在你敢不敢拒绝，而在主管没有排优先级，临时活才会不断落回你这里。',
+        messages: [
+          { role: 'user', content: '部门把临时活都塞给我，我拒绝过一次，后来就怕再拒绝。', issueId: 'issue-mm11' },
+          { role: 'assistant', content: '你是不是担心拒绝会显得自己不够自信？', issueId: 'issue-mm11' },
+          { role: 'user', content: '我不是不自信，是主管根本不排优先级。', issueId: 'issue-mm11' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-correction-action',
+        rawReply: '先和主管谈一件具体事：请他把这周临时活按优先级排出来，并确认哪些必须由你做、哪些可以延后。',
+        messages: [
+          { role: 'user', content: '部门临时活都塞给我。', issueId: 'issue-correction-action' },
+          { role: 'assistant', content: '这会不会让你更怀疑自己的能力？', issueId: 'issue-correction-action' },
+          { role: 'user', content: '你别往自信上分析，我现在到底该怎么和主管谈？', issueId: 'issue-correction-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+      {
+        issueId: 'issue-mm12',
+        rawReply: '今天先做一件：把下个月房租金额和手头可用的钱写下来，算出差额。这样你先把最急的事从一团焦虑变成一个具体数字。',
+        messages: [
+          { role: 'user', content: '被裁以后，我白天装得没事，晚上就一直刷招聘软件。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '这段时间像一直绷着。', issueId: 'issue-mm12' },
+          { role: 'user', content: '我现在只想把这些乱七八糟的感觉说出来，不用教我怎么办。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '好，我们先不急着找办法。', issueId: 'issue-mm12' },
+          { role: 'user', content: '其实我最怕的不是没工作，是过几周房租交不上。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '房租这件事让不确定变得很具体。', issueId: 'issue-mm12' },
+          { role: 'user', content: '说出来以后我想稍微做点事了，但别给我一长串计划。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '可以，我们只找一个今天能动的地方。', issueId: 'issue-mm12' },
+          { role: 'user', content: '那你说，我今天先做哪一件？', issueId: 'issue-mm12' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+      {
+        issueId: 'issue-decline-advice',
+        rawReply: '好，我先不急着给建议。你想从这件事里哪一部分说起都可以。',
+        messages: [
+          { role: 'user', content: '主管又临时改优先级，我整天都很烦。', issueId: 'issue-decline-advice' },
+          { role: 'assistant', content: '这让你一直被动地跟着变化走。', issueId: 'issue-decline-advice' },
+          { role: 'user', content: '别给我建议，我只想说说。', issueId: 'issue-decline-advice' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-plan',
+        rawReply: '明白，我不会把它归到自信问题，也先不替你安排方案。你可以继续把当时发生的事说清楚。',
+        messages: [
+          { role: 'user', content: '每次项目临近交付，主管都会临时换要求。', issueId: 'issue-decline-plan' },
+          { role: 'assistant', content: '这会不会让你觉得自己准备得不够好？', issueId: 'issue-decline-plan' },
+          { role: 'user', content: '你别往自信上分析，也别给我方案。', issueId: 'issue-decline-plan' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-how-to',
+        rawReply: '好，我先不分析你，也不急着告诉你该怎么办。你想把这件事说清楚，我会跟着你现在说的事实听。',
+        messages: [
+          { role: 'user', content: '我每次汇报都被临时改方向，越来越不想准备。', issueId: 'issue-decline-how-to' },
+          { role: 'assistant', content: '这是不是和你不够自信有关？', issueId: 'issue-decline-how-to' },
+          { role: 'user', content: '不是要你分析我，不要告诉我怎么办。', issueId: 'issue-decline-how-to' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-explicit-action',
+        rawReply: '那就先做一件具体的事：把本周所有临时需求列出来，请主管逐项确认优先级。',
+        messages: [
+          { role: 'user', content: '不用安慰我，给我一个具体办法。', issueId: 'issue-explicit-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+    ];
+    cases.forEach(({ rawReply }) => fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply)));
+
+    for (const item of cases) {
+      const response = await handleApi(request('/api/chat', 'POST', {
+        currentIssueId: item.issueId,
+        issue: { issue_id: item.issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+        messages: item.messages,
+      }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      expect(body.reply).toBe(item.rawReply);
+      expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+      expect(body.diagnostics).toMatchObject({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false });
+    }
+  });
+
   it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {
     let postedBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -179,6 +284,122 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('MM-10：短期关系冲突的完整讨论不会在第三轮自动交接', async () => {
+    const issueId = 'issue-mm10';
+    const turns = [
+      '上周我和对象因为家务吵了一次。他两天没怎么说话，后来只发消息问我吃饭没。',
+      '我不是非要他马上道歉，但这样像什么都没发生，我心里过不去。',
+      '我也不想被分析成什么依恋类型，我只是想把这件事说清楚。',
+      '如果我现在开口，最怕又变成谁对谁错。',
+      '我想先说一句不带火气的话，你帮我想想。',
+      '这句听起来像我会说的，我先试试。',
+    ];
+    const rawReplies = [
+      '这件事刚发生不久，你现在过不去的，是它像被轻轻带过了。',
+      '你不是只要一句道歉，而是希望这次争执没有被当作没发生。',
+      '明白，我们只把这件事说清楚，不给你贴依恋类型。',
+      '可以先把重点放在你想让对方看见什么，而不是先判谁对谁错。',
+      '你可以试试说：那天之后我们像没事一样，但我心里还没过去，想把这件事说清楚。',
+      '这句话听起来很贴近你，也给了对方一个不必立刻辩输赢的入口。',
+    ];
+    rawReplies.forEach((reply) => fetchMock.mockResolvedValueOnce(deepSeekResponse(reply)));
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; issueId: string }> = [];
+    let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: ['INTIMACY'], handoff_offered: false, handoff_state: 'NOT_READY' };
+
+    for (const [index, userText] of turns.entries()) {
+      messages.push({ role: 'user', content: userText, issueId });
+      const response = await handleApi(request('/api/chat', 'POST', { currentIssueId: issueId, issue, issues: [issue], messages }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      expect(body.analysis).toMatchObject({ current_issue_id: issueId, routing: 'AI_SUPPORT', show_booking_button: false, handoff_mode: 'NONE' });
+      expect(body.diagnostics).toMatchObject({ fallback_used: false });
+      expect(body.reply).toBe(rawReplies[index]);
+      messages.push({ role: 'assistant', content: body.reply, issueId });
+      issue = {
+        issue_id: issueId,
+        status: body.analysis.issue_status,
+        topic_tags: body.analysis.tags,
+        handoff_offered: body.analysis.handoff_offered,
+        handoff_state: body.analysis.handoff_state,
+      };
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(turns.length);
+  });
+
+  it('长期反复且 AI 帮助无效时，正在求助也可通过完整条件进入自愿交接', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你已经试过自己调整，但这件事仍持续影响睡眠和工作。可以预约真人一起梳理，也可以继续在这里聊。'));
+    const issueId = 'issue-exhausted-support';
+    const messages = [
+      { role: 'user', content: '工作压力已经持续三个月，反复睡不好，白天工作效率受影响。', issueId },
+      { role: 'assistant', content: '可以先把优先级列出来，再和领导沟通。', issueId },
+      { role: 'user', content: '我试过列优先级和跟领导沟通，但没有改善。', issueId },
+      { role: 'assistant', content: '那我们可以继续看看还有哪些调整空间。', issueId },
+      { role: 'user', content: '前面这些建议没用，我现在到底怎么办？', issueId },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      user_intent: 'WANTS_ACTION', support_feedback: '用户反馈当前帮助效果不足',
+      routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
+    });
+    expect(body.diagnostics).toMatchObject({ fallback_used: false });
+  });
+
+  it('MM-14：拒绝预约后保留自然回应，不把“暂不预约”误换成 Fallback', async () => {
+    const issueId = 'issue-mm14';
+    const turns = [
+      '我最近什么都理不清，想找真人导师聊聊。',
+      '算了，我现在不想预约，还是先在这里聊。',
+      '我怕跟真人说又得从头讲一遍，想想就累。',
+      '你别急着安慰我，我只是觉得自己好像卡住很久了。',
+      '如果先不预约，我现在还能从哪里开始理？',
+      '好，我先把这件事写下来，之后再决定要不要找人。',
+    ];
+    const rawReplies = [
+      '可以，免费预约真人聊聊的入口在这里；你也可以继续和我聊。',
+      '你不用现在预约。你怕从头讲很累，我们可以先接着现在这段聊。',
+      '我不急着安慰你。你说自己卡住很久了，我们先把“卡住”具体落在今天最难的地方。',
+      '先不预约也可以。你可以从把现在最乱的三件事写下来开始，再只选一件今天能动的。',
+      '好，先写下来已经是在给自己留一个可回看的起点。之后要不要找人，等你觉得合适再决定。',
+    ];
+    rawReplies.forEach((reply) => fetchMock.mockResolvedValueOnce(deepSeekResponse(reply)));
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; issueId: string }> = [];
+    let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const replies: string[] = [];
+
+    for (const [index, userText] of turns.entries()) {
+      messages.push({ role: 'user', content: userText, issueId });
+      const response = await handleApi(request('/api/chat', 'POST', { currentIssueId: issueId, issue, issues: [issue], messages }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      replies.push(body.reply);
+      if (index === 1) {
+        expect(body).toMatchObject({ model: 'control-rule', analysis: { handoff_state: 'DECLINED', show_booking_button: false, issue_status: 'ACTIVE' } });
+      } else {
+        const rawIndex = index === 0 ? 0 : index - 1;
+        expect(body.reply).toBe(rawReplies[rawIndex]);
+        expect(body.diagnostics).toMatchObject({ fallback_used: false });
+      }
+      messages.push({ role: 'assistant', content: body.reply, issueId });
+      issue = {
+        issue_id: issueId,
+        status: body.analysis.issue_status,
+        topic_tags: body.analysis.tags,
+        handoff_offered: body.analysis.handoff_offered,
+        handoff_state: body.analysis.handoff_state,
+      };
+    }
+    expect(replies[2]).toBe(rawReplies[1]);
+    expect(replies.slice(2)).not.toContain('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
+  });
+
   it('跨工作、感情、亲子后回到工作时，模型只看到旧工作上下文与本轮消息', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('之前我们讨论了工作项目太多，建议先列最紧急的一项。'));
     const allMessages = [
@@ -216,6 +437,32 @@ describe('worker handler API 契约', () => {
     ]);
     expect(JSON.stringify(posted.messages)).not.toContain('伴侣关系紧张');
     expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
+  });
+
+  it('MM-13：母亲手术后的辞职与收入顾虑延续同一 Issue，并保留照护上下文', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你在权衡的是照护母亲和刚稳定下来的工作，不必马上把辞职当成唯一选择。'));
+    const issue = { issue_id: 'issue-mother-care', status: 'ACTIVE', topic_tags: ['FAMILY'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const messages = [
+      { role: 'user', content: '妈妈下个月要做手术，我在北京刚转正。', issueId: issue.issue_id },
+      { role: 'assistant', content: '听起来你既担心妈妈，也怕工作刚稳定就被打断。', issueId: issue.issue_id },
+      { role: 'user', content: '弟弟能陪她去医院，但他请不了很长的假。', issueId: issue.issue_id },
+      { role: 'assistant', content: '你在想怎样分担照护，而不是只在家人和工作之间二选一。', issueId: issue.issue_id },
+      { role: 'user', content: '我一想到辞职回去就害怕以后找不到现在这样的工作。', issueId: issue.issue_id },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issue.issue_id,
+      issue,
+      issues: [issue],
+      messages,
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: issue.issue_id, new_issue_detected: false,
+    });
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.slice(1)).toEqual(messages.map(({ role, content }) => ({ role, content })));
   });
 
   it('第二阶段：不说回到之前也能自然恢复唯一旧工作 Issue，模型看不到关系和亲子内容', async () => {

@@ -10,6 +10,15 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectIssueSwitch('另外我还想说感情关系问题', '最近工作压力很大', ['CAREER']).detected).toBe(true);
   });
 
+  it('照护家人时围绕辞职、收入和工作安排的决策不拆分 Issue', () => {
+    const careContext = '妈妈下个月要做手术，我在北京刚转正。弟弟能陪她去医院，但他请不了很长的假。';
+    expect(detectIssueSwitch('我一想到辞职回去就害怕以后找不到现在这样的工作。', careContext, ['FAMILY']).detected).toBe(false);
+    expect(detectIssueSwitch('为了照顾她，我在考虑请假还是换工作，收入要怎么安排？', careContext, ['FAMILY']).detected).toBe(false);
+    expect(detectIssueSwitch('另外，我想辞职转去做设计，和妈妈手术无关。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我最近在考虑换工作，想去薪水更高的公司。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我考虑辞职创业，做和之前不同的项目。', careContext, ['FAMILY']).detected).toBe(true);
+  });
+
   it('支持多标签分类，并保留当前主题优先顺序', () => {
     expect(classifyConcern('最近工作压力很大，和伴侣也总是吵架')).toEqual(['EMOTION', 'CAREER', 'INTIMACY']);
   });
@@ -86,6 +95,40 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('我该不该辞职，下一步怎么做').conversation_state).toBe('PROBLEM_SOLVING');
   });
 
+  it('P2：纠正理解不触发导诊追问，纠正后明确求助和倾诉后求助可切换为实际帮助', () => {
+    for (const text of [
+      '你别往自信上分析，不是这个问题。',
+      '我不是不自信，是主管根本不排优先级。',
+      '不是要你分析我，我只是想把这件事说清楚。',
+    ]) {
+      const correction = analyzeConversation(text, '用户：我开会总被同事打断，后来我就不想说了。', { userTurnCount: 3 });
+      expect(correction).toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE', ask_question: false, no_more_questions: true });
+    }
+
+    const correctionWithHelp = analyzeConversation('你别往自信上分析，我现在到底该怎么和主管谈？', '用户：部门临时活都塞给我。', { userTurnCount: 3 });
+    expect(correctionWithHelp).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+
+    const actionAfterVenting = analyzeConversation('那你说，我今天先做哪一件？', '用户：我现在只想说说，不用给建议。\n用户：失业以后房租快交不上了。', { userTurnCount: 3 });
+    expect(actionAfterVenting).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+    expect(analyzeConversation('能不能帮我分析一下我为什么总在会议上沉默？').user_intent).toBe('WANTS_CLARITY');
+  });
+
+  it('P2：拒绝建议时不把被否定的行动词当作求助', () => {
+    for (const text of [
+      '别给我建议，我只想说说。',
+      '你别往自信上分析，也别给我方案。',
+      '不是要你分析我，不要告诉我怎么办。',
+      '不用教我怎么办，我只想把感受说出来。',
+    ]) {
+      const analysis = analyzeConversation(text, '用户：主管总在最后一刻调整优先级。', { userTurnCount: 3 });
+      expect(analysis).toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE', ask_question: false, no_more_questions: true });
+    }
+
+    expect(analyzeConversation('你别往自信上分析，我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
+    expect(analyzeConversation('不用安慰我，给我一个具体办法。').user_intent).toBe('WANTS_ACTION');
+    expect(analyzeConversation('不用教我怎么办，但我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
+  });
+
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
     const analysis = analyzeConversation('我想知道自己是不是需要心理治疗或精神科帮助');
     expect(analysis.routing_state).toBe('PROFESSIONAL_REFERRAL');
@@ -94,6 +137,25 @@ describe('解忧小屋智能导诊规则', () => {
 
   it('记录用户对帮助效果的反馈', () => {
     expect(analyzeConversation('你刚才说的方法对我没什么用').support_feedback).toBe('用户反馈当前帮助效果不足');
+  });
+
+  it('求助本身不提前交接，但长期反复、实际影响且 AI 无效时允许完整交接判断', () => {
+    const shortTerm = analyzeConversation(
+      '我该怎么开口才不会又变成谁对谁错？',
+      '上周我和对象因为家务吵了一次。他两天没怎么说话，后来像什么都没发生。',
+      { userTurnCount: 3 },
+    );
+    expect(shortTerm).toMatchObject({ routing: 'AI_SUPPORT', handoff_ready: false, show_booking_button: false });
+
+    const exhausted = analyzeConversation(
+      '前面这些建议没用，我现在到底怎么办？',
+      '工作压力已经持续三个月，反复睡不好，白天工作效率受影响。我试过列优先级和跟领导沟通，但没有改善。',
+      { userTurnCount: 4 },
+    );
+    expect(exhausted).toMatchObject({
+      user_intent: 'WANTS_ACTION', support_feedback: '用户反馈当前帮助效果不足',
+      routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
+    });
   });
 
   it('证据不足时使用 OTHER，不补齐背景', () => {

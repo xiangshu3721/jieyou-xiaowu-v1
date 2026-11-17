@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, safetyClarificationReply } from './rules.js';
+import { applyDeclinedHandoff } from './issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
 
 describe('结构化 AI 输出校验', () => {
@@ -205,6 +206,13 @@ describe('结构化 AI 输出校验', () => {
     expect(normalized).toMatch(/预约.*免费/);
     expect(normalized).toMatch(/真人|导师/);
     expect(normalized).not.toContain('人工分配');
+  });
+
+  it('未展示入口时保留拒绝预约后的自然说明，只移除主动导流', () => {
+    const declined = applyDeclinedHandoff(analyzeConversation('我怕跟真人说又得从头讲一遍，想想就累。'));
+    const natural = '你不用现在预约。你怕从头讲很累，我们可以先接着现在这段聊。';
+    expect(normalizeUserReply(natural, declined)).toBe(natural);
+    expect(normalizeUserReply('你可以预约真人导师继续聊聊。', declined)).not.toContain('预约真人导师');
   });
 
   it('真人交接文案会随当前 Issue 稳定变化，而不是每次完全相同', () => {

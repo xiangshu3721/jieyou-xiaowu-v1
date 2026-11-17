@@ -63,6 +63,8 @@ const correctionPatterns = [
   /你说得不对/,
   /不要(?:再)?往[^，。！？\n]{0,20}分析/,
   /别(?:再)?往[^，。！？\n]{0,20}分析/,
+  /(?:我)?不是(?:不)?自信/,
+  /不是(?:要|让).{0,4}你.{0,4}分析/,
 ];
 
 export const topicLabels: Record<TopicCode, string> = {
@@ -135,6 +137,19 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   const latestTopics = classifyConcern(latest);
   const novelTopics = latestTopics.filter((topic) => topic !== 'OTHER' && !previousTopicSet.has(topic));
   const continuationSignals = /(?:所以|因此|也|还|同时|影响|导致|因为|晚上|睡眠|失眠|白天|这件事)/.test(latest);
+  // A practical decision can be part of an active care concern even when it
+  // introduces work or money words. For example, after discussing a parent's
+  // surgery, “一想到辞职回去就害怕以后找不到现在这样的工作” is weighing a
+  // care option, not opening an unrelated career Issue. Keep this narrow: it
+  // also needs a positive care reference in the current expression (including
+  // returning home in an active care context), so an unrelated job change is
+  // still allowed to become its own Issue.
+  const careContext = /(?:手术|住院|看病|医院|生病|病情|照顾|陪护|康复|治疗|身体不好|身体状况)/.test(previous);
+  const workOrMoneyDecision = /(?:辞职|换工作|求职|请假|回去|收入|工作安排|工作)/.test(latest);
+  const decisionOrSolutionLanguage = /(?:一想到|要不要|该不该|是不是|考虑|打算|准备|决定|害怕|担心|怎么安排|怎么办|如何|以后|如果|辞职后|请假后)/.test(latest);
+  const currentCareReference = /(?:照顾|陪护|陪(?:她|他|妈妈|爸爸|父母|家人)|妈妈|爸爸|父母|家人|手术|住院|看病|医院|生病|病情|康复|治疗|回家|回去)/.test(latest);
+  const explicitlySeparateConcern = /(?:和|跟).{0,20}(?:无关|不是一回事)|(?:不是|并非).{0,12}(?:因为|为了).{0,12}(?:照顾|手术|住院|看病|医院|生病|病情)/.test(latest);
+  const careDecisionContinuation = careContext && currentCareReference && workOrMoneyDecision && decisionOrSolutionLanguage && !explicitlySeparateConcern;
   const strongNewTopic = /(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣|孩子|亲子|父母|原生家庭|辞职|换工作|求职|债务|房贷|法律|诉讼)/.test(latest);
   const strongTopicAlreadyInIssue = (/(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣)/.test(latest) && previousTopicSet.has('INTIMACY'))
     || (/(?:孩子|亲子)/.test(latest) && previousTopicSet.has('PARENTING'))
@@ -148,6 +163,7 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   const causalLink = /因为|导致|影响|引起|牵连|连带|所以|因此/.test(latest)
     && latestTopics.some((topic) => topic !== 'EMOTION' && previousTopicSet.has(topic));
   if (causalLink) return { detected: false, confidence: 0.12 };
+  if (careDecisionContinuation) return { detected: false, confidence: 0.12 };
   const novelDomains = novelTopics.filter((topic) => topic !== 'EMOTION');
   if ((novelDomains.length > 0 || strongNewDomain) && (strongNewDomain || !continuationSignals)) return { detected: true, confidence: 0.82 };
   return { detected: false, confidence: explicitSwitch ? 0.35 : 0.12 };
@@ -218,14 +234,45 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
   return pending;
 }
 
+const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)/;
+const declinedActionPattern = /(?:别|不要|不用|不想|不必|无需|不需要|没有必要)\s*(?:再)?(?:给.{0,8}(?:建议|办法|方案)|建议|方案|办法|下一步|行动|(?:教|告诉|劝).{0,6}(?:怎么办|怎么做)|怎么办|怎么做)/;
+
+function intentClauses(text: string) {
+  return text.split(/(?:但是|不过|可是|但)|[，,。！？!?；;\n]+/).map((clause) => clause.trim()).filter(Boolean);
+}
+
+function hasExplicitActionRequest(text: string) {
+  // Advice-related words can be quoted only to reject them. Keep the scope
+  // local to each clause so a later, affirmative request still takes effect:
+  // “别往自信上分析，我现在该怎么和主管谈？”.
+  return intentClauses(text)
+    .some((clause) => actionRequestPattern.test(clause) && !declinedActionPattern.test(clause));
+}
+
+function hasExplicitActionDecline(text: string) {
+  return intentClauses(text).some((clause) => declinedActionPattern.test(clause));
+}
+
+function hasExplicitClarificationRequest(text: string) {
+  return /(?:帮我|请你|能不能|想请你).{0,12}(?:理清|弄清|分析|梳理)|(?:为什么|到底).{0,10}(?:是|怎么回事)/.test(text);
+}
+
 function detectIntent(text: string): UserIntent {
   if (declineHumanPatterns.some((pattern) => pattern.test(text))) return 'VENTING';
   if (endPatterns.some((pattern) => pattern.test(text))) return 'WANTS_END';
   if (isUndecidedHumanHelpQuestion(text)) return 'WANTS_CLARITY';
   if (humanPatterns.some((pattern) => pattern.test(text))) return 'WANTS_HUMAN';
-  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text)) return 'WANTS_COMFORT';
+  // A correction is not automatically an invitation to analyse the user. It
+  // takes priority unless the same turn contains a clear new request for help.
+  if (correctionPatterns.some((pattern) => pattern.test(text))) {
+    if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
+    if (hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
+    if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
+    return 'WANTS_COMFORT';
+  }
+  if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
+  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
-  if (/怎么办|怎么做|建议|方案|下一步|行动|该不该|要不要/.test(text)) return 'WANTS_ACTION';
   return 'VENTING';
 }
 
@@ -483,10 +530,10 @@ export function selectDialogueStrategy(input: {
 }): DialogueStrategy {
   if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
   if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
-  if (input.assessment.needed) return 'ASSESSMENT';
-  if (input.supportFeedback) return 'CLARIFY_GOAL';
   if (input.intent === 'WANTS_COMFORT') return 'EMPATHIZE';
-  if (input.intent === 'WANTS_ACTION' && !input.nextQuestion) return 'PROVIDE_HELP';
+  if (input.assessment.needed) return 'ASSESSMENT';
+  if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
+  if (input.supportFeedback) return 'CLARIFY_GOAL';
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
   if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
@@ -590,10 +637,25 @@ function humanHelpLevel(text: string, intent: UserIntent, complexity: Complexity
   return 'LOW' as const;
 }
 
+function hasSustainedHandoffEvidence(problemMap: ProblemMap) {
+  const duration = problemMap.onset_duration || '';
+  const sustainedDuration = /(?:半个?月|[一二两三四五六七八九十\d]+(?:周|个?月|年)|半年|长期|很久|一直)/.test(duration);
+  const impactful = problemMap.functional_impacts.length > 0;
+  return impactful && (sustainedDuration || isRepeated('', problemMap) || problemMap.attempts.length > 0);
+}
+
 function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1) {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
   if (userTurnCount < 3) return false;
+  // A user who is actively asking to clarify or work through a concrete next
+  // step normally still has a useful AI-support path. Keep that protection
+  // unless they explicitly say the current AI help has not worked; the latter
+  // may still pass the complete, evidence-based handoff judgment below.
+  if ((intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') && !supportFeedback) return false;
+  // A short-lived event and a single emotional impact do not establish that
+  // human support is already more suitable than continuing the conversation.
+  if (!hasSustainedHandoffEvidence(problemMap)) return false;
   return minimumSufficientJudgment(text, complexity, problemMap, sufficiency)
     && aiFurtherValue(text, complexity, problemMap, supportFeedback) === 'LOW'
     && humanHelpLevel(text, intent, complexity, problemMap, supportFeedback) === 'HIGH';
@@ -630,14 +692,14 @@ function strategyFor(routing: TriageRouting, intent: UserIntent, gaps: string[],
   if (routing === 'SAFETY_SUPPORT') return '先确认现实安全并提供当地紧急求助方向，暂停普通建议、测评与商业推荐';
   if (routing === 'PROFESSIONAL_REFERRAL') return '说明普通成长支持边界，提供合适的专业求助方向，不把 AI 结论当作诊断';
   if (routing === 'HUMAN_MENTOR') return '先做阶段性镜像和前端导诊摘要，说明为什么真人更适合，不再进入 D3 深度探索';
-  if (assessment.needed) return `短镜像后说明测评用途，推荐${assessment.recommended_tool}，明确它只是辅助参考，不是诊断`;
   if (intent === 'WANTS_COMFORT') return '具体回应用户已表达的处境，先陪伴和倾听，不急着给建议';
+  if (assessment.needed) return `短镜像后说明测评用途，推荐${assessment.recommended_tool}，明确它只是辅助参考，不是诊断`;
+  if (selected === 'PROVIDE_HELP') return '直接给一个眼下可执行的支持，不用固定提问收尾';
   if (gaps.length) return `短镜像后只推进一个最高价值缺口：${gaps[0]}`;
   if (selected === 'EMPATHIZE') return '用具体、克制的语言接住用户，不急着追问或给结论';
   if (selected === 'MIRROR') return '镜像用户已经说出的事实和感受，避免加入未经确认的解释';
   if (selected === 'QUANTIFY') return `只确认一个会改变支持方式的信息：${gaps[0] || '当前状态的强度'}`;
   if (selected === 'CLARIFY_FACT' || selected === 'CLARIFY_GOAL') return `只推进一个尚未确认且有实际价值的信息：${gaps[0] || '当前目标'}`;
-  if (selected === 'PROVIDE_HELP') return '直接给一个眼下可执行的支持，不用固定提问收尾';
   if (selected === 'CONTINUE') return '承接用户刚补充的内容，继续围绕当前困扰自然回应，不重复已确认事实';
   if (complexity === 'LIGHT') return '总结当前问题，给 1-3 个有针对性的轻量支持，不强行提问';
   return '阶段性总结当前判断，给出下一步支持选项，让用户自主选择';
@@ -681,9 +743,10 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
 
 function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
   if (routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (intent === 'WANTS_COMFORT') return 'LISTEN';
   if (assessment.needed) return 'ASSESSMENT';
-  if (intent === 'WANTS_ACTION') return gaps.length ? 'CLARIFY' : 'HELP';
-  if (intent === 'WANTS_COMFORT' || intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
+  if (intent === 'WANTS_ACTION') return 'HELP';
+  if (intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
   if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (gaps.length) return 'CLARIFY';
   return 'HELP';
