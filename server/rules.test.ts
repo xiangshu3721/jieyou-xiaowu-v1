@@ -10,6 +10,15 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectIssueSwitch('另外我还想说感情关系问题', '最近工作压力很大', ['CAREER']).detected).toBe(true);
   });
 
+  it('照护家人时围绕辞职、收入和工作安排的决策不拆分 Issue', () => {
+    const careContext = '妈妈下个月要做手术，我在北京刚转正。弟弟能陪她去医院，但他请不了很长的假。';
+    expect(detectIssueSwitch('我一想到辞职回去就害怕以后找不到现在这样的工作。', careContext, ['FAMILY']).detected).toBe(false);
+    expect(detectIssueSwitch('为了照顾她，我在考虑请假还是换工作，收入要怎么安排？', careContext, ['FAMILY']).detected).toBe(false);
+    expect(detectIssueSwitch('另外，我想辞职转去做设计，和妈妈手术无关。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我最近在考虑换工作，想去薪水更高的公司。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我考虑辞职创业，做和之前不同的项目。', careContext, ['FAMILY']).detected).toBe(true);
+  });
+
   it('支持多标签分类，并保留当前主题优先顺序', () => {
     expect(classifyConcern('最近工作压力很大，和伴侣也总是吵架')).toEqual(['EMOTION', 'CAREER', 'INTIMACY']);
   });

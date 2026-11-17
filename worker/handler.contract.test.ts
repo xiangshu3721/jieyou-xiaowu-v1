@@ -21,11 +21,13 @@ const baseEnv: WorkerEnv = {
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let testClient = 0;
 
 function request(path: string, method = 'GET', body?: unknown) {
   return new Request(`https://staging.test${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    // Isolate contract cases from the production-style per-client limiter.
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${testClient}` },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -43,6 +45,7 @@ async function json(response: Response) {
 
 describe('worker handler API 契约', () => {
   beforeEach(() => {
+    testClient += 1;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -216,6 +219,32 @@ describe('worker handler API 契约', () => {
     ]);
     expect(JSON.stringify(posted.messages)).not.toContain('伴侣关系紧张');
     expect(JSON.stringify(posted.messages)).not.toContain('孩子最近不愿意上学');
+  });
+
+  it('MM-13：母亲手术后的辞职与收入顾虑延续同一 Issue，并保留照护上下文', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你在权衡的是照护母亲和刚稳定下来的工作，不必马上把辞职当成唯一选择。'));
+    const issue = { issue_id: 'issue-mother-care', status: 'ACTIVE', topic_tags: ['FAMILY'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const messages = [
+      { role: 'user', content: '妈妈下个月要做手术，我在北京刚转正。', issueId: issue.issue_id },
+      { role: 'assistant', content: '听起来你既担心妈妈，也怕工作刚稳定就被打断。', issueId: issue.issue_id },
+      { role: 'user', content: '弟弟能陪她去医院，但他请不了很长的假。', issueId: issue.issue_id },
+      { role: 'assistant', content: '你在想怎样分担照护，而不是只在家人和工作之间二选一。', issueId: issue.issue_id },
+      { role: 'user', content: '我一想到辞职回去就害怕以后找不到现在这样的工作。', issueId: issue.issue_id },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issue.issue_id,
+      issue,
+      issues: [issue],
+      messages,
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: issue.issue_id, new_issue_detected: false,
+    });
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body)) as { messages: Array<{ role: string; content: string }> };
+    expect(posted.messages.slice(1)).toEqual(messages.map(({ role, content }) => ({ role, content })));
   });
 
   it('第二阶段：不说回到之前也能自然恢复唯一旧工作 Issue，模型看不到关系和亲子内容', async () => {

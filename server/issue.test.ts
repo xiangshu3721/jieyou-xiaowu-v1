@@ -375,6 +375,44 @@ describe('V1.6 Issue 上下文边界', () => {
     expect(r.current_issue_id).toBe('issue-work');
   });
 
+  it('MM-13：照护母亲的辞职与收入决策保留同一 Issue', () => {
+    const currentIssue = parseIssueContext({ issue_id: 'issue-mother-care', status: 'ACTIVE', topic_tags: ['FAMILY'] });
+    const previousMessages = [
+      { role: 'user' as const, content: '妈妈下个月要做手术，我在北京刚转正。', issueId: 'issue-mother-care' },
+      { role: 'user' as const, content: '弟弟能陪她去医院，但他请不了很长的假。', issueId: 'issue-mother-care' },
+    ];
+    const result = resolveCurrentIssue({
+      message: '我一想到辞职回去就害怕以后找不到现在这样的工作。',
+      currentIssueId: currentIssue.issue_id,
+      currentIssue,
+      previousMessages,
+      allPreviousMessages: previousMessages,
+      previousTopics: ['FAMILY'],
+    });
+    expect(result).toMatchObject({
+      issue_action: 'CONTINUE_CURRENT', current_issue_id: 'issue-mother-care', new_issue_detected: false,
+    });
+  });
+
+  it('照护背景下独立的跳槽或创业仍创建新的 Issue', () => {
+    const currentIssue = parseIssueContext({ issue_id: 'issue-mother-care', status: 'ACTIVE', topic_tags: ['FAMILY'] });
+    const previousMessages = [
+      { role: 'user' as const, content: '妈妈下个月要做手术，弟弟能陪她去医院，但请不了很长的假。', issueId: 'issue-mother-care' },
+    ];
+    for (const message of ['我最近在考虑换工作，想去薪水更高的公司。', '我考虑辞职创业，做和之前不同的项目。']) {
+      const result = resolveCurrentIssue({
+        message,
+        currentIssueId: currentIssue.issue_id,
+        currentIssue,
+        previousMessages,
+        allPreviousMessages: previousMessages,
+        previousTopics: ['FAMILY'],
+      });
+      expect(result).toMatchObject({ issue_action: 'CREATE_NEW', new_issue_detected: true });
+      expect(result.current_issue_id).not.toBe(currentIssue.issue_id);
+    }
+  });
+
   it('仅存在当前话题时“回到刚才”仍继续，不谎称历史记录不存在', () => {
     const current = parseIssueContext({ issue_id: 'issue-current', status: 'ACTIVE', topic_tags: ['CAREER'] });
     for (const message of ['回到刚才的话题', '回到之前工作的问题吧']) {
