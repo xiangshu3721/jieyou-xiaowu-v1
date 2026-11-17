@@ -16,6 +16,7 @@
     "verify:release-control": "node scripts/verify-release-control.mjs",
     "e2e:check": "node --import tsx scripts/e2e-check.ts",
     "e2e:real": "node --import tsx scripts/e2e-real.ts",
+    "eval:mentor": "node --import tsx scripts/eval-mature-mentor.ts",
     "cf:dev": "wrangler dev",
     "cf:deploy": "vite build --mode cloudflare && wrangler deploy",
     "build:cloudbase": "vite build && node scripts/build-cloudbase-function.mjs",
