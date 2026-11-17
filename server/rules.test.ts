@@ -153,7 +153,7 @@ describe('解忧小屋智能导诊规则', () => {
       { userTurnCount: 4 },
     );
     expect(exhausted).toMatchObject({
-      user_intent: 'WANTS_CLARITY', support_feedback: '用户反馈当前帮助效果不足',
+      user_intent: 'WANTS_ACTION', support_feedback: '用户反馈当前帮助效果不足',
       routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
     });
   });
