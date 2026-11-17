@@ -223,20 +223,20 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
 const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)/;
 const declinedActionPattern = /(?:别|不要|不用|不想|不必|无需|不需要|没有必要)\s*(?:再)?(?:给.{0,8}(?:建议|办法|方案)|建议|方案|办法|下一步|行动|(?:教|告诉|劝).{0,6}(?:怎么办|怎么做)|怎么办|怎么做)/;
 
+function intentClauses(text: string) {
+  return text.split(/(?:但是|不过|可是|但)|[，,。！？!?；;\n]+/).map((clause) => clause.trim()).filter(Boolean);
+}
+
 function hasExplicitActionRequest(text: string) {
   // Advice-related words can be quoted only to reject them. Keep the scope
   // local to each clause so a later, affirmative request still takes effect:
   // “别往自信上分析，我现在该怎么和主管谈？”.
-  return text
-    .split(/[，,。！？!?；;\n]+/)
-    .map((clause) => clause.trim())
+  return intentClauses(text)
     .some((clause) => actionRequestPattern.test(clause) && !declinedActionPattern.test(clause));
 }
 
 function hasExplicitActionDecline(text: string) {
-  return text
-    .split(/[，,。！？!?；;\n]+/)
-    .some((clause) => declinedActionPattern.test(clause.trim()));
+  return intentClauses(text).some((clause) => declinedActionPattern.test(clause));
 }
 
 function hasExplicitClarificationRequest(text: string) {
@@ -256,8 +256,8 @@ function detectIntent(text: string): UserIntent {
     if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
     return 'WANTS_COMFORT';
   }
-  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
+  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
   return 'VENTING';
 }

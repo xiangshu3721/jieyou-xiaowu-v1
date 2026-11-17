@@ -117,6 +117,7 @@ describe('解忧小屋智能导诊规则', () => {
 
     expect(analyzeConversation('你别往自信上分析，我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
     expect(analyzeConversation('不用安慰我，给我一个具体办法。').user_intent).toBe('WANTS_ACTION');
+    expect(analyzeConversation('不用教我怎么办，但我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
   });
 
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
