@@ -162,6 +162,44 @@ describe('worker handler API 契约', () => {
         ],
         expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
       },
+      {
+        issueId: 'issue-decline-advice',
+        rawReply: '好，我先不急着给建议。你想从这件事里哪一部分说起都可以。',
+        messages: [
+          { role: 'user', content: '主管又临时改优先级，我整天都很烦。', issueId: 'issue-decline-advice' },
+          { role: 'assistant', content: '这让你一直被动地跟着变化走。', issueId: 'issue-decline-advice' },
+          { role: 'user', content: '别给我建议，我只想说说。', issueId: 'issue-decline-advice' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-plan',
+        rawReply: '明白，我不会把它归到自信问题，也先不替你安排方案。你可以继续把当时发生的事说清楚。',
+        messages: [
+          { role: 'user', content: '每次项目临近交付，主管都会临时换要求。', issueId: 'issue-decline-plan' },
+          { role: 'assistant', content: '这会不会让你觉得自己准备得不够好？', issueId: 'issue-decline-plan' },
+          { role: 'user', content: '你别往自信上分析，也别给我方案。', issueId: 'issue-decline-plan' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-how-to',
+        rawReply: '好，我先不分析你，也不急着告诉你该怎么办。你想把这件事说清楚，我会跟着你现在说的事实听。',
+        messages: [
+          { role: 'user', content: '我每次汇报都被临时改方向，越来越不想准备。', issueId: 'issue-decline-how-to' },
+          { role: 'assistant', content: '这是不是和你不够自信有关？', issueId: 'issue-decline-how-to' },
+          { role: 'user', content: '不是要你分析我，不要告诉我怎么办。', issueId: 'issue-decline-how-to' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-explicit-action',
+        rawReply: '那就先做一件具体的事：把本周所有临时需求列出来，请主管逐项确认优先级。',
+        messages: [
+          { role: 'user', content: '不用安慰我，给我一个具体办法。', issueId: 'issue-explicit-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
     ];
     cases.forEach(({ rawReply }) => fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply)));
 

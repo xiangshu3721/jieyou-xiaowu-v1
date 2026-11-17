@@ -220,8 +220,23 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
   return pending;
 }
 
+const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)/;
+const declinedActionPattern = /(?:别|不要|不用|不想|不必|无需|不需要|没有必要)\s*(?:再)?(?:给.{0,8}(?:建议|办法|方案)|建议|方案|办法|下一步|行动|(?:教|告诉|劝).{0,6}(?:怎么办|怎么做)|怎么办|怎么做)/;
+
 function hasExplicitActionRequest(text: string) {
-  return /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)/.test(text);
+  // Advice-related words can be quoted only to reject them. Keep the scope
+  // local to each clause so a later, affirmative request still takes effect:
+  // “别往自信上分析，我现在该怎么和主管谈？”.
+  return text
+    .split(/[，,。！？!?；;\n]+/)
+    .map((clause) => clause.trim())
+    .some((clause) => actionRequestPattern.test(clause) && !declinedActionPattern.test(clause));
+}
+
+function hasExplicitActionDecline(text: string) {
+  return text
+    .split(/[，,。！？!?；;\n]+/)
+    .some((clause) => declinedActionPattern.test(clause.trim()));
 }
 
 function hasExplicitClarificationRequest(text: string) {
@@ -237,10 +252,11 @@ function detectIntent(text: string): UserIntent {
   // takes priority unless the same turn contains a clear new request for help.
   if (correctionPatterns.some((pattern) => pattern.test(text))) {
     if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
+    if (hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
     if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
     return 'WANTS_COMFORT';
   }
-  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text)) return 'WANTS_COMFORT';
+  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
   return 'VENTING';
@@ -500,10 +516,10 @@ export function selectDialogueStrategy(input: {
 }): DialogueStrategy {
   if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
   if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (input.intent === 'WANTS_COMFORT') return 'EMPATHIZE';
   if (input.assessment.needed) return 'ASSESSMENT';
   if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
-  if (input.intent === 'WANTS_COMFORT') return 'EMPATHIZE';
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
   if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
@@ -647,8 +663,8 @@ function strategyFor(routing: TriageRouting, intent: UserIntent, gaps: string[],
   if (routing === 'SAFETY_SUPPORT') return '先确认现实安全并提供当地紧急求助方向，暂停普通建议、测评与商业推荐';
   if (routing === 'PROFESSIONAL_REFERRAL') return '说明普通成长支持边界，提供合适的专业求助方向，不把 AI 结论当作诊断';
   if (routing === 'HUMAN_MENTOR') return '先做阶段性镜像和前端导诊摘要，说明为什么真人更适合，不再进入 D3 深度探索';
-  if (assessment.needed) return `短镜像后说明测评用途，推荐${assessment.recommended_tool}，明确它只是辅助参考，不是诊断`;
   if (intent === 'WANTS_COMFORT') return '具体回应用户已表达的处境，先陪伴和倾听，不急着给建议';
+  if (assessment.needed) return `短镜像后说明测评用途，推荐${assessment.recommended_tool}，明确它只是辅助参考，不是诊断`;
   if (selected === 'PROVIDE_HELP') return '直接给一个眼下可执行的支持，不用固定提问收尾';
   if (gaps.length) return `短镜像后只推进一个最高价值缺口：${gaps[0]}`;
   if (selected === 'EMPATHIZE') return '用具体、克制的语言接住用户，不急着追问或给结论';
@@ -698,9 +714,10 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
 
 function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
   if (routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (intent === 'WANTS_COMFORT') return 'LISTEN';
   if (assessment.needed) return 'ASSESSMENT';
   if (intent === 'WANTS_ACTION') return 'HELP';
-  if (intent === 'WANTS_COMFORT' || intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
+  if (intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
   if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (gaps.length) return 'CLARIFY';
   return 'HELP';

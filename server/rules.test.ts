@@ -104,6 +104,21 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('能不能帮我分析一下我为什么总在会议上沉默？').user_intent).toBe('WANTS_CLARITY');
   });
 
+  it('P2：拒绝建议时不把被否定的行动词当作求助', () => {
+    for (const text of [
+      '别给我建议，我只想说说。',
+      '你别往自信上分析，也别给我方案。',
+      '不是要你分析我，不要告诉我怎么办。',
+      '不用教我怎么办，我只想把感受说出来。',
+    ]) {
+      const analysis = analyzeConversation(text, '用户：主管总在最后一刻调整优先级。', { userTurnCount: 3 });
+      expect(analysis).toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE', ask_question: false, no_more_questions: true });
+    }
+
+    expect(analyzeConversation('你别往自信上分析，我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
+    expect(analyzeConversation('不用安慰我，给我一个具体办法。').user_intent).toBe('WANTS_ACTION');
+  });
+
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
     const analysis = analyzeConversation('我想知道自己是不是需要心理治疗或精神科帮助');
     expect(analysis.routing_state).toBe('PROFESSIONAL_REFERRAL');
