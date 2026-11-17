@@ -21,11 +21,12 @@ const baseEnv: WorkerEnv = {
 };
 
 let fetchMock: ReturnType<typeof vi.fn>;
+let testClient = 0;
 
 function request(path: string, method = 'GET', body?: unknown) {
   return new Request(`https://staging.test${path}`, {
     method,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${testClient}` },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
 }
@@ -43,6 +44,7 @@ async function json(response: Response) {
 
 describe('worker handler API 契约', () => {
   beforeEach(() => {
+    testClient += 1;
     fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
   });
@@ -110,6 +112,71 @@ describe('worker handler API 契约', () => {
     expect(response.status).toBe(200);
     expect(body.reply).not.toContain('我先听着，也接住你刚才说的这部分');
     expect(body.diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false }));
+  });
+
+  it('P2：纠正理解不追问，明确求助即时切换为实际帮助', async () => {
+    const cases = [
+      {
+        issueId: 'issue-mm03',
+        rawReply: '明白了，我不再把它理解成自信问题。你在说的是被打断之后，自己慢慢不想开口这件事。',
+        messages: [
+          { role: 'user', content: '我开会总被同事打断，后来我就不想说了。', issueId: 'issue-mm03' },
+          { role: 'assistant', content: '这会不会让你怀疑自己的能力？', issueId: 'issue-mm03' },
+          { role: 'user', content: '你别往自信上分析，不是这个问题。', issueId: 'issue-mm03' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-mm11',
+        rawReply: '你说得对，关键不在你敢不敢拒绝，而在主管没有排优先级，临时活才会不断落回你这里。',
+        messages: [
+          { role: 'user', content: '部门把临时活都塞给我，我拒绝过一次，后来就怕再拒绝。', issueId: 'issue-mm11' },
+          { role: 'assistant', content: '你是不是担心拒绝会显得自己不够自信？', issueId: 'issue-mm11' },
+          { role: 'user', content: '我不是不自信，是主管根本不排优先级。', issueId: 'issue-mm11' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-correction-action',
+        rawReply: '先和主管谈一件具体事：请他把这周临时活按优先级排出来，并确认哪些必须由你做、哪些可以延后。',
+        messages: [
+          { role: 'user', content: '部门临时活都塞给我。', issueId: 'issue-correction-action' },
+          { role: 'assistant', content: '这会不会让你更怀疑自己的能力？', issueId: 'issue-correction-action' },
+          { role: 'user', content: '你别往自信上分析，我现在到底该怎么和主管谈？', issueId: 'issue-correction-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+      {
+        issueId: 'issue-mm12',
+        rawReply: '今天先做一件：把下个月房租金额和手头可用的钱写下来，算出差额。这样你先把最急的事从一团焦虑变成一个具体数字。',
+        messages: [
+          { role: 'user', content: '被裁以后，我白天装得没事，晚上就一直刷招聘软件。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '这段时间像一直绷着。', issueId: 'issue-mm12' },
+          { role: 'user', content: '我现在只想把这些乱七八糟的感觉说出来，不用教我怎么办。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '好，我们先不急着找办法。', issueId: 'issue-mm12' },
+          { role: 'user', content: '其实我最怕的不是没工作，是过几周房租交不上。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '房租这件事让不确定变得很具体。', issueId: 'issue-mm12' },
+          { role: 'user', content: '说出来以后我想稍微做点事了，但别给我一长串计划。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '可以，我们只找一个今天能动的地方。', issueId: 'issue-mm12' },
+          { role: 'user', content: '那你说，我今天先做哪一件？', issueId: 'issue-mm12' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+    ];
+    cases.forEach(({ rawReply }) => fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply)));
+
+    for (const item of cases) {
+      const response = await handleApi(request('/api/chat', 'POST', {
+        currentIssueId: item.issueId,
+        issue: { issue_id: item.issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+        messages: item.messages,
+      }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      expect(body.reply).toBe(item.rawReply);
+      expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+      expect(body.diagnostics).toMatchObject({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false });
+    }
   });
 
   it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {

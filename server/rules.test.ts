@@ -86,6 +86,24 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('我该不该辞职，下一步怎么做').conversation_state).toBe('PROBLEM_SOLVING');
   });
 
+  it('P2：纠正理解不触发导诊追问，纠正后明确求助和倾诉后求助可切换为实际帮助', () => {
+    for (const text of [
+      '你别往自信上分析，不是这个问题。',
+      '我不是不自信，是主管根本不排优先级。',
+      '不是要你分析我，我只是想把这件事说清楚。',
+    ]) {
+      const correction = analyzeConversation(text, '用户：我开会总被同事打断，后来我就不想说了。', { userTurnCount: 3 });
+      expect(correction).toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE', ask_question: false, no_more_questions: true });
+    }
+
+    const correctionWithHelp = analyzeConversation('你别往自信上分析，我现在到底该怎么和主管谈？', '用户：部门临时活都塞给我。', { userTurnCount: 3 });
+    expect(correctionWithHelp).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+
+    const actionAfterVenting = analyzeConversation('那你说，我今天先做哪一件？', '用户：我现在只想说说，不用给建议。\n用户：失业以后房租快交不上了。', { userTurnCount: 3 });
+    expect(actionAfterVenting).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+    expect(analyzeConversation('能不能帮我分析一下我为什么总在会议上沉默？').user_intent).toBe('WANTS_CLARITY');
+  });
+
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
     const analysis = analyzeConversation('我想知道自己是不是需要心理治疗或精神科帮助');
     expect(analysis.routing_state).toBe('PROFESSIONAL_REFERRAL');
