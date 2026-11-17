@@ -105,6 +105,25 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('你刚才说的方法对我没什么用').support_feedback).toBe('用户反馈当前帮助效果不足');
   });
 
+  it('求助本身不提前交接，但长期反复、实际影响且 AI 无效时允许完整交接判断', () => {
+    const shortTerm = analyzeConversation(
+      '我该怎么开口才不会又变成谁对谁错？',
+      '上周我和对象因为家务吵了一次。他两天没怎么说话，后来像什么都没发生。',
+      { userTurnCount: 3 },
+    );
+    expect(shortTerm).toMatchObject({ routing: 'AI_SUPPORT', handoff_ready: false, show_booking_button: false });
+
+    const exhausted = analyzeConversation(
+      '前面这些建议没用，我现在到底怎么办？',
+      '工作压力已经持续三个月，反复睡不好，白天工作效率受影响。我试过列优先级和跟领导沟通，但没有改善。',
+      { userTurnCount: 4 },
+    );
+    expect(exhausted).toMatchObject({
+      user_intent: 'WANTS_CLARITY', support_feedback: '用户反馈当前帮助效果不足',
+      routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
+    });
+  });
+
   it('证据不足时使用 OTHER，不补齐背景', () => {
     expect(classifyConcern('我有点说不上来')).toEqual(['OTHER']);
   });

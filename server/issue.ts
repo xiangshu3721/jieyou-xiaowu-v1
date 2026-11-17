@@ -32,7 +32,7 @@ const topicSwitchPatterns = [
 const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
 const acceptHandoffPatterns = [/(?:想|希望|需要|我要|帮我).{0,8}(?:找真人|真人聊|预约真人|找导师|导师聊)/, /(?:预约|找).{0,8}(?:真人|导师|老师)/];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
-const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
+const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
 const contextualDeclineHandoffPatterns = [/^算了[。！! ]*$/, /^不用了[。！! ]*$/];
 
 export function createIssueId() {
@@ -178,7 +178,14 @@ export function resolveCurrentIssue(input: {
   previousTopics?: TopicCode[];
   safetyDetected?: boolean;
 }): IssueResolution {
-  const control = input.safetyDetected ? 'GENERAL_CHAT' as const : detectConversationControl(input.message, input.currentIssue.handoff_offered);
+  const detectedControl = input.safetyDetected ? 'GENERAL_CHAT' as const : detectConversationControl(input.message, input.currentIssue.handoff_offered);
+  // Once a user has declined, later references such as “先不预约，我还能从
+  // 哪里开始理？” are part of the ongoing conversation, not a fresh command
+  // that should replace their question with the fixed decline reply. A later
+  // explicit acceptance still passes through unchanged.
+  const control = input.currentIssue.handoff_state === 'DECLINED' && detectedControl === 'DECLINE_HANDOFF'
+    ? 'GENERAL_CHAT' as const
+    : detectedControl;
   const previousText = userContextText(input.previousMessages || []);
   if (input.safetyDetected) {
     return {

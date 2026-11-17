@@ -26,7 +26,6 @@ let testClient = 0;
 function request(path: string, method = 'GET', body?: unknown) {
   return new Request(`https://staging.test${path}`, {
     method,
-    // Isolate contract cases from the production-style per-client limiter.
     headers: { 'content-type': 'application/json', 'x-forwarded-for': `203.0.113.${testClient}` },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
@@ -180,6 +179,122 @@ describe('worker handler API 契约', () => {
     });
     expect(body.diagnostics).toMatchObject({ fallback_used: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('MM-10：短期关系冲突的完整讨论不会在第三轮自动交接', async () => {
+    const issueId = 'issue-mm10';
+    const turns = [
+      '上周我和对象因为家务吵了一次。他两天没怎么说话，后来只发消息问我吃饭没。',
+      '我不是非要他马上道歉，但这样像什么都没发生，我心里过不去。',
+      '我也不想被分析成什么依恋类型，我只是想把这件事说清楚。',
+      '如果我现在开口，最怕又变成谁对谁错。',
+      '我想先说一句不带火气的话，你帮我想想。',
+      '这句听起来像我会说的，我先试试。',
+    ];
+    const rawReplies = [
+      '这件事刚发生不久，你现在过不去的，是它像被轻轻带过了。',
+      '你不是只要一句道歉，而是希望这次争执没有被当作没发生。',
+      '明白，我们只把这件事说清楚，不给你贴依恋类型。',
+      '可以先把重点放在你想让对方看见什么，而不是先判谁对谁错。',
+      '你可以试试说：那天之后我们像没事一样，但我心里还没过去，想把这件事说清楚。',
+      '这句话听起来很贴近你，也给了对方一个不必立刻辩输赢的入口。',
+    ];
+    rawReplies.forEach((reply) => fetchMock.mockResolvedValueOnce(deepSeekResponse(reply)));
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; issueId: string }> = [];
+    let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: ['INTIMACY'], handoff_offered: false, handoff_state: 'NOT_READY' };
+
+    for (const [index, userText] of turns.entries()) {
+      messages.push({ role: 'user', content: userText, issueId });
+      const response = await handleApi(request('/api/chat', 'POST', { currentIssueId: issueId, issue, issues: [issue], messages }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      expect(body.analysis).toMatchObject({ current_issue_id: issueId, routing: 'AI_SUPPORT', show_booking_button: false, handoff_mode: 'NONE' });
+      expect(body.diagnostics).toMatchObject({ fallback_used: false });
+      expect(body.reply).toBe(rawReplies[index]);
+      messages.push({ role: 'assistant', content: body.reply, issueId });
+      issue = {
+        issue_id: issueId,
+        status: body.analysis.issue_status,
+        topic_tags: body.analysis.tags,
+        handoff_offered: body.analysis.handoff_offered,
+        handoff_state: body.analysis.handoff_state,
+      };
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(turns.length);
+  });
+
+  it('长期反复且 AI 帮助无效时，正在求助也可通过完整条件进入自愿交接', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你已经试过自己调整，但这件事仍持续影响睡眠和工作。可以预约真人一起梳理，也可以继续在这里聊。'));
+    const issueId = 'issue-exhausted-support';
+    const messages = [
+      { role: 'user', content: '工作压力已经持续三个月，反复睡不好，白天工作效率受影响。', issueId },
+      { role: 'assistant', content: '可以先把优先级列出来，再和领导沟通。', issueId },
+      { role: 'user', content: '我试过列优先级和跟领导沟通，但没有改善。', issueId },
+      { role: 'assistant', content: '那我们可以继续看看还有哪些调整空间。', issueId },
+      { role: 'user', content: '前面这些建议没用，我现在到底怎么办？', issueId },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      user_intent: 'WANTS_CLARITY', support_feedback: '用户反馈当前帮助效果不足',
+      routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
+    });
+    expect(body.diagnostics).toMatchObject({ fallback_used: false });
+  });
+
+  it('MM-14：拒绝预约后保留自然回应，不把“暂不预约”误换成 Fallback', async () => {
+    const issueId = 'issue-mm14';
+    const turns = [
+      '我最近什么都理不清，想找真人导师聊聊。',
+      '算了，我现在不想预约，还是先在这里聊。',
+      '我怕跟真人说又得从头讲一遍，想想就累。',
+      '你别急着安慰我，我只是觉得自己好像卡住很久了。',
+      '如果先不预约，我现在还能从哪里开始理？',
+      '好，我先把这件事写下来，之后再决定要不要找人。',
+    ];
+    const rawReplies = [
+      '可以，免费预约真人聊聊的入口在这里；你也可以继续和我聊。',
+      '你不用现在预约。你怕从头讲很累，我们可以先接着现在这段聊。',
+      '我不急着安慰你。你说自己卡住很久了，我们先把“卡住”具体落在今天最难的地方。',
+      '先不预约也可以。你可以从把现在最乱的三件事写下来开始，再只选一件今天能动的。',
+      '好，先写下来已经是在给自己留一个可回看的起点。之后要不要找人，等你觉得合适再决定。',
+    ];
+    rawReplies.forEach((reply) => fetchMock.mockResolvedValueOnce(deepSeekResponse(reply)));
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; issueId: string }> = [];
+    let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const replies: string[] = [];
+
+    for (const [index, userText] of turns.entries()) {
+      messages.push({ role: 'user', content: userText, issueId });
+      const response = await handleApi(request('/api/chat', 'POST', { currentIssueId: issueId, issue, issues: [issue], messages }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      replies.push(body.reply);
+      if (index === 1) {
+        expect(body).toMatchObject({ model: 'control-rule', analysis: { handoff_state: 'DECLINED', show_booking_button: false, issue_status: 'ACTIVE' } });
+      } else {
+        const rawIndex = index === 0 ? 0 : index - 1;
+        expect(body.reply).toBe(rawReplies[rawIndex]);
+        expect(body.diagnostics).toMatchObject({ fallback_used: false });
+      }
+      messages.push({ role: 'assistant', content: body.reply, issueId });
+      issue = {
+        issue_id: issueId,
+        status: body.analysis.issue_status,
+        topic_tags: body.analysis.tags,
+        handoff_offered: body.analysis.handoff_offered,
+        handoff_state: body.analysis.handoff_state,
+      };
+    }
+    expect(replies[2]).toBe(rawReplies[1]);
+    expect(replies.slice(2)).not.toContain('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 
   it('跨工作、感情、亲子后回到工作时，模型只看到旧工作上下文与本轮消息', async () => {

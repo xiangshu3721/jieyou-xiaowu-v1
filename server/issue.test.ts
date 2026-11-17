@@ -469,7 +469,24 @@ describe('V1.6 Issue 上下文边界', () => {
 
   it('阶段 1.3：明确拒绝真人且尚未展示入口时也不误判为接受真人', () => {
     expect(detectConversationControl('我暂时不想找真人，先自己聊聊', false)).toBe('DECLINE_HANDOFF');
+    expect(detectConversationControl('我现在不想预约，还是先在这里聊', true)).toBe('DECLINE_HANDOFF');
     expect(detectConversationControl('我想找真人导师聊聊', false)).toBe('ACCEPT_HANDOFF');
+  });
+
+  it('已拒绝预约后，带有“先不预约”的后续求助继续正常聊天', () => {
+    const declinedIssue = parseIssueContext({ issue_id: 'issue-a', status: 'ACTIVE', handoff_offered: true, handoff_state: 'DECLINED', topic_tags: ['EMOTION'] });
+    const result = resolveCurrentIssue({
+      message: '如果先不预约，我现在还能从哪里开始理？',
+      currentIssueId: 'issue-a',
+      currentIssue: declinedIssue,
+      previousMessages: [{ role: 'user', content: '我最近什么都理不清', issueId: 'issue-a' }],
+      previousTopics: ['EMOTION'],
+    });
+    expect(result).toMatchObject({ control_intent: 'GENERAL_CHAT', issue_action: 'CONTINUE_CURRENT', current_issue_id: 'issue-a' });
+    expect(resolveCurrentIssue({
+      message: '我还是想找真人导师聊聊。', currentIssueId: 'issue-a', currentIssue: declinedIssue,
+      previousMessages: [{ role: 'user', content: '我最近什么都理不清', issueId: 'issue-a' }], previousTopics: ['EMOTION'],
+    })).toMatchObject({ control_intent: 'ACCEPT_HANDOFF', issue_action: 'CONTINUE_CURRENT' });
   });
 
   it('阶段 1.3：算了和不用了只有在真人入口已展示时才视为拒绝预约', () => {

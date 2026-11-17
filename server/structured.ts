@@ -219,6 +219,17 @@ export interface ReplyContext {
   recentAssistantReplies?: string[];
 }
 
+function isUnapprovedHandoffOffer(clause: string) {
+  if (/(?:不|暂不|先不|不用|不想|无需|未必|不必).{0,4}(?:预约|找)(?:真人|导师|人工|咨询师)?/.test(clause)) return false;
+  return /(?:可以|建议|需要|不妨|欢迎).{0,8}(?:预约|找).{0,4}(?:真人|导师|人工|咨询师)|免费预约真人聊聊|(?:预约|找).{0,8}(?:真人|导师|人工|咨询师).{0,8}(?:更合适|会|能)/.test(clause);
+}
+
+function removeUnapprovedHandoffOffers(reply: string) {
+  const clauses = reply.match(/[^。！？!?；;，,\n]+[。！？!?；;，,\n]?/g) || [reply];
+  const kept = clauses.filter((clause) => !isUnapprovedHandoffOffer(clause));
+  return kept.join('').trim();
+}
+
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis, context: ReplyContext = {}) {
   if (analysis) {
     // 去重仅针对提问子句，不能覆盖同条回复中已经给出的解释或帮助。
@@ -237,7 +248,12 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
     }
   }
   if (analysis && !analysis.show_booking_button && analysis.user_intent !== 'WANTS_HUMAN' && /真人|导师|预约|人工|分配/.test(reply)) {
-    return fallbackReply(analysis, context);
+    // A declined user may naturally say “不预约也可以继续聊”. Do not replace
+    // that whole response merely because it mentions human support; only
+    // remove an actual unsolicited offer, preserving any useful explanation.
+    const withoutOffer = removeUnapprovedHandoffOffers(reply);
+    if (!withoutOffer) return fallbackReply(analysis, context);
+    reply = withoutOffer;
   }
   if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis, context);
