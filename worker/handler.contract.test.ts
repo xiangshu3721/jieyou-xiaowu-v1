@@ -114,6 +114,109 @@ describe('worker handler API 契约', () => {
     expect(body.diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false }));
   });
 
+  it('P2：纠正理解不追问，明确求助即时切换为实际帮助', async () => {
+    const cases = [
+      {
+        issueId: 'issue-mm03',
+        rawReply: '明白了，我不再把它理解成自信问题。你在说的是被打断之后，自己慢慢不想开口这件事。',
+        messages: [
+          { role: 'user', content: '我开会总被同事打断，后来我就不想说了。', issueId: 'issue-mm03' },
+          { role: 'assistant', content: '这会不会让你怀疑自己的能力？', issueId: 'issue-mm03' },
+          { role: 'user', content: '你别往自信上分析，不是这个问题。', issueId: 'issue-mm03' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-mm11',
+        rawReply: '你说得对，关键不在你敢不敢拒绝，而在主管没有排优先级，临时活才会不断落回你这里。',
+        messages: [
+          { role: 'user', content: '部门把临时活都塞给我，我拒绝过一次，后来就怕再拒绝。', issueId: 'issue-mm11' },
+          { role: 'assistant', content: '你是不是担心拒绝会显得自己不够自信？', issueId: 'issue-mm11' },
+          { role: 'user', content: '我不是不自信，是主管根本不排优先级。', issueId: 'issue-mm11' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-correction-action',
+        rawReply: '先和主管谈一件具体事：请他把这周临时活按优先级排出来，并确认哪些必须由你做、哪些可以延后。',
+        messages: [
+          { role: 'user', content: '部门临时活都塞给我。', issueId: 'issue-correction-action' },
+          { role: 'assistant', content: '这会不会让你更怀疑自己的能力？', issueId: 'issue-correction-action' },
+          { role: 'user', content: '你别往自信上分析，我现在到底该怎么和主管谈？', issueId: 'issue-correction-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+      {
+        issueId: 'issue-mm12',
+        rawReply: '今天先做一件：把下个月房租金额和手头可用的钱写下来，算出差额。这样你先把最急的事从一团焦虑变成一个具体数字。',
+        messages: [
+          { role: 'user', content: '被裁以后，我白天装得没事，晚上就一直刷招聘软件。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '这段时间像一直绷着。', issueId: 'issue-mm12' },
+          { role: 'user', content: '我现在只想把这些乱七八糟的感觉说出来，不用教我怎么办。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '好，我们先不急着找办法。', issueId: 'issue-mm12' },
+          { role: 'user', content: '其实我最怕的不是没工作，是过几周房租交不上。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '房租这件事让不确定变得很具体。', issueId: 'issue-mm12' },
+          { role: 'user', content: '说出来以后我想稍微做点事了，但别给我一长串计划。', issueId: 'issue-mm12' },
+          { role: 'assistant', content: '可以，我们只找一个今天能动的地方。', issueId: 'issue-mm12' },
+          { role: 'user', content: '那你说，我今天先做哪一件？', issueId: 'issue-mm12' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+      {
+        issueId: 'issue-decline-advice',
+        rawReply: '好，我先不急着给建议。你想从这件事里哪一部分说起都可以。',
+        messages: [
+          { role: 'user', content: '主管又临时改优先级，我整天都很烦。', issueId: 'issue-decline-advice' },
+          { role: 'assistant', content: '这让你一直被动地跟着变化走。', issueId: 'issue-decline-advice' },
+          { role: 'user', content: '别给我建议，我只想说说。', issueId: 'issue-decline-advice' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-plan',
+        rawReply: '明白，我不会把它归到自信问题，也先不替你安排方案。你可以继续把当时发生的事说清楚。',
+        messages: [
+          { role: 'user', content: '每次项目临近交付，主管都会临时换要求。', issueId: 'issue-decline-plan' },
+          { role: 'assistant', content: '这会不会让你觉得自己准备得不够好？', issueId: 'issue-decline-plan' },
+          { role: 'user', content: '你别往自信上分析，也别给我方案。', issueId: 'issue-decline-plan' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-decline-how-to',
+        rawReply: '好，我先不分析你，也不急着告诉你该怎么办。你想把这件事说清楚，我会跟着你现在说的事实听。',
+        messages: [
+          { role: 'user', content: '我每次汇报都被临时改方向，越来越不想准备。', issueId: 'issue-decline-how-to' },
+          { role: 'assistant', content: '这是不是和你不够自信有关？', issueId: 'issue-decline-how-to' },
+          { role: 'user', content: '不是要你分析我，不要告诉我怎么办。', issueId: 'issue-decline-how-to' },
+        ],
+        expected: { user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', primary_response_strategy: 'EMPATHIZE' },
+      },
+      {
+        issueId: 'issue-explicit-action',
+        rawReply: '那就先做一件具体的事：把本周所有临时需求列出来，请主管逐项确认优先级。',
+        messages: [
+          { role: 'user', content: '不用安慰我，给我一个具体办法。', issueId: 'issue-explicit-action' },
+        ],
+        expected: { user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' },
+      },
+    ];
+    cases.forEach(({ rawReply }) => fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply)));
+
+    for (const item of cases) {
+      const response = await handleApi(request('/api/chat', 'POST', {
+        currentIssueId: item.issueId,
+        issue: { issue_id: item.issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+        messages: item.messages,
+      }), baseEnv);
+      const body = await json(response);
+      expect(response.status).toBe(200);
+      expect(body.reply).toBe(item.rawReply);
+      expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+      expect(body.diagnostics).toMatchObject({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false });
+    }
+  });
+
   it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {
     let postedBody: Record<string, unknown> | undefined;
     fetchMock.mockImplementationOnce(async (_input: RequestInfo | URL, init?: RequestInit) => {
