@@ -139,13 +139,15 @@ export function detectIssueSwitch(latestText: string, previousText = '', previou
   // introduces work or money words. For example, after discussing a parent's
   // surgery, “一想到辞职回去就害怕以后找不到现在这样的工作” is weighing a
   // care option, not opening an unrelated career Issue. Keep this narrow: it
-  // needs both a concrete care context and decision/solution language, and an
-  // explicit separation still takes the normal topic-switch path.
+  // also needs a positive care reference in the current expression (including
+  // returning home in an active care context), so an unrelated job change is
+  // still allowed to become its own Issue.
   const careContext = /(?:手术|住院|看病|医院|生病|病情|照顾|陪护|康复|治疗|身体不好|身体状况)/.test(previous);
   const workOrMoneyDecision = /(?:辞职|换工作|求职|请假|回去|收入|工作安排|工作)/.test(latest);
   const decisionOrSolutionLanguage = /(?:一想到|要不要|该不该|是不是|考虑|打算|准备|决定|害怕|担心|怎么安排|怎么办|如何|以后|如果|辞职后|请假后)/.test(latest);
+  const currentCareReference = /(?:照顾|陪护|陪(?:她|他|妈妈|爸爸|父母|家人)|妈妈|爸爸|父母|家人|手术|住院|看病|医院|生病|病情|康复|治疗|回家|回去)/.test(latest);
   const explicitlySeparateConcern = /(?:和|跟).{0,20}(?:无关|不是一回事)|(?:不是|并非).{0,12}(?:因为|为了).{0,12}(?:照顾|手术|住院|看病|医院|生病|病情)/.test(latest);
-  const careDecisionContinuation = careContext && workOrMoneyDecision && decisionOrSolutionLanguage && !explicitlySeparateConcern;
+  const careDecisionContinuation = careContext && currentCareReference && workOrMoneyDecision && decisionOrSolutionLanguage && !explicitlySeparateConcern;
   const strongNewTopic = /(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣|孩子|亲子|父母|原生家庭|辞职|换工作|求职|债务|房贷|法律|诉讼)/.test(latest);
   const strongTopicAlreadyInIssue = (/(?:离.{0,2}婚|刚分手|分手后|婚姻|伴侣)/.test(latest) && previousTopicSet.has('INTIMACY'))
     || (/(?:孩子|亲子)/.test(latest) && previousTopicSet.has('PARENTING'))

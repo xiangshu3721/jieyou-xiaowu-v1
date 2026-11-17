@@ -15,6 +15,8 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectIssueSwitch('我一想到辞职回去就害怕以后找不到现在这样的工作。', careContext, ['FAMILY']).detected).toBe(false);
     expect(detectIssueSwitch('为了照顾她，我在考虑请假还是换工作，收入要怎么安排？', careContext, ['FAMILY']).detected).toBe(false);
     expect(detectIssueSwitch('另外，我想辞职转去做设计，和妈妈手术无关。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我最近在考虑换工作，想去薪水更高的公司。', careContext, ['FAMILY']).detected).toBe(true);
+    expect(detectIssueSwitch('我考虑辞职创业，做和之前不同的项目。', careContext, ['FAMILY']).detected).toBe(true);
   });
 
   it('支持多标签分类，并保留当前主题优先顺序', () => {
