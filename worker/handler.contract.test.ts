@@ -223,6 +223,31 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(turns.length);
   });
 
+  it('长期反复且 AI 帮助无效时，正在求助也可通过完整条件进入自愿交接', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你已经试过自己调整，但这件事仍持续影响睡眠和工作。可以预约真人一起梳理，也可以继续在这里聊。'));
+    const issueId = 'issue-exhausted-support';
+    const messages = [
+      { role: 'user', content: '工作压力已经持续三个月，反复睡不好，白天工作效率受影响。', issueId },
+      { role: 'assistant', content: '可以先把优先级列出来，再和领导沟通。', issueId },
+      { role: 'user', content: '我试过列优先级和跟领导沟通，但没有改善。', issueId },
+      { role: 'assistant', content: '那我们可以继续看看还有哪些调整空间。', issueId },
+      { role: 'user', content: '前面这些建议没用，我现在到底怎么办？', issueId },
+    ];
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const body = await json(response);
+
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({
+      user_intent: 'WANTS_CLARITY', support_feedback: '用户反馈当前帮助效果不足',
+      routing: 'HUMAN_MENTOR', handoff_ready: true, handoff_mode: 'QUICK_HANDOFF', show_booking_button: true,
+    });
+    expect(body.diagnostics).toMatchObject({ fallback_used: false });
+  });
+
   it('MM-14：拒绝预约后保留自然回应，不把“暂不预约”误换成 Fallback', async () => {
     const issueId = 'issue-mm14';
     const turns = [

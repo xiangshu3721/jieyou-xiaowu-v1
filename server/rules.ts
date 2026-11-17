@@ -602,9 +602,10 @@ function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexi
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
   if (userTurnCount < 3) return false;
   // A user who is actively asking to clarify or work through a concrete next
-  // step still has a useful AI-support path. Three turns and a populated
-  // problem map alone are not enough to interrupt that work with a handoff.
-  if (intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') return false;
+  // step normally still has a useful AI-support path. Keep that protection
+  // unless they explicitly say the current AI help has not worked; the latter
+  // may still pass the complete, evidence-based handoff judgment below.
+  if ((intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') && !supportFeedback) return false;
   // A short-lived event and a single emotional impact do not establish that
   // human support is already more suitable than continuing the conversation.
   if (!hasSustainedHandoffEvidence(problemMap)) return false;
