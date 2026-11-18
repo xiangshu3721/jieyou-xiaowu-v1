@@ -10,6 +10,8 @@ export interface LocalMessage {
   createdAt: string;
   issueId: string;
   bookingCta?: boolean;
+  /** Presentation-only subdivisions of this single assistant turn. */
+  replyParts?: string[];
 }
 
 export interface LocalSession {
@@ -170,10 +172,16 @@ export async function listMessages(sessionId = SINGLE_SESSION_ID) {
   return normalized.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-export async function addMessage(sessionId: string, role: LocalRole, content: string, issueId?: string, options: { bookingCta?: boolean } = {}) {
+export async function addMessage(sessionId: string, role: LocalRole, content: string, issueId?: string, options: { bookingCta?: boolean; replyParts?: string[] } = {}) {
   const now = new Date().toISOString();
   const session = await getSession(sessionId);
-  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now, issueId: issueId || session?.currentIssueId || 'issue-legacy', ...(options.bookingCta === undefined ? {} : { bookingCta: options.bookingCta }) };
+  const candidateParts = role === 'assistant' && Array.isArray(options.replyParts)
+    ? options.replyParts.map((part) => part.trim()).filter(Boolean).slice(0, 3)
+    : [];
+  // Presentation data must describe, never replace, the canonical turn.
+  const canonical = content.trim().replace(/\r\n?/g, '\n');
+  const replyParts = candidateParts.length && candidateParts.join('\n\n') === canonical ? candidateParts : undefined;
+  const message: LocalMessage = { id: id(), sessionId, role, content, createdAt: now, issueId: issueId || session?.currentIssueId || 'issue-legacy', ...(options.bookingCta === undefined ? {} : { bookingCta: options.bookingCta }), ...(replyParts?.length ? { replyParts } : {}) };
   const db = await openDb();
   const transaction = db.transaction(['messages', 'sessions'], 'readwrite');
   transaction.objectStore('messages').put(message);

@@ -90,6 +90,7 @@ describe('worker handler API 契约', () => {
     expect(response.status).toBe(200);
     expect(body).toMatchObject({ model: 'deepseek-chat' });
     expect(body.reply).toContain('我听见了');
+    expect(body.reply_parts).toEqual(['我听见了，我们可以先把这件事理清。']);
     expect(body.analysis).toEqual(expect.objectContaining({ current_issue_id: expect.any(String), safety_status: 'NO_SIGNAL_DETECTED' }));
 
     fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ error: { message: 'mock unavailable' } }), { status: 503 }));
@@ -99,6 +100,24 @@ describe('worker handler API 契约', () => {
     }), baseEnv);
     expect(failed.status).toBe(502);
     expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE' });
+  });
+
+  it('一轮回复只因自然空行展示为多气泡，且安全和交接保持单条', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('先别急着把自己归成不自律。\n\n眼下更现实的是先把收入问题看清。'));
+    const normal = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近有点自由散漫，不知道该怎么赚钱。' }],
+    }), baseEnv);
+    const normalBody = await json(normal);
+    expect(normalBody.reply_parts).toEqual(['先别急着把自己归成不自律。', '眼下更现实的是先把收入问题看清。']);
+    expect(normalBody.reply).toBe('先别急着把自己归成不自律。\n\n眼下更现实的是先把收入问题看清。');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const safety = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我现在正准备伤害自己。' }],
+    }), baseEnv);
+    const safetyBody = await json(safety);
+    expect(safetyBody.reply_parts).toEqual([emergencyReply]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('chat 的结构化输出解析失败时保留通过校验的自然语言回复', async () => {

@@ -7,7 +7,7 @@ import { analyzeConversation, buildConversationUnderstanding, detectSafety, emer
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from './issue.js';
 import { promptMetadata, prompts } from './prompts.js';
 import { getAppointmentState, saveAppointmentState } from './state.js';
-import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
+import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from './structured.js';
 import { FileLearningStore } from './learning-store.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from './learning-service.js';
 import { FileGrowthStore } from './growth-store.js';
@@ -195,16 +195,16 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
     let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
     if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action === 'CONTINUE_CURRENT' && issueContext.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
     if (baseline.safety_status === 'URGENT') {
-      return send(response, 200, { reply: emergencyReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
+      return send(response, 200, { reply: emergencyReply, reply_parts: replyPartsForDisplay(emergencyReply, baseline), analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
     }
     if (baseline.safety_status === 'NEEDS_CLARIFICATION') {
-      return send(response, 200, { reply: safetyClarificationReply, analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
+      return send(response, 200, { reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, baseline), analysis: baseline, promptVersion: config.promptVersion, model: 'safety-rule' });
     }
     if (resolution.awaiting_topic) {
-      return send(response, 200, { reply: '可以呀，换个话题。你想聊什么？', analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
+      return send(response, 200, { reply: '可以呀，换个话题。你想聊什么？', reply_parts: ['可以呀，换个话题。你想聊什么？'], analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
     }
     if (resolution.control_intent === 'DECLINE_HANDOFF') {
-      return send(response, 200, { reply: '可以，我们继续按你舒服的节奏聊。', analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
+      return send(response, 200, { reply: '可以，我们继续按你舒服的节奏聊。', reply_parts: ['可以，我们继续按你舒服的节奏聊。'], analysis: baseline, promptVersion: config.promptVersion, model: 'control-rule' });
     }
     try {
       let watchGuidance = '';
@@ -221,7 +221,7 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
       const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis), analysis);
-      return send(response, 200, { reply, analysis, promptVersion: config.promptVersion, model: config.deepseek.model });
+      return send(response, 200, { reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: config.promptVersion, model: config.deepseek.model });
     } catch (error) {
       const message = error instanceof DeepSeekUnavailableError ? error.message : 'AI 暂时没有回应，请稍后重试';
       return send(response, 502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' });

@@ -232,7 +232,10 @@ export interface ConversationAnalysis {
 }
 
 export interface ChatResponse {
+  /** Canonical one-turn assistant text used for history, summaries and metrics. */
   reply: string;
+  /** Optional presentation-only bubbles. Their joined text is always `reply`. */
+  reply_parts?: string[];
   analysis: ConversationAnalysis;
   promptVersion: string;
   model: string;

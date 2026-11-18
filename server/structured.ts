@@ -213,6 +213,24 @@ export function naturalReply(raw: string) {
   return trimmed.slice(0, 4_000);
 }
 
+/**
+ * Presentation may use the model's deliberate paragraph breaks as chat beats.
+ * Never split sentences or manufacture bubbles: `reply` remains the canonical
+ * one-turn text, and sensitive/hand-off answers stay whole for readability.
+ */
+export function replyPartsForDisplay(reply: string, analysis?: ConversationAnalysis) {
+  const canonical = reply.trim();
+  if (!canonical || analysis?.safety_status !== 'NO_SIGNAL_DETECTED'
+    || analysis?.routing === 'PROFESSIONAL_REFERRAL'
+    || analysis?.show_booking_button) return [canonical];
+  const parts = canonical.split(/\n\s*\n+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3) return [canonical];
+  // A one-character interjection is often formatting noise, not an intended
+  // bubble. Keep the reply intact instead of creating a choppy rhythm.
+  if (parts.some((part) => part.length < 2)) return [canonical];
+  return parts;
+}
+
 export interface ReplyContext {
   latestUserMessage?: string;
   recentUserMessages?: string[];

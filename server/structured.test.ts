@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, safetyClarificationReply } from './rules.js';
 import { applyDeclinedHandoff } from './issue.js';
-import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
+import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from './structured.js';
 
 describe('结构化 AI 输出校验', () => {
   it('解析合法 JSON，不把内部字段直接当成用户回复', () => {
@@ -91,6 +91,16 @@ describe('结构化 AI 输出校验', () => {
     expect(naturalReply('抱歉，刚才的回复可能显示不全。我重新说一遍：\n\n我在听你说。')).toContain('显示不全');
     expect(naturalReply('{"assistant_reply":"内部字段"}')).toBeNull();
     expect(naturalReply('```json\n{"assistant_reply":"内部字段"}\n```')).toBeNull();
+  });
+
+  it('只把自然空行分成 1 到 3 个展示气泡，不拆句或拆安全交接回复', () => {
+    const normal = analyzeConversation('最近有点自由散漫，不知道该怎么赚钱');
+    expect(replyPartsForDisplay('先别急着把自己归成不自律。\n\n先把眼下要解决的收入问题看清。', normal))
+      .toEqual(['先别急着把自己归成不自律。', '先把眼下要解决的收入问题看清。']);
+    expect(replyPartsForDisplay('一句话也不拆。', normal)).toEqual(['一句话也不拆。']);
+    expect(replyPartsForDisplay('第一。\n\n第二。\n\n第三。\n\n第四。', normal)).toEqual(['第一。\n\n第二。\n\n第三。\n\n第四。']);
+    expect(replyPartsForDisplay('请先联系身边的人。\n\n现在不要独自待着。', { ...normal, safety_status: 'URGENT' }))
+      .toEqual(['请先联系身边的人。\n\n现在不要独自待着。']);
   });
 
   it('Fallback 尊重倾诉意愿和 ask_question=false，不机械追问或给建议', () => {
