@@ -22,11 +22,12 @@ const baselineRoot = args.get('--baseline');
 const experimentRoot = args.get('--experiment');
 const out = args.get('--out');
 const ids = args.get('--ids')?.split(',').filter(Boolean) || null;
+const mockIssueRegression = args.has('--mock-issue-regression');
 
-if (!baselineRoot || !experimentRoot || !out) {
+if (!mockIssueRegression && (!baselineRoot || !experimentRoot || !out)) {
   throw new Error('用法：npm run eval:mentor -- --baseline=/旧版目录 --experiment=/实验目录 --out=/私有结果.json');
 }
-if (!process.env.DEEPSEEK_API_KEY) throw new Error('BLOCKED_NO_DEEPSEEK_KEY');
+if (!mockIssueRegression && !process.env.DEEPSEEK_API_KEY) throw new Error('BLOCKED_NO_DEEPSEEK_KEY');
 
 const scenarios = [
   {
@@ -197,8 +198,42 @@ async function loadHandler(root: string) {
   return { handleApi: module.handleApi, close: () => server.close() };
 }
 
-async function runVariant(variant: Variant, root: string) {
-  const loaded = await loadHandler(root);
+type IssueState = {
+  issue_id: string;
+  status: string;
+  topic_tags: unknown[];
+  handoff_offered: boolean;
+  handoff_state: string;
+  booking_case_id: null;
+  user_turn_count?: number;
+};
+
+function issueFromResult(analysis: Record<string, unknown>, fallbackIssueId: string): IssueState {
+  return {
+    issue_id: typeof analysis.current_issue_id === 'string' ? analysis.current_issue_id : fallbackIssueId,
+    status: typeof analysis.issue_status === 'string' ? analysis.issue_status : 'ACTIVE',
+    topic_tags: Array.isArray(analysis.tags) ? analysis.tags : [],
+    handoff_offered: analysis.handoff_offered === true,
+    handoff_state: typeof analysis.handoff_state === 'string' ? analysis.handoff_state : 'NOT_READY',
+    booking_case_id: null,
+    user_turn_count: typeof analysis.user_turn_count === 'number' ? analysis.user_turn_count : undefined,
+  };
+}
+
+function retainIssueTransition(issues: Map<string, IssueState>, activeIssueId: string, nextIssue: IssueState, analysis: Record<string, unknown>) {
+  const previousIssueId = typeof analysis.previous_issue_id === 'string' ? analysis.previous_issue_id : null;
+  if (previousIssueId && previousIssueId !== nextIssue.issue_id) {
+    const previous = issues.get(previousIssueId);
+    if (previous && previous.status !== 'BOOKING_SUBMITTED') issues.set(previousIssueId, { ...previous, status: 'PAUSED' });
+  } else if (nextIssue.issue_id !== activeIssueId) {
+    const active = issues.get(activeIssueId);
+    if (active && active.status !== 'BOOKING_SUBMITTED') issues.set(activeIssueId, { ...active, status: 'PAUSED' });
+  }
+  issues.set(nextIssue.issue_id, nextIssue);
+}
+
+async function runVariant(variant: Variant, root: string, injectedHandler?: HandleApi) {
+  const loaded = injectedHandler ? { handleApi: injectedHandler, close: async () => undefined } : await loadHandler(root);
   const handleApi = loaded.handleApi;
   const originalFetch = globalThis.fetch;
   const tokenUsage: Array<{ totalTokens: number | null; finishReason: string | null }> = [];
@@ -213,34 +248,38 @@ async function runVariant(variant: Variant, root: string) {
   try {
     const results = [];
     for (const scenario of selectedScenarios) {
-      const issueId = `${variant.toLowerCase()}-${scenario.id.toLowerCase()}`;
+      let activeIssueId = `${variant.toLowerCase()}-${scenario.id.toLowerCase()}`;
       const messages: ChatMessage[] = [];
-      let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' };
+      const issues = new Map<string, IssueState>([[activeIssueId, { issue_id: activeIssueId, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY', booking_case_id: null }]]);
       const turns = [];
       for (const userText of scenario.turns) {
-        messages.push({ role: 'user', content: userText, issueId });
-        const issueBefore = { issue_id: String(issue.issue_id || issueId), status: issue.status, handoff_state: issue.handoff_state };
+        const requestIssueId = activeIssueId;
+        const issue = issues.get(requestIssueId) || { issue_id: requestIssueId, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY', booking_case_id: null };
+        messages.push({ role: 'user', content: userText, issueId: requestIssueId });
+        const issueBefore = { issue_id: issue.issue_id, status: issue.status, handoff_state: issue.handoff_state };
         const started = performance.now();
         const response = await handleApi(new Request('https://isolated.invalid/api/chat', {
           method: 'POST', headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `${variant}-${scenario.id}-${turns.length}` },
-          body: JSON.stringify({ sessionId: `mentor-${variant}-${scenario.id}`, currentIssueId: issueId, issue, messages }),
+          body: JSON.stringify({ sessionId: `mentor-${variant}-${scenario.id}`, currentIssueId: requestIssueId, issue, issues: [...issues.values()], messages }),
         }), envForVariant());
         const body = await response.json() as ChatResult & { error?: string; code?: string };
         const usage = tokenUsage.pop() || { totalTokens: null, finishReason: null };
         if (!response.ok || !body.reply) throw new Error(`${scenario.id}/${variant} HTTP ${response.status}: ${body.code || body.error || 'empty reply'}`);
-        messages.push({ role: 'assistant', content: body.reply, issueId });
-        issue = {
-          issue_id: String(body.analysis.current_issue_id || issueId),
-          status: String(body.analysis.issue_status || 'ACTIVE'),
-          topic_tags: body.analysis.tags || [],
-          handoff_offered: Boolean(body.analysis.handoff_offered),
-          handoff_state: String(body.analysis.handoff_state || 'NOT_READY'),
-          booking_case_id: null,
-        };
+        const nextIssue = issueFromResult(body.analysis, requestIssueId);
+        // The API may classify the just-sent text as a new Issue. Mirror the
+        // client lifecycle: move that user turn, persist the old Issue, then
+        // send every later turn with the returned active Issue ID.
+        if (nextIssue.issue_id !== requestIssueId) messages[messages.length - 1] = { ...messages[messages.length - 1], issueId: nextIssue.issue_id };
+        retainIssueTransition(issues, requestIssueId, nextIssue, body.analysis);
+        activeIssueId = nextIssue.issue_id;
+        messages.push({ role: 'assistant', content: body.reply, issueId: activeIssueId });
         turns.push({
           user: userText,
           reply: body.reply,
           replyParts: body.reply_parts || [body.reply],
+          requestIssueId,
+          activeIssueIdAfter: activeIssueId,
+          knownIssueStates: [...issues.values()].map(({ issue_id, status }) => ({ issue_id, status })),
           httpStatus: response.status,
           ms: Math.round(performance.now() - started),
           totalTokens: usage.totalTokens,
@@ -248,7 +287,7 @@ async function runVariant(variant: Variant, root: string) {
           diagnostics: body.diagnostics || null,
           issueBefore,
           analysis: {
-            current_issue_id: body.analysis.current_issue_id,
+            current_issue_id: activeIssueId,
             issue_status: body.analysis.issue_status,
             issue_action: body.analysis.issue_action,
             control_intent: body.analysis.control_intent,
@@ -276,6 +315,54 @@ async function runVariant(variant: Variant, root: string) {
   }
 }
 
+async function runMockIssueRegression() {
+  const calls: Array<Record<string, unknown>> = [];
+  let responseNumber = 0;
+  const handler: HandleApi = async (request) => {
+    calls.push(await request.json() as Record<string, unknown>);
+    responseNumber += 1;
+    const switched = responseNumber === 1;
+    const activeIssueId = switched ? 'experiment-nc-01-new' : 'experiment-nc-01-new';
+    return new Response(JSON.stringify({
+      reply: `mock-${responseNumber}`,
+      reply_parts: [`mock-${responseNumber}`],
+      model: 'mock',
+      analysis: {
+        current_issue_id: activeIssueId,
+        previous_issue_id: switched ? 'experiment-nc-01' : null,
+        issue_status: 'ACTIVE', tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY',
+        issue_action: switched ? 'CREATE_NEW' : 'CONTINUE_CURRENT', safety_status: 'NO_SIGNAL_DETECTED',
+      },
+    }), { headers: { 'content-type': 'application/json' } });
+  };
+  const originalFetch = globalThis.fetch;
+  // The mock never reaches DeepSeek; preserve fetch so no network is involved.
+  try {
+    await runVariant('experiment', 'mock', handler);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+  const [first, second, third] = calls;
+  const secondMessages = second.messages as ChatMessage[];
+  const thirdMessages = third.messages as ChatMessage[];
+  const secondIssues = second.issues as IssueState[];
+  const ok = calls.length >= 3
+    && first.currentIssueId === 'experiment-nc-01'
+    && second.currentIssueId === 'experiment-nc-01-new'
+    && third.currentIssueId === 'experiment-nc-01-new'
+    && second.issue && (second.issue as IssueState).issue_id === 'experiment-nc-01-new'
+    && secondIssues.some((item) => item.issue_id === 'experiment-nc-01' && item.status === 'PAUSED')
+    && secondMessages.every((message) => message.issueId !== 'experiment-nc-01')
+    && thirdMessages.some((message) => message.issueId === 'experiment-nc-01-new');
+  if (!ok) throw new Error('MOCK_ISSUE_LIFECYCLE_REGRESSION_FAILED');
+  console.log(JSON.stringify({ ok: true, calls: calls.slice(0, 3).map((call) => ({ currentIssueId: call.currentIssueId, issue: call.issue, issues: call.issues })) }, null, 2));
+}
+
+if (mockIssueRegression) {
+  await runMockIssueRegression();
+  process.exit(0);
+}
+
 const report = {
   kind: 'ISOLATED_FULL_CHAT_PIPELINE_AB',
   note: '虚构对话；记录回复、脱敏控制诊断、耗时与 token，不记录凭据。',
@@ -283,9 +370,9 @@ const report = {
   experimentSource: experimentRoot,
   model: process.env.DEEPSEEK_MODEL || 'deepseek-chat',
   generatedAt: new Date().toISOString(),
-  baseline: await runVariant('baseline', baselineRoot),
-  experiment: await runVariant('experiment', experimentRoot),
+  baseline: await runVariant('baseline', baselineRoot!),
+  experiment: await runVariant('experiment', experimentRoot!),
 };
-fs.mkdirSync(path.dirname(out), { recursive: true });
-fs.writeFileSync(out, JSON.stringify(report, null, 2), 'utf8');
+fs.mkdirSync(path.dirname(out!), { recursive: true });
+fs.writeFileSync(out!, JSON.stringify(report, null, 2), 'utf8');
 console.log(JSON.stringify({ status: 'RESPONSES_COLLECTED_AWAITING_HUMAN_REVIEW', scenarios: selectedScenarios.length, reportFile: out }, null, 2));
