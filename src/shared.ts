@@ -4,7 +4,7 @@ export type HumanHelpDecision = 'DECLINED' | 'CONSIDERING' | 'EXPLICIT' | 'NONE'
 
 export function humanHelpDecision(textInput: string): HumanHelpDecision {
   const text = textInput.trim();
-  if (!/(?:真人|人工|导师|老师|咨询师|心理咨询|专业的人|找人聊|一对一|1\\s*v\\s*1|预约|咨询服务)/i.test(text)) return 'NONE';
+  if (!/(?:真人|人工|导师|老师|咨询师|心理咨询|专业的人|找人聊|找个人聊|和人聊|一对一|1\s*v\s*1|预约|咨询服务)/i.test(text)) return 'NONE';
 
   // Negation and corrections must win over a quoted positive phrase such as
   // “不是真的要找真人” or “不要我一提到真人就跳转”.
@@ -22,8 +22,8 @@ export function humanHelpDecision(textInput: string): HumanHelpDecision {
 
   // Only an unambiguous *affirmative request* authorizes booking. AI being
   // unhelpful, a service existing, or the word “找真人” alone do not.
-  if (/(?:^|[，,。！!；;\\s])(?:我(?:现在|真的|确实)?|请|麻烦)?(?:想|希望|需要|决定|确定|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|咨询师)|一对一|1\\s*v\\s*1)/i.test(text)
-    || /(?:^|[，,。！!；;\\s])(?:我想|我希望|我需要|我决定|我确定|帮我|请帮我|我要).{0,10}(?:找个人聊|找人聊|和真人聊)/.test(text)) {
+  if (/(?:^|[，,。！!；;\s])(?:我(?:现在|真的|确实)?|请|麻烦)?(?:想|希望|需要|决定|确定|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|咨询师)|一对一|1\s*v\s*1)/i.test(text)
+    || /(?:^|[，,。！!；;\s])(?:我想|我希望|我需要|我决定|我确定|帮我|请帮我|我要).{0,10}(?:找个人聊|找人聊|和真人聊|和人聊)/.test(text)) {
     return 'EXPLICIT';
   }
   return 'NONE';
