@@ -67,7 +67,7 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.booking_preference).toBe('ACCEPTED');
   });
 
-  it('询问是否需要咨询师时先继续对话，并提供可选预约按钮', () => {
+  it('询问是否需要咨询师时继续对话，不展示自动预约按钮', () => {
     for (const message of ['要不要找咨询师啊？', '我是不是该找真人聊聊？', '我需要找心理咨询师吗？']) {
       const analysis = analyzeConversation(message, '', { issueId: 'issue-undecided' });
       expect(analysis.user_intent).toBe('WANTS_CLARITY');
@@ -75,8 +75,8 @@ describe('解忧小屋智能导诊规则', () => {
       expect(analysis.booking_preference).toBe('INTERESTED');
       expect(analysis.handoff_mode).toBe('NONE');
       expect(analysis.handoff_ready).toBe(false);
-      expect(analysis.show_booking_button).toBe(true);
-      expect(analysis.handoff_state).toBe('OFFERED');
+      expect(analysis.show_booking_button).toBe(false);
+      expect(analysis.handoff_state).toBe('NOT_READY');
       expect(analysis.conversation_state).not.toBe('HUMAN_SERVICE');
     }
     expect(analyzeConversation('我想找真人导师聊聊').handoff_mode).toBe('DIRECT_HANDOFF');
@@ -142,7 +142,7 @@ describe('解忧小屋智能导诊规则', () => {
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
     const analysis = analyzeConversation('我想知道自己是不是需要心理治疗或精神科帮助');
     expect(analysis.routing_state).toBe('PROFESSIONAL_REFERRAL');
-    expect(routeConcern('我想了解心理咨询', 'NO_SIGNAL_DETECTED')).toBe('PROFESSIONAL_REFERRAL');
+    expect(routeConcern('我想了解心理咨询', 'NO_SIGNAL_DETECTED')).toBe('AI_SELF_HELP');
   });
 
   it('记录用户对帮助效果的反馈', () => {
@@ -297,14 +297,14 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analysis.no_more_questions).toBe(true);
   });
 
-  it('咨询服务可用性询问不视为明确预约，仍展示可选入口', () => {
+  it('咨询服务可用性询问不视为明确预约，也不展示预约入口', () => {
     for (const text of ['有没有心理咨询师？', '有没有老师可以聊？', '有咨询服务吗']) {
       const analysis = analyzeConversation(text);
       expect(analysis.user_intent).toBe('WANTS_CLARITY');
       expect(analysis.handoff_mode).toBe('NONE');
       expect(analysis.human_intent).toBe('NOT_EXPLICIT');
       expect(analysis.booking_preference).toBe('INTERESTED');
-      expect(analysis.show_booking_button).toBe(true);
+      expect(analysis.show_booking_button).toBe(false);
       expect(analysis.routing).toBe('AI_SUPPORT');
     }
     expect(analyzeConversation('我想找心理咨询师聊聊').handoff_mode).toBe('DIRECT_HANDOFF');
