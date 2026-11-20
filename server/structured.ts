@@ -213,6 +213,24 @@ export function naturalReply(raw: string) {
   return trimmed.slice(0, 4_000);
 }
 
+/**
+ * Presentation may use the model's deliberate paragraph breaks as chat beats.
+ * Never split sentences or manufacture bubbles: `reply` remains the canonical
+ * one-turn text, and sensitive/hand-off answers stay whole for readability.
+ */
+export function replyPartsForDisplay(reply: string, analysis?: ConversationAnalysis) {
+  const canonical = reply.trim();
+  if (!canonical || analysis?.safety_status !== 'NO_SIGNAL_DETECTED'
+    || analysis?.routing === 'PROFESSIONAL_REFERRAL'
+    || analysis?.show_booking_button) return [canonical];
+  const parts = canonical.split(/\n\s*\n+/).map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2 || parts.length > 3) return [canonical];
+  // A one-character interjection is often formatting noise, not an intended
+  // bubble. Keep the reply intact instead of creating a choppy rhythm.
+  if (parts.some((part) => part.length < 2)) return [canonical];
+  return parts;
+}
+
 export interface ReplyContext {
   latestUserMessage?: string;
   recentUserMessages?: string[];
@@ -228,6 +246,31 @@ function removeUnapprovedHandoffOffers(reply: string) {
   const clauses = reply.match(/[^。！？!?；;，,\n]+[。！？!?；;，,\n]?/g) || [reply];
   const kept = clauses.filter((clause) => !isUnapprovedHandoffOffer(clause));
   return kept.join('').trim();
+}
+
+function isQuestionClause(clause: string) {
+  const text = clause.trim();
+  return /[？?]/.test(text)
+    || /(?:你|能|可以|是否|是不是|为什么|怎么|哪(?:一|个)?|什么).{0,20}(?:吗|呢|呀|吧)\s*[。！]?$/.test(text)
+    || /你想从.{0,20}(?:哪|什么|怎么|先).{0,12}[。！]?$/.test(text);
+}
+
+function isUnwantedPushForListening(clause: string) {
+  if (isQuestionClause(clause)) return true;
+  if (/(?:不|别|不要|不用|不必|无需).{0,6}(?:建议|安排|方案|办法)/.test(clause)) return false;
+  return /(?:建议|不妨|你可以(?:先|去|把|做|试|联系|列|算)|可以先|可先|最好|试着|要不|如果愿意).{0,36}/.test(clause);
+}
+
+function removeUnwantedPushesForListening(reply: string) {
+  return reply.replace(/[^。！？!?；;\n]+[。！？!?；;\n]?/g, (clause) => (
+    isUnwantedPushForListening(clause) ? '' : clause
+  )).trim().replace(/[，,；;：:\s]+$/g, '');
+}
+
+function removeQuestions(reply: string) {
+  return reply.replace(/[^。！？!?；;\n]+[。！？!?；;\n]?/g, (clause) => (
+    isQuestionClause(clause) ? '' : clause
+  )).trim().replace(/[，,；;：:\s]+$/g, '');
 }
 
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis, context: ReplyContext = {}) {
@@ -257,6 +300,15 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
   }
   if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis, context);
+  }
+  if (analysis?.user_intent === 'WANTS_COMFORT' && analysis.no_more_questions) {
+    const withoutPushes = removeUnwantedPushesForListening(reply);
+    if (!withoutPushes) return fallbackReply(analysis, { ...context, allowQuestion: false });
+    reply = withoutPushes;
+  } else if (analysis?.no_more_questions) {
+    const withoutQuestions = removeQuestions(reply);
+    if (!withoutQuestions) return fallbackReply(analysis, { ...context, allowQuestion: false });
+    reply = withoutQuestions;
   }
   let normalized = reply.replace(/提交后由运营人员在飞书(?:里|中)人工分配导师(?:并)?联系你[。！？!?]?/g, handoffCopyFor(analysis));
   normalized = replaceHandoffCopies(normalized, analysis);

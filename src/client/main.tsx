@@ -8,7 +8,7 @@ import { getGrowthConsent, getGrowthId, sendGrowthEvent } from './growth.js';
 import { GrowthAdminPage, GrowthPage } from './growth-page.js';
 import { readAppRoute } from './router.js';
 import { requestSafetyGate } from './safety-gate.js';
-import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay, canShowBookingCtaForMessage } from './chat-messages.js';
+import { FIRST_WELCOME_MESSAGE_ID, messagesForDisplay, canShowBookingCtaForMessage, replyPartsForDisplay } from './chat-messages.js';
 import './styles.css';
 
 const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || '').replace(/\/$/, '');
@@ -546,7 +546,10 @@ function ChatPage() {
       await saveSessionLifecycle(session.id, { currentIssueId: nextIssue.issue_id, issues: nextIssues });
       await saveSessionUnderstanding(session.id, result.analysis);
       setSession((current) => current ? { ...current, currentIssueId: nextIssue.issue_id, issues: nextIssues, understanding: result.analysis } : current);
-      const assistant = await addMessage(session.id, 'assistant', result.reply, nextIssue.issue_id, { bookingCta: result.analysis.show_booking_button });
+      const assistant = await addMessage(session.id, 'assistant', result.reply, nextIssue.issue_id, {
+        bookingCta: result.analysis.show_booking_button,
+        replyParts: result.reply_parts,
+      });
       messagesRef.current = [...messagesRef.current, assistant];
       const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
       learningTrackerRef.current.recordAssistant(result.reply);
@@ -633,7 +636,14 @@ function ChatPage() {
           <a className="chat-about-link" href="https://xiangshu3721.github.io/asva-official/" target="_blank" rel="noreferrer">关于我们</a>
         </header>
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
-          {visibleMessages.map((message) => <div key={message.id} className={`message-row ${message.role} ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>{message.role === 'assistant' && <span className="message-avatar" aria-hidden="true">解<br />忧</span>}<div className="message-bubble">{message.content}{message.role === 'assistant' && canShowBookingCtaForMessage(message, session) && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div></div>)}
+          {visibleMessages.map((message) => message.role === 'assistant' ? (
+            <div key={message.id} className={`assistant-turn ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>
+              {replyPartsForDisplay(message).map((part, index, parts) => <div key={`${message.id}-${index}`} className={`message-row assistant ${index > 0 ? 'assistant-followup' : ''}`}>
+                {index === 0 ? <span className="message-avatar" aria-hidden="true">解<br />忧</span> : <span className="message-avatar-spacer" aria-hidden="true" />}
+                <div className="message-bubble">{part}{index === parts.length - 1 && canShowBookingCtaForMessage(message, session) && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div>
+              </div>)}
+            </div>
+          ) : <div key={message.id} className="message-row user"><div className="message-bubble">{message.content}</div></div>)}
           {sending && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}

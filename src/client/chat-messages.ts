@@ -28,6 +28,14 @@ export function messagesForDisplay(session: Pick<LocalSession, 'id' | 'createdAt
   return [createFirstWelcomeMessage(session), ...messages.filter((message) => message.id !== FIRST_WELCOME_MESSAGE_ID)];
 }
 
+/** Old records only have `content`; malformed presentation data must never hide it. */
+export function replyPartsForDisplay(message: Pick<LocalMessage, 'role' | 'content' | 'replyParts'>) {
+  if (message.role !== 'assistant') return [message.content];
+  const parts = message.replyParts?.map((part) => part.trim()).filter(Boolean).slice(0, 3) || [];
+  const canonical = message.content.trim().replace(/\r\n?/g, '\n');
+  return parts.length && parts.join('\n\n') === canonical ? parts : [message.content];
+}
+
 
 /** Older conversation bubbles remain visible, but their old booking buttons must
  * never submit an appointment for whichever unrelated Issue is active now. */

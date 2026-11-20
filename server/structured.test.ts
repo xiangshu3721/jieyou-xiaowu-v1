@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { analyzeConversation, buildConversationUnderstanding, emergencyReply, safetyClarificationReply } from './rules.js';
 import { applyDeclinedHandoff } from './issue.js';
-import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput } from './structured.js';
+import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from './structured.js';
 
 describe('结构化 AI 输出校验', () => {
   it('解析合法 JSON，不把内部字段直接当成用户回复', () => {
@@ -93,6 +93,16 @@ describe('结构化 AI 输出校验', () => {
     expect(naturalReply('```json\n{"assistant_reply":"内部字段"}\n```')).toBeNull();
   });
 
+  it('只把自然空行分成 1 到 3 个展示气泡，不拆句或拆安全交接回复', () => {
+    const normal = analyzeConversation('最近有点自由散漫，不知道该怎么赚钱');
+    expect(replyPartsForDisplay('先别急着把自己归成不自律。\n\n先把眼下要解决的收入问题看清。', normal))
+      .toEqual(['先别急着把自己归成不自律。', '先把眼下要解决的收入问题看清。']);
+    expect(replyPartsForDisplay('一句话也不拆。', normal)).toEqual(['一句话也不拆。']);
+    expect(replyPartsForDisplay('第一。\n\n第二。\n\n第三。\n\n第四。', normal)).toEqual(['第一。\n\n第二。\n\n第三。\n\n第四。']);
+    expect(replyPartsForDisplay('请先联系身边的人。\n\n现在不要独自待着。', { ...normal, safety_status: 'URGENT' }))
+      .toEqual(['请先联系身边的人。\n\n现在不要独自待着。']);
+  });
+
   it('Fallback 尊重倾诉意愿和 ask_question=false，不机械追问或给建议', () => {
     const comfort = analyzeConversation('我最近很累，只想倾诉，不想听建议');
     expect(fallbackReply(comfort)).toContain('先听着');
@@ -107,6 +117,22 @@ describe('结构化 AI 输出校验', () => {
     expect(clarification.ask_question).toBe(true);
     expect(fallbackReply(clarification)).toMatch(/[？?]/);
     expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
+  });
+
+  it('倾诉模式会移除模型仍然生成的追问，但不影响明确求助', () => {
+    const comfort = analyzeConversation('我只想把这些乱七八糟的感觉说出来。');
+    expect(normalizeUserReply('那就说吧。你最怕的是什么？', comfort)).toBe('那就说吧。');
+    expect(normalizeUserReply('你最怕的是什么？', comfort)).not.toMatch(/[？?]/);
+    expect(normalizeUserReply('房租这件事很实在。如果愿意，可以先把房租金额列出来。', comfort))
+      .toBe('房租这件事很实在。');
+
+    const normal = analyzeConversation('完全没有收入。');
+    expect(normalizeUserReply('收入断了，压力会很具体。你现在还能撑多久？', normal))
+      .toBe('收入断了，压力会很具体。');
+
+    const action = analyzeConversation('现在我愿意做点事，但别给长计划。');
+    expect(normalizeUserReply('今天先把下个月房租和手头可用的钱写下来。', action))
+      .toBe('今天先把下个月房租和手头可用的钱写下来。');
   });
 
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {

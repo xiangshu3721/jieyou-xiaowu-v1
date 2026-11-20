@@ -234,7 +234,7 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
   return pending;
 }
 
-const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)/;
+const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)|(?:今天|现在|接下来).{0,12}(?:该|先).{0,8}(?:看|做|办|处理|什么)|(?:愿意|想|准备).{0,6}(?:做点事|行动起来)/;
 const declinedActionPattern = /(?:别|不要|不用|不想|不必|无需|不需要|没有必要)\s*(?:再)?(?:给.{0,8}(?:建议|办法|方案)|建议|方案|办法|下一步|行动|(?:教|告诉|劝).{0,6}(?:怎么办|怎么做)|怎么办|怎么做)/;
 
 function intentClauses(text: string) {
@@ -271,9 +271,33 @@ function detectIntent(text: string): UserIntent {
     return 'WANTS_COMFORT';
   }
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
-  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
+  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|只想(?:把)?[^。！？\n]{0,30}(?:感觉|感受|心里话).{0,8}说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
   return 'VENTING';
+}
+
+/**
+ * A clearly stated wish to only talk is a conversation preference, not a
+ * one-message flag. Keep it for later factual additions in the same Issue,
+ * but release it immediately when the user makes a new explicit request.
+ */
+export function resolveConversationIntent(latestText: string, contextText = ''): UserIntent {
+  const latest = detectIntent(latestText);
+  if (latest !== 'VENTING') return latest;
+  const priorUserMessages = contextText
+    .split(/\r?\n/)
+    .filter((line) => !line.trim().startsWith('AI：'))
+    .map((line) => line.replace(/^\s*用户：/, '').trim())
+    .filter(Boolean)
+    .reverse();
+  for (const message of priorUserMessages) {
+    const prior = detectIntent(message);
+    if (prior === 'WANTS_COMFORT') return prior;
+    // A later explicit mode change belongs to its own turn; do not resurrect
+    // an older comfort preference across it.
+    if (prior !== 'VENTING') break;
+  }
+  return latest;
 }
 
 function firstMatch(text: string, pattern: RegExp) {
@@ -768,7 +792,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const switchResult = options.newIssueDetected === undefined ? detectIssueSwitch(text, contextText, options.previousTopics) : { detected: options.newIssueDetected, confidence: options.newIssueConfidence ?? (options.newIssueDetected ? 0.9 : 0.12) };
   const handoffWasOffered = options.handoffOffered === true;
   const safety = options.safetyStatus || detectSafety(text);
-  const intent = detectIntent(text);
+  const intent = resolveConversationIntent(text, contextText);
   const topics = Array.from(new Set([...(options.issueTopicTags || []).filter((topic) => topic !== 'OTHER'), ...classifyConcern(allUserText)]));
   const understanding = options.understanding || buildConversationUnderstanding([{ role: 'user', content: allUserText }], options.issueTopicTags || []);
   const problemMap = applyKnownFacts(buildProblemMap(allUserText, topics, intent), understanding);

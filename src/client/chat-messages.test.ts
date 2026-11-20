@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { FIRST_WELCOME_MESSAGE, FIRST_WELCOME_MESSAGE_ID, messagesForDisplay, canShowBookingCtaForMessage } from './chat-messages.js';
+import { FIRST_WELCOME_MESSAGE, FIRST_WELCOME_MESSAGE_ID, messagesForDisplay, canShowBookingCtaForMessage, replyPartsForDisplay } from './chat-messages.js';
 import type { LocalMessage } from './storage.js';
 
 const session = { id: 'jieyou-main-session', createdAt: '2026-10-31T00:00:00.000Z', currentIssueId: 'issue-001' };
@@ -47,5 +47,14 @@ describe('historical booking CTA stays with its own issue', () => {
   it('booked issue never reuses old CTA, and user messages do not get CTA', () => {
     expect(canShowBookingCtaForMessage(message('issue-booked'), { currentIssueId: 'issue-booked', issues } as any)).toBe(false);
     expect(canShowBookingCtaForMessage({ ...message('issue-a'), role: 'user' }, { currentIssueId: 'issue-a', issues } as any)).toBe(false);
+  });
+});
+
+describe('assistant turn bubble recovery', () => {
+  it('uses persisted parts when present and stays compatible with old records', () => {
+    const assistant = { ...businessMessage('第一条\n\n第二条'), role: 'assistant' as const, replyParts: ['第一条', '第二条'] };
+    expect(replyPartsForDisplay(assistant)).toEqual(['第一条', '第二条']);
+    expect(replyPartsForDisplay({ ...assistant, replyParts: [] })).toEqual(['第一条\n\n第二条']);
+    expect(replyPartsForDisplay(businessMessage('用户消息'))).toEqual(['用户消息']);
   });
 });
