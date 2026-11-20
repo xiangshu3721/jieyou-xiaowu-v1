@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { BookingCaseSnapshot, ChatResponse, ConversationAnalysis, IssueLifecycle } from '../shared.js';
 import { wantsHumanBooking } from '../shared.js';
@@ -458,13 +458,15 @@ function ChatPage() {
     })().catch(() => { if (mountedRef.current) setError('本地记录暂时无法打开，请检查浏览器存储权限。'); });
   }, []);
 
-  useEffect(() => {
+  // Follow new turns and each newly rendered bubble, not the DOM height from
+  // before React has committed it. A deliberate upward scroll pauses following.
+  // Sending a new message re-enables following, even from the middle of history.
+  useLayoutEffect(() => {
     const element = chatScrollRef.current;
-    if (!element || !initialScrollPendingRef.current) return;
+    if (!element || (!initialScrollPendingRef.current && !followReplyRef.current)) return;
     initialScrollPendingRef.current = false;
-    const frame = window.requestAnimationFrame(() => element.scrollTo({ top: element.scrollHeight, behavior: 'auto' }));
-    return () => window.cancelAnimationFrame(frame);
-  }, [messages.length, sending]);
+    element.scrollTop = element.scrollHeight;
+  }, [messages.length, sending, sendingPhase, visibleReplyParts, revealingAssistantId]);
 
   function cancelReplyReveal() {
     if (replyRevealTimerRef.current !== null) {
@@ -479,15 +481,6 @@ function ChatPage() {
     }
   }
 
-  function scrollReplyIntoView() {
-    const element = chatScrollRef.current;
-    if (!element || !followReplyRef.current) return;
-    element.scrollTo({
-      top: element.scrollHeight,
-      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
-    });
-  }
-
   function revealAssistantParts(assistant: LocalMessage) {
     const parts = replyPartsForDisplay(assistant);
     if (parts.length <= 1 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -496,7 +489,6 @@ function ChatPage() {
     cancelReplyReveal();
     setRevealingAssistantId(assistant.id);
     setVisibleReplyParts({ [assistant.id]: 1 });
-    scrollReplyIntoView();
     return new Promise<void>((resolve) => {
       const run = { id: assistant.id, resolve };
       replyRevealRunRef.current = run;
@@ -508,7 +500,6 @@ function ChatPage() {
             return;
           }
           setVisibleReplyParts({ [assistant.id]: nextIndex + 1 });
-          scrollReplyIntoView();
           if (nextIndex + 1 >= parts.length) {
             replyRevealRunRef.current = null;
             setRevealingAssistantId(null);
@@ -582,6 +573,9 @@ function ChatPage() {
   async function send() {
     const content = input.trim();
     if (!content || !session || sending) return;
+    // A new user turn always starts at the latest messages. Subsequent
+    // assistant bubbles follow unless the user intentionally scrolls upward.
+    followReplyRef.current = true;
     stopVoiceInput();
     if (wantsHumanBooking(content)) {
       setInput(''); setError(''); setSending(true); setSendingPhase('listening');
