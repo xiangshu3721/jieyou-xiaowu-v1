@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { emergencyReply, safetyClarificationReply } from '../server/rules.js';
+import { humanHelpDecision, isUndecidedHumanHelpQuestion, wantsHumanBooking } from '../src/shared.js';
 import { handleApi, type WorkerEnv } from './handler.js';
 
 const baseEnv: WorkerEnv = {
@@ -316,7 +317,7 @@ describe('worker handler API 契约', () => {
     expect((await json(rejected)).diagnostics).toEqual(expect.objectContaining({ codes: ['MODEL_SUCCESS', 'MODEL_REPLY_REJECTED', 'FALLBACK_USED'], fallback_used: true }));
   });
 
-  it('咨询师犹豫式询问正常回复并带可选预约入口，不被强制交接覆盖', async () => {
+  it('咨询师犹豫式询问正常回复但不显示预约入口，不把提问当作预约同意', async () => {
     fetchMock.mockResolvedValueOnce(deepSeekResponse('不一定需要马上做决定。可以先看困扰有没有持续影响生活，也可以在这里继续聊聊。'));
     const response = await handleApi(request('/api/chat', 'POST', {
       currentIssueId: 'issue-optional-counselor',
@@ -330,12 +331,73 @@ describe('worker handler API 契约', () => {
     expect(body.analysis).toMatchObject({
       routing: 'AI_SUPPORT',
       booking_preference: 'INTERESTED',
-      show_booking_button: true,
+      show_booking_button: false,
       handoff_ready: false,
       handoff_mode: 'NONE',
     });
     expect(body.diagnostics).toMatchObject({ fallback_used: false });
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('HUM-01：咨询师疑问、否定和反对导流均不得触发真人预约', async () => {
+    const turns = [
+      '是不是找个真人会更方便解决我的问题',
+      '我是问你，不是真的要找真人',
+      '不要我一提到真人就跳转好嘛',
+    ];
+    expect(turns.map(humanHelpDecision)).toEqual(['CONSIDERING', 'DECLINED', 'DECLINED']);
+    for (const turn of turns) expect(wantsHumanBooking(turn)).toBe(false);
+    expect(isUndecidedHumanHelpQuestion(turns[0])).toBe(true);
+
+    const issueId = 'issue-hum-consent';
+    let issue: Record<string, unknown> = { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' };
+    const messages: Array<{ role: 'user' | 'assistant'; content: string; issueId: string }> = [];
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('真人可能有帮助，但是否合适还要看具体困扰。我们先在这里一起理清。'));
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('你说得对，提到真人不代表你决定预约。我会继续和你讨论原来的问题。'));
+    for (const [index, userText] of turns.entries()) {
+      messages.push({ role: 'user', content: userText, issueId });
+      const res = await handleApi(request('/api/chat', 'POST', {
+        currentIssueId: issueId, issue, issues: [issue], messages,
+      }), baseEnv);
+      const body = await json(res);
+      expect(res.status).toBe(200);
+      expect(body.analysis.routing).toBe('AI_SUPPORT');
+      expect(body.analysis.handoff_mode).toBe('NONE');
+      expect(body.analysis.show_booking_button).toBe(false);
+      expect(body.reply).not.toMatch(/免费预约真人聊聊|下面就是.*入口|提交后.*真人/);
+      if (index === 0) expect(body.analysis.booking_preference).toBe('INTERESTED');
+      if (index > 0) expect(body.analysis.handoff_state).toBe('DECLINED');
+      messages.push({ role: 'assistant', content: body.reply, issueId });
+      issue = {
+        issue_id: issueId, status: body.analysis.issue_status, topic_tags: body.analysis.tags,
+        handoff_offered: body.analysis.handoff_offered, handoff_state: body.analysis.handoff_state,
+      };
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('HUM-02：只有确定决定预约的表达进入快捷真人通道', async () => {
+    const nonBookings = [
+      '是不是找个真人会更方便解决我的问题',
+      '我是问你，不是真的要找真人',
+      '不要我一提到真人就跳转好嘛',
+      '我只是问找真人会不会更合适',
+      '有没有真人可以帮我分析？',
+      'AI 给的建议没用，我应该找个人聊吗？',
+      '先不预约，我想继续跟你聊',
+    ];
+    for (const utterance of nonBookings) expect(wantsHumanBooking(utterance)).toBe(false);
+    const directBookings = [
+      '我想找真人聊聊',
+      '帮我预约真人导师',
+      '我决定找真人聊聊',
+      '我现在就想找真人聊聊',
+      '我想找心理咨询师',
+    ];
+    for (const utterance of directBookings) {
+      expect(wantsHumanBooking(utterance)).toBe(true);
+      expect(humanHelpDecision(utterance)).toBe('EXPLICIT');
+    }
   });
 
   it('MM-10：短期关系冲突的完整讨论不会在第三轮自动交接', async () => {
