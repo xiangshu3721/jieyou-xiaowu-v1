@@ -183,7 +183,7 @@ describe('worker handler API 契约', () => {
       },
       {
         issueId: 'issue-decline-advice',
-        rawReply: '好，我先不急着给建议。你想从这件事里哪一部分说起都可以。',
+        rawReply: '好，我先不急着给建议。你想说的可以慢慢说。',
         messages: [
           { role: 'user', content: '主管又临时改优先级，我整天都很烦。', issueId: 'issue-decline-advice' },
           { role: 'assistant', content: '这让你一直被动地跟着变化走。', issueId: 'issue-decline-advice' },
@@ -234,6 +234,41 @@ describe('worker handler API 契约', () => {
       expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
       expect(body.diagnostics).toMatchObject({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false });
     }
+  });
+
+  it('NC-02/NC-04：倾诉意愿会跨事实补充延续，模型追问被拦截，明确求助恢复帮助', async () => {
+    const issueId = 'issue-intent-continuity';
+    const comfortMessages = [
+      { role: 'user' as const, content: '被裁以后我晚上一直刷招聘软件。', issueId },
+      { role: 'assistant' as const, content: '这段时间像一直绷着。', issueId },
+      { role: 'user' as const, content: '我只想把这些乱七八糟的感觉说出来。', issueId },
+      { role: 'assistant' as const, content: '好，我们先不急着找办法。', issueId },
+      { role: 'user' as const, content: '其实最怕的是下个月房租。', issueId },
+    ];
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('房租快到的时候会很难熬。你手头还剩多少钱？'));
+    const comfort = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER', 'MONEY'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: comfortMessages,
+    }), baseEnv);
+    const comfortBody = await json(comfort);
+    expect(comfort.status).toBe(200);
+    expect(comfortBody.analysis).toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', ask_question: false, no_more_questions: true });
+    expect(comfortBody.reply).toBe('房租快到的时候会很难熬。');
+    expect(comfortBody.reply).not.toMatch(/[？?]/);
+
+    const actionReply = '今天先把下个月房租金额和手头可用的钱写下来，算出差额。';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(actionReply));
+    const action = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER', 'MONEY'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [...comfortMessages, { role: 'assistant' as const, content: comfortBody.reply, issueId }, { role: 'user' as const, content: '现在我愿意做点事，但别给长计划。', issueId }],
+    }), baseEnv);
+    const actionBody = await json(action);
+    expect(action.status).toBe(200);
+    expect(actionBody.analysis).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+    expect(actionBody.reply).toBe(actionReply);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {

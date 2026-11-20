@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, recentSafetyStatus, routeConcern } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, recentSafetyStatus, resolveConversationIntent, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('工作压力延伸到伴侣关系不自动拆成新 Issue，独立关系话题仍可切换', () => {
@@ -127,6 +127,16 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('你别往自信上分析，我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
     expect(analyzeConversation('不用安慰我，给我一个具体办法。').user_intent).toBe('WANTS_ACTION');
     expect(analyzeConversation('不用教我怎么办，但我现在该怎么和主管谈？').user_intent).toBe('WANTS_ACTION');
+  });
+
+  it('P2：倾诉意愿跨同一 Issue 的事实补充延续，新的求助立即解除', () => {
+    const context = '用户：我只想把这些乱七八糟的感觉说出来。\n用户：其实最怕的是下个月房租。';
+    expect(resolveConversationIntent('其实最怕的是下个月房租。', '用户：我只想把这些乱七八糟的感觉说出来。')).toBe('WANTS_COMFORT');
+    expect(analyzeConversation('其实最怕的是下个月房租。', context, { userTurnCount: 3 }))
+      .toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', ask_question: false, no_more_questions: true });
+    expect(analyzeConversation('现在我愿意做点事，但别给长计划。', context, { userTurnCount: 4 }))
+      .toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: true });
+    expect(analyzeConversation('那今天我该先看什么？')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP' });
   });
 
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {

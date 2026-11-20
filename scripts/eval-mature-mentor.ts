@@ -12,6 +12,18 @@ type ChatResult = {
   analysis: Record<string, unknown>;
   diagnostics?: { codes?: string[]; fallback_used?: boolean; finish_reason?: string | null };
 };
+type TokenUsage = {
+  totalTokens: number | null;
+  promptTokens: number | null;
+  completionTokens: number | null;
+  promptCacheHitTokens: number | null;
+  promptCacheMissTokens: number | null;
+  promptCharacters: number | null;
+  systemPromptCharacters: number | null;
+  conversationCharacters: number | null;
+  finishReason: string | null;
+  modelRaw: string | null;
+};
 type HandleApi = (request: Request, env: Record<string, string | undefined>) => Promise<Response>;
 
 const args = new Map(process.argv.slice(2).map((item) => {
@@ -236,12 +248,41 @@ async function runVariant(variant: Variant, root: string, injectedHandler?: Hand
   const loaded = injectedHandler ? { handleApi: injectedHandler, close: async () => undefined } : await loadHandler(root);
   const handleApi = loaded.handleApi;
   const originalFetch = globalThis.fetch;
-  const tokenUsage: Array<{ totalTokens: number | null; finishReason: string | null }> = [];
+  const tokenUsage: TokenUsage[] = [];
   globalThis.fetch = async (...input: Parameters<typeof fetch>) => {
+    let promptCharacters: number | null = null;
+    let systemPromptCharacters: number | null = null;
+    let conversationCharacters: number | null = null;
+    try {
+      const init = input[1];
+      const body = init?.body;
+      if (typeof body === 'string') {
+        const outbound = JSON.parse(body) as { messages?: Array<{ content?: unknown }> };
+        if (Array.isArray(outbound.messages)) {
+          systemPromptCharacters = typeof outbound.messages[0]?.content === 'string' ? outbound.messages[0].content.length : null;
+          conversationCharacters = outbound.messages.slice(1).reduce((sum, message) => sum + (typeof message.content === 'string' ? message.content.length : 0), 0);
+          promptCharacters = (systemPromptCharacters || 0) + conversationCharacters;
+        }
+      }
+    } catch { /* 输入无法解析时不猜测 */ }
     const response = await originalFetch(...input);
     try {
-      const payload = await response.clone().json() as { usage?: { total_tokens?: number }; choices?: Array<{ finish_reason?: string | null }> };
-      tokenUsage.push({ totalTokens: payload.usage?.total_tokens ?? null, finishReason: payload.choices?.[0]?.finish_reason ?? null });
+      const payload = await response.clone().json() as {
+        usage?: { total_tokens?: number; prompt_tokens?: number; completion_tokens?: number; prompt_cache_hit_tokens?: number; prompt_cache_miss_tokens?: number };
+        choices?: Array<{ finish_reason?: string | null; message?: { content?: string | null } }>;
+      };
+      tokenUsage.push({
+        totalTokens: payload.usage?.total_tokens ?? null,
+        promptTokens: payload.usage?.prompt_tokens ?? null,
+        completionTokens: payload.usage?.completion_tokens ?? null,
+        promptCacheHitTokens: payload.usage?.prompt_cache_hit_tokens ?? null,
+        promptCacheMissTokens: payload.usage?.prompt_cache_miss_tokens ?? null,
+        promptCharacters,
+        systemPromptCharacters,
+        conversationCharacters,
+        finishReason: payload.choices?.[0]?.finish_reason ?? null,
+        modelRaw: payload.choices?.[0]?.message?.content ?? null,
+      });
     } catch { /* 非模型 JSON 不纳入统计 */ }
     return response;
   };
@@ -263,7 +304,12 @@ async function runVariant(variant: Variant, root: string, injectedHandler?: Hand
           body: JSON.stringify({ sessionId: `mentor-${variant}-${scenario.id}`, currentIssueId: requestIssueId, issue, issues: [...issues.values()], messages }),
         }), envForVariant());
         const body = await response.json() as ChatResult & { error?: string; code?: string };
-        const usage = tokenUsage.pop() || { totalTokens: null, finishReason: null };
+        const usage = tokenUsage.pop() || {
+          totalTokens: null, promptTokens: null, completionTokens: null,
+          promptCacheHitTokens: null, promptCacheMissTokens: null,
+          promptCharacters: null, systemPromptCharacters: null, conversationCharacters: null,
+          finishReason: null, modelRaw: null,
+        };
         if (!response.ok || !body.reply) throw new Error(`${scenario.id}/${variant} HTTP ${response.status}: ${body.code || body.error || 'empty reply'}`);
         const nextIssue = issueFromResult(body.analysis, requestIssueId);
         // The API may classify the just-sent text as a new Issue. Mirror the
@@ -283,7 +329,15 @@ async function runVariant(variant: Variant, root: string, injectedHandler?: Hand
           httpStatus: response.status,
           ms: Math.round(performance.now() - started),
           totalTokens: usage.totalTokens,
+          promptTokens: usage.promptTokens,
+          completionTokens: usage.completionTokens,
+          promptCacheHitTokens: usage.promptCacheHitTokens,
+          promptCacheMissTokens: usage.promptCacheMissTokens,
+          promptCharacters: usage.promptCharacters,
+          systemPromptCharacters: usage.systemPromptCharacters,
+          conversationCharacters: usage.conversationCharacters,
           finishReason: usage.finishReason,
+          modelRaw: usage.modelRaw,
           diagnostics: body.diagnostics || null,
           issueBefore,
           analysis: {

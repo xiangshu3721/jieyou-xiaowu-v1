@@ -119,6 +119,22 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
   });
 
+  it('倾诉模式会移除模型仍然生成的追问，但不影响明确求助', () => {
+    const comfort = analyzeConversation('我只想把这些乱七八糟的感觉说出来。');
+    expect(normalizeUserReply('那就说吧。你最怕的是什么？', comfort)).toBe('那就说吧。');
+    expect(normalizeUserReply('你最怕的是什么？', comfort)).not.toMatch(/[？?]/);
+    expect(normalizeUserReply('房租这件事很实在。如果愿意，可以先把房租金额列出来。', comfort))
+      .toBe('房租这件事很实在。');
+
+    const normal = analyzeConversation('完全没有收入。');
+    expect(normalizeUserReply('收入断了，压力会很具体。你现在还能撑多久？', normal))
+      .toBe('收入断了，压力会很具体。');
+
+    const action = analyzeConversation('现在我愿意做点事，但别给长计划。');
+    expect(normalizeUserReply('今天先把下个月房租和手头可用的钱写下来。', action))
+      .toBe('今天先把下个月房租和手头可用的钱写下来。');
+  });
+
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {
     const first = analyzeConversation('工作压力很大怎么办？');
     const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
