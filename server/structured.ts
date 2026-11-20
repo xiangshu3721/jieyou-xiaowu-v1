@@ -239,13 +239,15 @@ export interface ReplyContext {
 
 function isUnapprovedHandoffOffer(clause: string) {
   if (/(?:不|暂不|先不|不用|不想|无需|未必|不必).{0,4}(?:预约|找)(?:真人|导师|人工|咨询师)?/.test(clause)) return false;
-  return /(?:可以|建议|需要|不妨|欢迎).{0,8}(?:预约|找).{0,4}(?:真人|导师|人工|咨询师)|免费预约真人聊聊|(?:预约|找).{0,8}(?:真人|导师|人工|咨询师).{0,8}(?:更合适|会|能)/.test(clause);
+  return /(?:可以|建议|需要|不妨|欢迎).{0,8}(?:预约|找).{0,4}(?:真人|导师|人工|咨询师)|免费预约真人聊聊|(?:预约|找).{0,8}(?:真人|导师|人工|咨询师).{0,8}(?:更合适|会|能)|(?:下面|这里).{0,14}(?:预约|入口|按钮)|(?:提交后|提交以后|提交之后).{0,30}(?:真人|导师|人工|咨询师)|(?:真人|导师).{0,14}(?:一对一聊|联系你)/.test(clause);
 }
 
 function removeUnapprovedHandoffOffers(reply: string) {
   const clauses = reply.match(/[^。！？!?；;，,\n]+[。！？!?；;，,\n]?/g) || [reply];
   const kept = clauses.filter((clause) => !isUnapprovedHandoffOffer(clause));
-  return kept.join('').trim();
+  const cleaned = kept.join('').trim();
+  // A model-generated promotional answer can leave only a meaningless “好，”.
+  return /^(?:好|好的|嗯|可以)[，,。！!]?$/.test(cleaned) ? '' : cleaned;
 }
 
 function isQuestionClause(clause: string) {
