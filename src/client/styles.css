@@ -215,6 +215,16 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .assistant-turn .message-row { margin: 0; }
 .assistant-turn .assistant-followup { margin-top: 6px; }
 .message-avatar-spacer { flex: 0 0 40px; width: 40px; }
+.bubble-fade-in { animation: bubble-fade-in .18s ease-out both; }
+.assistant-replying-indicator { margin-top: 5px; }
+.reply-typing-cue { display: inline-flex; align-items: center; min-height: 24px; padding: 0 12px; border-radius: 999px; background: #f3f8f4; color: #80a092; }
+.reply-typing-cue .loading-dots { transform: scale(.72); transform-origin: left center; }
+@keyframes bubble-fade-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble-fade-in { animation: none; }
+  .reply-typing-cue { transition: none; }
+}
 
 @media (max-width: 760px) {
   .chat-topbar { margin-bottom: 16px; }

@@ -206,8 +206,25 @@ function LoadingStatus({ phase }: { phase: SendingPhase }) {
   </div>;
 }
 
-function wait(milliseconds: number) {
-  return new Promise<void>((resolve) => window.setTimeout(resolve, milliseconds));
+function wait(milliseconds: number, signal?: AbortSignal) {
+  return new Promise<boolean>((resolve) => {
+    if (signal?.aborted) {
+      resolve(false);
+      return;
+    }
+    let timer: number | null = window.setTimeout(() => {
+      timer = null;
+      signal?.removeEventListener('abort', abort);
+      resolve(true);
+    }, milliseconds);
+    function abort() {
+      if (timer !== null) window.clearTimeout(timer);
+      timer = null;
+      signal?.removeEventListener('abort', abort);
+      resolve(false);
+    }
+    signal?.addEventListener('abort', abort, { once: true });
+  });
 }
 
 const quickPrompts = ['最近总是焦虑怎么办', '工作压力很大怎么办', '我想找真人聊聊'];
@@ -225,8 +242,16 @@ function ChatPage() {
   const [sendingPhase, setSendingPhase] = useState<SendingPhase>('listening');
   const [error, setError] = useState('');
   const [scrolled, setScrolled] = useState(false);
+  const [revealingAssistantId, setRevealingAssistantId] = useState<string | null>(null);
+  const [visibleReplyParts, setVisibleReplyParts] = useState<Record<string, number>>({});
   const [recording, setRecording] = useState(false);
   const chatScrollRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const initialScrollPendingRef = useRef(false);
+  const followReplyRef = useRef(true);
+  const replyRevealTimerRef = useRef<number | null>(null);
+  const replyRevealRunRef = useRef<{ id: string; resolve: () => void } | null>(null);
+  const requestAbortRef = useRef<AbortController | null>(null);
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const voiceRequestedRef = useRef(false);
   const voiceRestartTimerRef = useRef<number | null>(null);
@@ -292,8 +317,9 @@ function ChatPage() {
     setError('');
     try {
       const issueId = preparedIssueId || await ensureBookingIssueId();
-      if (!issueId) return;
+      if (!issueId || !mountedRef.current) return;
       const gate = await requestSafetyGate(apiBaseUrl, messagesRef.current.map(messagePayload), issueId);
+      if (!mountedRef.current) return;
       if (!gate.allowed) {
         const assistant = await addMessage(session.id, 'assistant', gate.reply || '我想先确认你的安全，再继续预约。', issueId);
         messagesRef.current = [...messagesRef.current, assistant];
@@ -305,7 +331,7 @@ function ChatPage() {
       emitLearningEvent('booking_clicked', { entry: 'chat' });
       location.href = appPath('/booking');
     } catch (err) {
-      setError(err instanceof Error ? err.message : '安全检查暂时不可用，请稍后重试');
+      if (mountedRef.current) setError(err instanceof Error ? err.message : '安全检查暂时不可用，请稍后重试');
     } finally {
       bookingGatePendingRef.current = false;
     }
@@ -420,21 +446,95 @@ function ChatPage() {
     history.replaceState(null, '', appPath('/chat'));
     (async () => {
       const mainSession = await getOrCreateSession();
+      if (!mountedRef.current) return;
       setSession(mainSession);
       sessionIdRef.current = mainSession.id;
       const storedMessages = await listMessages(mainSession.id);
+      if (!mountedRef.current) return;
       messagesRef.current = storedMessages;
       learningTrackerRef.current.resetFromMessages(storedMessages);
+      initialScrollPendingRef.current = true;
       setMessages(storedMessages);
-    })().catch(() => setError('本地记录暂时无法打开，请检查浏览器存储权限。'));
+    })().catch(() => { if (mountedRef.current) setError('本地记录暂时无法打开，请检查浏览器存储权限。'); });
   }, []);
 
   useEffect(() => {
     const element = chatScrollRef.current;
-    if (!element) return;
+    if (!element || !initialScrollPendingRef.current) return;
+    initialScrollPendingRef.current = false;
     const frame = window.requestAnimationFrame(() => element.scrollTo({ top: element.scrollHeight, behavior: 'auto' }));
     return () => window.cancelAnimationFrame(frame);
   }, [messages.length, sending]);
+
+  function cancelReplyReveal() {
+    if (replyRevealTimerRef.current !== null) {
+      window.clearTimeout(replyRevealTimerRef.current);
+      replyRevealTimerRef.current = null;
+    }
+    replyRevealRunRef.current?.resolve();
+    replyRevealRunRef.current = null;
+    if (mountedRef.current) {
+      setRevealingAssistantId(null);
+      setVisibleReplyParts({});
+    }
+  }
+
+  function scrollReplyIntoView() {
+    const element = chatScrollRef.current;
+    if (!element || !followReplyRef.current) return;
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+    });
+  }
+
+  function revealAssistantParts(assistant: LocalMessage) {
+    const parts = replyPartsForDisplay(assistant);
+    if (parts.length <= 1 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return Promise.resolve();
+    }
+    cancelReplyReveal();
+    setRevealingAssistantId(assistant.id);
+    setVisibleReplyParts({ [assistant.id]: 1 });
+    scrollReplyIntoView();
+    return new Promise<void>((resolve) => {
+      const run = { id: assistant.id, resolve };
+      replyRevealRunRef.current = run;
+      const revealNext = (nextIndex: number) => {
+        replyRevealTimerRef.current = window.setTimeout(() => {
+          replyRevealTimerRef.current = null;
+          if (!mountedRef.current || replyRevealRunRef.current !== run) {
+            resolve();
+            return;
+          }
+          setVisibleReplyParts({ [assistant.id]: nextIndex + 1 });
+          scrollReplyIntoView();
+          if (nextIndex + 1 >= parts.length) {
+            replyRevealRunRef.current = null;
+            setRevealingAssistantId(null);
+            setVisibleReplyParts({});
+            resolve();
+            return;
+          }
+          revealNext(nextIndex + 1);
+        }, 650);
+      };
+      revealNext(1);
+    });
+  }
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestAbortRef.current?.abort();
+      requestAbortRef.current = null;
+      cancelReplyReveal();
+      voiceRequestedRef.current = false;
+      clearVoiceRestartTimer();
+      try { recognitionRef.current?.stop(); } catch { /* The browser may already have ended recognition. */ }
+    };
+  }, []);
 
   useEffect(() => () => {
     voiceRequestedRef.current = false;
@@ -487,31 +587,37 @@ function ChatPage() {
       setInput(''); setError(''); setSending(true); setSendingPhase('listening');
       try {
         const issueId = await ensureBookingIssueId();
+        if (!mountedRef.current) return;
         const userMessage = await addMessage(session.id, 'user', content, issueId || session.currentIssueId);
+        if (!mountedRef.current) return;
         messagesRef.current = [...messagesRef.current, userMessage];
         learningTrackerRef.current.recordUser(content);
         setMessages(messagesRef.current);
         await moveToBooking(issueId || undefined);
       } catch (err) {
-        setError(err instanceof Error ? err.message : '预约入口暂时无法打开，请稍后重试');
+        if (mountedRef.current) setError(err instanceof Error ? err.message : '预约入口暂时无法打开，请稍后重试');
       } finally {
-        setSending(false); setSendingPhase('listening');
+        if (mountedRef.current) { setSending(false); setSendingPhase('listening'); }
       }
       return;
     }
     setInput(''); setError(''); setSending(true); setSendingPhase('listening');
+    const requestController = new AbortController();
+    requestAbortRef.current = requestController;
     try {
       // Booking success closes the previous Issue even if the user stayed on this chat page.
       // Use the newly persisted Issue for the current turn; never send new text under the old booking.
       const preparedIssueId = await ensureBookingIssueId();
       const activeSession = preparedIssueId && preparedIssueId !== session.currentIssueId
         ? await getOrCreateSession() : session;
+      if (!mountedRef.current) return;
       const userMessage = await addMessage(activeSession.id, 'user', content, activeSession.currentIssueId);
+      if (!mountedRef.current) return;
       messagesRef.current = [...messagesRef.current, userMessage];
       learningTrackerRef.current.recordUser(content);
       setMessages(messagesRef.current);
       const listeningDuration = Math.min(1_300, 700 + content.length * 24);
-      await wait(listeningDuration);
+      if (!await wait(listeningDuration, requestController.signal) || !mountedRef.current) return;
       setSendingPhase('replying');
       const replyingStartedAt = performance.now();
       const requestIssueId = activeSession.currentIssueId;
@@ -520,9 +626,10 @@ function ChatPage() {
         handoff_offered: issue.handoff_offered, handoff_state: issue.handoff_state,
         booking_case_id: issue.booking_case_id, user_turn_count: issue.user_turn_count,
       }));
-      const result = await api<ChatResponse>('/api/chat', { method: 'POST', body: JSON.stringify({ sessionId: activeSession.id, currentIssueId: requestIssueId, issue: issuePayload(activeSession), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
+      const result = await api<ChatResponse>('/api/chat', { method: 'POST', signal: requestController.signal, body: JSON.stringify({ sessionId: activeSession.id, currentIssueId: requestIssueId, issue: issuePayload(activeSession), issues: issueContexts, messages: messagesRef.current.map(messagePayload), growthId: growthIdRef.current, growthConsent: growthConsentRef.current }) });
       const remainingReplyingTime = 900 - (performance.now() - replyingStartedAt);
-      if (remainingReplyingTime > 0) await wait(remainingReplyingTime);
+      if (remainingReplyingTime > 0 && !await wait(remainingReplyingTime, requestController.signal)) return;
+      if (!mountedRef.current) return;
       // Fail closed if a mismatched/older backend ever attempts to write into
       // a sealed booking. Keep the user's local message, but never mutate that Issue.
       const previousIssue = activeSession.issues[result.analysis.current_issue_id];
@@ -550,6 +657,7 @@ function ChatPage() {
         bookingCta: result.analysis.show_booking_button,
         replyParts: result.reply_parts,
       });
+      if (!mountedRef.current) return;
       messagesRef.current = [...messagesRef.current, assistant];
       const hadBookingButton = learningTrackerRef.current.snapshot().booking_button_shown;
       learningTrackerRef.current.recordAssistant(result.reply);
@@ -559,9 +667,13 @@ function ChatPage() {
       if (result.analysis.show_booking_button && !hadBookingButton) emitLearningEvent('booking_cta_shown', { route: result.analysis.routing });
       emitLearningEvent('chat_turn', { state: result.analysis.conversation_state, route: result.analysis.routing, topic: result.analysis.primary_topic });
       setMessages(messagesRef.current);
+      await revealAssistantParts(assistant);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'AI 暂时没有回应，请稍后重试');
-    } finally { setSending(false); setSendingPhase('listening'); }
+      if (mountedRef.current && !(err instanceof DOMException && err.name === 'AbortError')) setError(err instanceof Error ? err.message : 'AI 暂时没有回应，请稍后重试');
+    } finally {
+      if (requestAbortRef.current) requestAbortRef.current = null;
+      if (mountedRef.current) { setSending(false); setSendingPhase('listening'); }
+    }
   }
 
   async function revokeLearningConsent() {
@@ -625,7 +737,11 @@ function ChatPage() {
 
   return <div className="app-shell">
     <main className={`chat-page ${scrolled ? 'is-scrolled' : ''}`}>
-      <div ref={chatScrollRef} className={`chat-scroll ${visibleMessages.length ? 'has-messages' : ''}`} onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 48)}>
+      <div ref={chatScrollRef} className={`chat-scroll ${visibleMessages.length ? 'has-messages' : ''}`} onScroll={(event) => {
+        const element = event.currentTarget;
+        setScrolled(element.scrollTop > 48);
+        followReplyRef.current = element.scrollHeight - element.scrollTop - element.clientHeight < 96;
+      }}>
         <div className="compact-header" aria-hidden={!scrolled}>
           {growthEnabled && <a className="compact-resource-link compact-resource-left" href={appPath('/growth')} tabIndex={scrolled ? 0 : -1}>最近的我</a>}
           <div className="compact-header-brand"><div className="compact-avatar"><span>解<br />忧</span></div><div><strong>解忧小屋</strong><small>AI 倾听 · 温和陪伴</small></div></div>
@@ -638,13 +754,14 @@ function ChatPage() {
         {visibleMessages.length > 0 && <section className="message-stream" aria-live="polite">
           {visibleMessages.map((message) => message.role === 'assistant' ? (
             <div key={message.id} className={`assistant-turn ${message.id === FIRST_WELCOME_MESSAGE_ID ? 'welcome-message' : ''}`}>
-              {replyPartsForDisplay(message).map((part, index, parts) => <div key={`${message.id}-${index}`} className={`message-row assistant ${index > 0 ? 'assistant-followup' : ''}`}>
+              {replyPartsForDisplay(message).slice(0, visibleReplyParts[message.id] ?? replyPartsForDisplay(message).length).map((part, index) => <div key={`${message.id}-${index}`} className={`message-row assistant ${index > 0 ? 'assistant-followup' : ''} bubble-fade-in`}>
                 {index === 0 ? <span className="message-avatar" aria-hidden="true">解<br />忧</span> : <span className="message-avatar-spacer" aria-hidden="true" />}
-                <div className="message-bubble">{part}{index === parts.length - 1 && canShowBookingCtaForMessage(message, session) && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div>
+                <div className="message-bubble">{part}{index === replyPartsForDisplay(message).length - 1 && canShowBookingCtaForMessage(message, session) && (message.bookingCta ?? hasHumanServiceCta(message.content)) && <button className="message-cta" type="button" onClick={() => void moveToBooking()}>免费预约真人聊聊</button>}</div>
               </div>)}
+              {revealingAssistantId === message.id && <div className="message-row assistant assistant-replying-indicator" role="status" aria-label="正在继续回复"><span className="message-avatar-spacer" aria-hidden="true" /><div className="reply-typing-cue"><LoadingDots /></div></div>}
             </div>
           ) : <div key={message.id} className="message-row user"><div className="message-bubble">{message.content}</div></div>)}
-          {sending && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
+          {sending && !revealingAssistantId && <div className="message-row assistant"><span className="message-avatar" aria-hidden="true">解<br />忧</span><div className="message-bubble loading-bubble"><LoadingStatus phase={sendingPhase} /></div></div>}
         </section>}
         {error && <div className="inline-error" role="alert">{error}</div>}
       </div>
