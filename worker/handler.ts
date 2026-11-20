@@ -1,5 +1,5 @@
 import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage } from '../src/shared.js';
-import { analyzeConversation, buildConversationUnderstanding, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
+import { analyzeConversation, buildConversationUnderstanding, deniedTopicsForText, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from '../server/structured.js';
 import { modelGuidanceFor } from '../server/model-guidance.js';
@@ -616,7 +616,10 @@ export async function handleApi(request: Request, env: WorkerEnv) {
           if (relevant) watchGuidance = `\n用户曾选择本周一起留意“${watch.title}”。只有在当前内容确实相关时，才自然地轻轻带到这个观察方向，不要提“观察项”或后台记忆，也不要强行引导。`;
         }
       }
-      const serverGuidance = `\n\n服务端对话控制（不要原样展示给用户）：\n${JSON.stringify(modelGuidanceFor(baseline))}${watchGuidance}`;
+      const deniedTopics = deniedTopicsForText(analysisMessages.filter((message) => message.role === 'user').map((message) => message.content).join('\n'));
+      const guidance = modelGuidanceFor(baseline) as Record<string, unknown>;
+      if (deniedTopics.includes('MONEY')) guidance.do_not_assume = ['MONEY: 用户已明确否认当前经济压力、收入或欠钱问题，后续不要把旧提及当作现实事实'];
+      const serverGuidance = `\n\n服务端对话控制（不要原样展示给用户）：\n${JSON.stringify(guidance)}${watchGuidance}`;
       const completion = await callDeepSeekCompletion(
         env,
         [{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))],
