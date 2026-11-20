@@ -1,4 +1,4 @@
-import { isUndecidedHumanHelpQuestion } from '../src/shared.js';
+import { isHumanHandoffDecline, isUndecidedHumanHelpQuestion, wantsHumanBooking } from '../src/shared.js';
 import type {
   AssessmentRecommendation,
   AskedQuestion,
@@ -44,17 +44,6 @@ const possibleDangerPatterns = [
 ];
 
 const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /药物/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
-const humanPatterns = [
-  /真人/, /人工/, /导师/, /预约/, /深入聊/, /持续支持/, /想.{0,6}找人聊/, /找个人陪我聊/,
-  /咨询师/, /心理老师/, /专业的人/, /咨询一下/, /约一下/, /一对一/, /1\s*v\s*1/i,
-  /想和人聊/, /能不能找人/, /有没有人/, /想找老师/, /想找咨询师/, /安排个人/,
-  /(?:有|有没有).{0,8}咨询服务/, /(?:有|有没有|能不能|可以).{0,8}(?:老师|导师).{0,8}(?:聊|咨询|沟通|安排)/,
-  /(?:AI|人工智能).{0,8}(?:没用|不行|聊不下去|不想聊)/i,
-];
-const declineHumanPatterns = [
-  /不需要(?:真人|人工|老师|导师|咨询师)/, /不用预约/, /不想预约/, /先不用找人/,
-  /不想找(?:真人|老师|导师|心理咨询师|咨询师)/, /拒绝(?:真人|人工|预约)/,
-];
 const endPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 
 const correctionPatterns = [
@@ -284,10 +273,10 @@ function effectiveUserLines(lines: string[], latestText: string) {
 }
 
 function detectIntent(text: string): UserIntent {
-  if (declineHumanPatterns.some((pattern) => pattern.test(text))) return 'VENTING';
+  if (isHumanHandoffDecline(text)) return 'VENTING';
   if (endPatterns.some((pattern) => pattern.test(text))) return 'WANTS_END';
   if (isUndecidedHumanHelpQuestion(text)) return 'WANTS_CLARITY';
-  if (humanPatterns.some((pattern) => pattern.test(text))) return 'WANTS_HUMAN';
+  if (wantsHumanBooking(text)) return 'WANTS_HUMAN';
   // A correction is not automatically an invitation to analyse the user. It
   // takes priority unless the same turn contains a clear new request for help.
   if (correctionPatterns.some((pattern) => pattern.test(text))) {
@@ -730,7 +719,7 @@ function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, comple
   if (safety !== 'NO_SIGNAL_DETECTED') return 'SAFETY_SUPPORT';
   if (intent === 'WANTS_HUMAN') return 'HUMAN_MENTOR';
   if (handoffReady) return 'HUMAN_MENTOR';
-  if (declineHumanPatterns.some((pattern) => pattern.test(text))) return 'AI_SUPPORT';
+  if (isHumanHandoffDecline(text)) return 'AI_SUPPORT';
   if (professionalPatterns.some((pattern) => pattern.test(text)) && (!isUndecidedHumanHelpQuestion(text) || /心理治疗|精神科|药物|医疗|诊断|法律|律师|诉讼|投资建议|税务/.test(text))) return 'PROFESSIONAL_REFERRAL';
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return 'AI_SUPPORT';
   if (assessment.needed) return 'AI_SUPPORT';
@@ -847,19 +836,21 @@ export function analyzeConversation(latestText: string, contextText = '', option
     && (intent === 'WANTS_HUMAN' || (!handoffWasOffered && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback, userTurnCount)));
   const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady);
   const handoffReady = routing === 'HUMAN_MENTOR';
-  const optionalHumanOffer = safety === 'NO_SIGNAL_DETECTED' && routing === 'AI_SUPPORT' && isUndecidedHumanHelpQuestion(text);
+  // A question about human support is not consent to offer a booking CTA.
+  // Keep the conversation on AI until the user explicitly chooses to book.
+  const optionalHumanOffer = false;
   const showBookingButton = handoffReady || optionalHumanOffer;
   const assessment = handoffReady
     ? { needed: false, recommended_tool: null, reason: null }
     : assessmentCandidate;
   const minimumJudgment = minimumSufficientJudgment(allUserText, complexity, problemMap, sufficiency);
   const directHumanIntent = intent === 'WANTS_HUMAN';
-  const humanIntent = declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' as const : directHumanIntent ? 'EXPLICIT' as const : 'NOT_EXPLICIT' as const;
+  const humanIntent = isHumanHandoffDecline(text) ? 'DECLINED' as const : directHumanIntent ? 'EXPLICIT' as const : 'NOT_EXPLICIT' as const;
   const handoffMode = directHumanIntent ? 'DIRECT_HANDOFF' as const : handoffReady ? 'QUICK_HANDOFF' as const : 'NONE' as const;
   const furtherValue = aiFurtherValue(allUserText, complexity, problemMap, supportFeedback);
   const humanLevel = humanHelpLevel(allUserText, intent, complexity, problemMap, supportFeedback);
   const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
-  const declinedHuman = declineHumanPatterns.some((pattern) => pattern.test(text));
+  const declinedHuman = isHumanHandoffDecline(text);
   const handoffState = declinedHuman ? 'DECLINED' as const : (handoffReady || optionalHumanOffer) ? 'OFFERED' as const : handoffWasOffered ? 'READY' as const : 'NOT_READY' as const;
   const nextQuestionCandidate = handoffReady ? null : chooseNextQuestion(gaps, text, problemMap);
   const questionValue = Number(questionValueFor(intent, nextQuestionCandidate, problemMap, userTurnCount, text).toFixed(2));
@@ -929,7 +920,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     support_provided: [],
     support_feedback: supportFeedback,
     routing_state: legacyRoute,
-    booking_preference: declineHumanPatterns.some((pattern) => pattern.test(text)) ? 'DECLINED' : intent === 'WANTS_HUMAN' ? 'ACCEPTED' : optionalHumanOffer ? 'INTERESTED' : 'NOT_EXPRESSED',
+    booking_preference: isHumanHandoffDecline(text) ? 'DECLINED' : intent === 'WANTS_HUMAN' ? 'ACCEPTED' : isUndecidedHumanHelpQuestion(text) ? 'INTERESTED' : 'NOT_EXPRESSED',
     safety_status: safety,
     routing_reason: routingReason(routing, complexity, problemMap, intent, assessment),
     reply_strategy: strategyFor(routing, intent, gaps, assessment, complexity, primaryResponseStrategy),
