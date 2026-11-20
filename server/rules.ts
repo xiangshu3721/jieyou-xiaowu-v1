@@ -61,11 +61,14 @@ const correctionPatterns = [
   /你(?:理解|弄)错了/,
   /不是这个意思/,
   /你说得不对/,
+  /(?:我)?(?:没有|没|并没有|并非).{0,8}(?:提到|说过|说).{0,12}(?:经济|收入|钱|欠钱|财务|房租)/,
   /不要(?:再)?往[^，。！？\n]{0,20}分析/,
   /别(?:再)?往[^，。！？\n]{0,20}分析/,
   /(?:我)?不是(?:不)?自信/,
   /不是(?:要|让).{0,4}你.{0,4}分析/,
 ];
+const moneyMentionPattern = /收入|钱|金钱|财务|债务|房贷|消费|赚钱|经济压力|欠钱|房租/;
+const careerMentionPattern = /工作|职场|职业|求职|转型|创业|事业|同事|领导|辞职|项目|面试/;
 
 export const topicLabels: Record<TopicCode, string> = {
   EMOTION: '情绪与心力',
@@ -95,7 +98,8 @@ function userTextOnly(latestText: string, contextText: string) {
     .filter((line) => !line.trim().startsWith('AI：'))
     .map((line) => line.replace(/^\s*用户：/, '').trim())
     .filter(Boolean);
-  return [...prior, latestText.trim()].filter(Boolean).join('\n').slice(-18_000);
+  const lines = [...prior, latestText.trim()].filter(Boolean);
+  return effectiveUserLines(lines, lines.join('\n')).join('\n').slice(-18_000);
 }
 
 export interface ConversationUnderstanding {
@@ -254,7 +258,29 @@ function hasExplicitActionDecline(text: string) {
 }
 
 function hasExplicitClarificationRequest(text: string) {
-  return /(?:帮我|请你|能不能|想请你).{0,12}(?:理清|弄清|分析|梳理)|(?:为什么|到底).{0,10}(?:是|怎么回事)/.test(text);
+  return /(?:帮我|请你|能不能|想请你).{0,12}(?:理清|弄清|分析|梳理)|(?:为什么|到底).{0,10}(?:是|怎么回事)|(?:然后|接下来|所以)呢|具体写什么|(?:事情|思绪|脑子).{0,8}(?:乱|一团)|心里(?:很|有点)?着急/.test(text);
+}
+
+function correctionDeclinesExploration(text: string) {
+  return /(?:不要|别|不是要|不用).{0,8}(?:再)?(?:往|对着)?.{0,8}分析|不想回答|不想被问|只想倾诉|只想说说|不是这个意思|你说得不对|(?:我)?不是(?:不)?自信/.test(text);
+}
+
+export function deniedTopicsForText(text: string) {
+  const denied: TopicCode[] = [];
+  if (/(?:我)?(?:没有|没|并没有|并非).{0,8}(?:提到|说过|说).{0,12}(?:经济|收入|钱|欠钱|财务|房租)/.test(text)) denied.push('MONEY');
+  return denied;
+}
+
+function effectiveUserLines(lines: string[], latestText: string) {
+  const denied = new Set(deniedTopicsForText(latestText));
+  if (!denied.size) return lines;
+  return lines.filter((line) => {
+    if (!denied.has('MONEY') || !moneyMentionPattern.test(line)) return true;
+    if (deniedTopicsForText(line).includes('MONEY')) return true;
+    // 保留“我只是在说工作压力”这类混合纠正，但不再把孤立的
+    // “没收入/经济压力”历史句当成当前 Issue 的事实。
+    return careerMentionPattern.test(line) ? line.replace(moneyMentionPattern, '').trim() : false;
+  }).filter(Boolean);
 }
 
 function detectIntent(text: string): UserIntent {
@@ -268,10 +294,11 @@ function detectIntent(text: string): UserIntent {
     if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
     if (hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
     if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
-    return 'WANTS_COMFORT';
+    return correctionDeclinesExploration(text) ? 'WANTS_COMFORT' : 'VENTING';
   }
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
   if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|只想(?:把)?[^。！？\n]{0,30}(?:感觉|感受|心里话).{0,8}说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
+  if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
   return 'VENTING';
 }
@@ -284,6 +311,7 @@ function detectIntent(text: string): UserIntent {
 export function resolveConversationIntent(latestText: string, contextText = ''): UserIntent {
   const latest = detectIntent(latestText);
   if (latest !== 'VENTING') return latest;
+  if (correctionPatterns.some((pattern) => pattern.test(latestText))) return latest;
   const priorUserMessages = contextText
     .split(/\r?\n/)
     .filter((line) => !line.trim().startsWith('AI：'))
@@ -328,7 +356,7 @@ function extractFunctionalImpacts(text: string) {
   if (/关系|伴侣|家里|父母|孩子|吵架/.test(text) && /影响|冲突|吵|疏远|没法|无法/.test(text)) impacts.push('relationship');
   if (/吃饭|起床|出门|生活|日常|状态|照顾自己/.test(text) && /影响|没法|无法|不想|做不到/.test(text)) impacts.push('daily_life');
   if (/身体|心慌|胸闷|头痛|胃口|疼/.test(text)) impacts.push('body');
-  if (/收入|房贷|债务|经济/.test(text) && /影响|压力|担心|无法/.test(text)) impacts.push('finance');
+  if (sentences(text).some((sentence) => !deniedTopicsForText(sentence).includes('MONEY') && /收入|房贷|债务|经济|钱/.test(sentence) && /影响|压力|担心|无法/.test(sentence))) impacts.push('finance');
   return unique(impacts);
 }
 
@@ -423,7 +451,16 @@ function buildInformationGaps(problemMap: ProblemMap, understanding?: Conversati
   return unique(gaps, 6);
 }
 
-function chooseNextQuestion(gaps: string[]) {
+function chooseNextQuestion(gaps: string[], latestText = '', problemMap?: ProblemMap) {
+  if (/(?:然后|接下来|所以)呢|具体写什么/.test(latestText)) {
+    if (problemMap?.issue_types.includes('CAREER')) return '你说的工作压力，最近具体卡在哪一件事上？';
+    return '你希望我先帮你把哪一件具体的事说清楚？';
+  }
+  if (/(?:事情|思绪|脑子).{0,8}(?:乱|一团)|心里(?:很|有点)?着急/.test(latestText)) return '现在最让你着急的，是哪一件具体的事？';
+  if (correctionPatterns.some((pattern) => pattern.test(latestText))) {
+    if (problemMap?.issue_types.includes('CAREER')) return '那工作压力最近具体卡在哪一件事上？';
+    return '你刚刚纠正的这件事，具体发生在哪个场景里？';
+  }
   const gap = gaps[0];
   if (!gap) return null;
   if (gap.includes('功能')) return '它现在有没有影响睡眠、工作、关系或日常生活？';
@@ -450,7 +487,7 @@ export function questionField(text: string): FactField | null {
   if (/什么.*导致|什么时候.*加重|诱因|触发/.test(value)) return 'trigger';
   if (/试过哪些|尝试过|做过什么|什么办法/.test(value)) return 'attempts';
   if (/希望.*帮助|想要.*帮助|最想|先解决什么|先处理什么/.test(value)) return 'user_goal';
-  if (/最近一次|最典型|具体发生了什么|什么情况/.test(value)) return 'scene';
+  if (/最近一次|最典型|具体发生了什么|什么情况|哪一件.*事|哪件事|卡在哪/.test(value)) return 'scene';
   if (/只先看一件事|主要问题|最困扰/.test(value)) return 'main_issue';
   return null;
 }
@@ -487,10 +524,12 @@ function standaloneSeverity(messages: ChatMessage[]) {
 /** V1.7 在进入模型前从当前 Issue 建立事实和已问问题记忆。 */
 export function buildConversationUnderstanding(messages: ChatMessage[], issueTopicTags: TopicCode[] = []): ConversationUnderstanding {
   const userMessages = messages.filter((message) => message.role === 'user');
-  const userText = userMessages.map((message) => message.content.trim()).filter(Boolean).join('\n').slice(-18_000);
   const latestUserText = userMessages.at(-1)?.content || '';
+  const rawUserLines = userMessages.map((message) => message.content.trim()).filter(Boolean);
+  const userText = effectiveUserLines(rawUserLines, rawUserLines.join('\n')).join('\n').slice(-18_000);
   const intent = detectIntent(latestUserText);
-  const topics = Array.from(new Set([...issueTopicTags.filter((topic) => topic !== 'OTHER'), ...classifyConcern(userText)]));
+  const deniedTopics = new Set(deniedTopicsForText(userText));
+  const topics = Array.from(new Set([...issueTopicTags.filter((topic) => topic !== 'OTHER' && !deniedTopics.has(topic)), ...classifyConcern(userText).filter((topic) => !deniedTopics.has(topic))]));
   const problemMap = buildProblemMap(userText, topics, intent);
   const facts: Partial<Record<FactField, KnownFact>> = {};
   const latestExtracted = <T>(extractor: (text: string) => T | null) => {
@@ -533,10 +572,10 @@ function fieldForNextQuestion(question: string | null) {
   return question ? questionField(question.replace(/[。！？!?]$/, '') + '？') : null;
 }
 
-function questionValueFor(intent: UserIntent, question: string | null, problemMap: ProblemMap, userTurnCount: number) {
+function questionValueFor(intent: UserIntent, question: string | null, problemMap: ProblemMap, userTurnCount: number, latestText = '') {
   const field = fieldForNextQuestion(question);
   if (!field) return 0;
-  if (intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION') return 0.85;
+  if (intent === 'WANTS_CLARITY' || intent === 'WANTS_ACTION' || hasExplicitClarificationRequest(latestText) || correctionPatterns.some((pattern) => pattern.test(latestText))) return 0.85;
   if (field === 'severity_score' && problemMap.functional_impacts.length) return 0.8;
   if (field === 'functional_impact' && problemMap.severity_score !== null) return 0.78;
   if (userTurnCount > 1) return 0.68;
@@ -551,6 +590,7 @@ export function selectDialogueStrategy(input: {
   nextQuestion: string | null;
   questionValue: number;
   problemMap: ProblemMap;
+  openQuestionRequested?: boolean;
 }): DialogueStrategy {
   if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
   if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
@@ -559,6 +599,7 @@ export function selectDialogueStrategy(input: {
   if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
+  if (input.openQuestionRequested && input.nextQuestion) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
   if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
   return 'LISTEN';
@@ -793,7 +834,8 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const handoffWasOffered = options.handoffOffered === true;
   const safety = options.safetyStatus || detectSafety(text);
   const intent = resolveConversationIntent(text, contextText);
-  const topics = Array.from(new Set([...(options.issueTopicTags || []).filter((topic) => topic !== 'OTHER'), ...classifyConcern(allUserText)]));
+  const deniedTopics = new Set(deniedTopicsForText(allUserText));
+  const topics = Array.from(new Set([...(options.issueTopicTags || []).filter((topic) => topic !== 'OTHER' && !deniedTopics.has(topic)), ...classifyConcern(allUserText).filter((topic) => !deniedTopics.has(topic))]));
   const understanding = options.understanding || buildConversationUnderstanding([{ role: 'user', content: allUserText }], options.issueTopicTags || []);
   const problemMap = applyKnownFacts(buildProblemMap(allUserText, topics, intent), understanding);
   const complexity = determineComplexity(allUserText, topics, problemMap, safety);
@@ -819,9 +861,10 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const responseGoal = responseGoalFor(routing, intent, gaps, assessment, supportFeedback);
   const declinedHuman = declineHumanPatterns.some((pattern) => pattern.test(text));
   const handoffState = declinedHuman ? 'DECLINED' as const : (handoffReady || optionalHumanOffer) ? 'OFFERED' as const : handoffWasOffered ? 'READY' as const : 'NOT_READY' as const;
-  const nextQuestionCandidate = handoffReady ? null : chooseNextQuestion(gaps);
-  const questionValue = Number(questionValueFor(intent, nextQuestionCandidate, problemMap, userTurnCount).toFixed(2));
-  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap });
+  const nextQuestionCandidate = handoffReady ? null : chooseNextQuestion(gaps, text, problemMap);
+  const questionValue = Number(questionValueFor(intent, nextQuestionCandidate, problemMap, userTurnCount, text).toFixed(2));
+  const openQuestionRequested = hasExplicitClarificationRequest(text) || deniedTopics.size > 0;
+  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested });
   const askQuestion = !handoffReady
     && responseGoal !== 'HANDOFF'
     && responseGoal !== 'HELP'
@@ -830,6 +873,12 @@ export function analyzeConversation(latestText: string, contextText = '', option
     && Boolean(nextQuestionCandidate)
     && ['CLARIFY_FACT', 'QUANTIFY', 'CLARIFY_GOAL'].includes(primaryResponseStrategy)
     && questionValue >= 0.72;
+  const noMoreQuestions = handoffReady
+    || routing === 'PROFESSIONAL_REFERRAL'
+    || intent === 'WANTS_COMFORT'
+    || intent === 'WANTS_ACTION'
+    || intent === 'WANTS_END'
+    || !openQuestionRequested;
   const legacyRoute = legacyRouting(routing);
   const reasons = [
     safety === 'URGENT' ? '检测到可信的即时危险表达' : '',
@@ -865,7 +914,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     human_help_level: humanLevel,
     reply_length: replyLengthFor(text, intent, responseGoal, complexity),
     ask_question: askQuestion,
-    no_more_questions: !askQuestion,
+    no_more_questions: noMoreQuestions,
     show_booking_button: showBookingButton,
     booking_button_text: showBookingButton ? '免费预约真人聊聊' : null,
     booking_summary_ready: handoffReady,

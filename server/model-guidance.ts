@@ -14,6 +14,10 @@ export function modelGuidanceFor(analysis: ConversationAnalysis) {
     reply_length: analysis.reply_length,
     ask_question: analysis.ask_question,
     no_more_questions: analysis.no_more_questions,
+    // `ask_question` is only the server's suggested structured gap. When it is
+    // false but `no_more_questions` is also false, the model may still ask one
+    // natural, context-specific open question if that is the most useful move.
+    open_question_allowed: !analysis.no_more_questions,
     response_strategy: analysis.primary_response_strategy,
     next_question: analysis.ask_question ? analysis.next_question : null,
     routing: analysis.routing,
