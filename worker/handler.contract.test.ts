@@ -376,6 +376,20 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it('HUM-03：模型仍输出预约营销文案时，服务端不得泄露入口或 CTA', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('好，下面就是“免费预约真人聊聊”的入口。提交后会由真人和你一对一聊聊当前这件事。'));
+    const issueId = 'issue-human-marketing-guard';
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '是不是找个真人会更方便解决我的问题', issueId }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis).toMatchObject({ routing: 'AI_SUPPORT', show_booking_button: false, handoff_mode: 'NONE' });
+    expect(body.reply).not.toMatch(/免费预约真人聊聊|下面就是.*入口|提交后.*真人|一对一聊聊当前这件事/);
+  });
+
   it('HUM-02：只有确定决定预约的表达进入快捷真人通道', async () => {
     const nonBookings = [
       '是不是找个真人会更方便解决我的问题',
