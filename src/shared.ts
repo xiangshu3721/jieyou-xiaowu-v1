@@ -3,7 +3,7 @@
 export type HumanHelpDecision = 'DECLINED' | 'CONSIDERING' | 'EXPLICIT' | 'NONE';
 
 export function humanHelpDecision(textInput: string): HumanHelpDecision {
-  const text = textInput.trim();
+  const text = textInput.trim().replace(/^(?:那|嗯|好)[，, ]*/, '');
   if (!/(?:真人|人工|导师|老师|咨询师|心理咨询|专业的人|找人聊|找个人聊|和人聊|一对一|1\s*v\s*1|预约|咨询服务)/i.test(text)) return 'NONE';
 
   // Negation and corrections must win over a quoted positive phrase such as
@@ -16,13 +16,13 @@ export function humanHelpDecision(textInput: string): HumanHelpDecision {
   }
 
   // Being curious whether a human would help is not an appointment request.
-  if (/要不要|该不该|需不需要|应不应该|是否|是不是|会不会|有没有必要|有必要吗|有用吗|有帮助吗|更方便|更合适|适不适合|合不合适|合适吗|值不值得|拿不准|可以吗|行不行|不确定|只是问|我(?:是)?问你|想知道|想了解|了解一下|能不能|有没有|可不可以|[？?]/.test(text)) {
+  if (/要不要|该不该|需不需要|应不应该|是否|是不是|会不会|有没有必要|有必要吗|有用吗|有帮助吗|更方便|更合适|适不适合|合不合适|合适吗|值不值得|拿不准|可以吗|行不行|不确定|只是问|我(?:是)?问你|想知道|想了解|了解一下|能不能|有没有|可不可以|(?:吗|么)[？?]?$|[？?]/.test(text)) {
     return 'CONSIDERING';
   }
 
   // Only an unambiguous *affirmative request* authorizes booking. AI being
   // unhelpful, a service existing, or the word “找真人” alone do not.
-  if (/(?:^|[，,。！!；;\s])(?:(?:我(?:现在|现在就|真的|确实|已经|就)?|请|麻烦)?(?:想|希望|需要|决定|确定|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我)).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|心理咨询师|咨询师)|一对一|1\s*v\s*1)/i.test(text)
+  if (/(?:^|[，,。！!；;\s])(?:(?:我(?:现在|现在就|真的|确实|已经|就|还是)?|请|麻烦)?(?:想|希望|需要|决定|确定|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我)).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|心理咨询师|咨询师)|一对一|1\s*v\s*1)/i.test(text)
     || /(?:^|[，,。！!；;\s])(?:我想|我希望|我需要|我决定|我确定|帮我|请帮我|我要).{0,10}(?:找个人聊|找人聊|和真人聊|和人聊)/.test(text)) {
     return 'EXPLICIT';
   }
