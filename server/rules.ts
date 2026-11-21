@@ -43,7 +43,21 @@ const possibleDangerPatterns = [
   /家暴|人身安全|被威胁|可能会被伤害/,
 ];
 
-const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /药物/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
+const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
+const medicationDecisionPatterns = [
+  /(?:吃|服用|服|用|正在吃|正在服用|抗抑郁|抗焦虑|处方).{0,16}(?:药|药物).{0,18}(?:停药|减药|减量|加量|调整剂量|换药|剂量|副作用|不良反应)/,
+  /(?:想|要不要|能不能|是否|是不是|怎么|该不该|准备|打算|可以).{0,8}(?:自己|自行)?(?:停药|减药|换药)/,
+  /(?:减量|加量|调整剂量|自己停|自行停|自己减|自行减).{0,16}(?:药|药物|处方|抗抑郁|抗焦虑)/,
+  /(?:药|药物|剂量).{0,16}(?:想|要不要|能不能|可以不可以|是否|是不是|怎么|可以).{0,16}(?:停|减|加|少吃|减一点|减量|调成一半|减半|补服|补吃|补两片|换|调整|剂量)/,
+  /(?:漏吃|漏服|忘了吃|忘记吃|忘服).{0,16}(?:补|两片|加倍|多吃)/,
+  /(?:想|要不要|能不能|是否|是不是|可以).{0,12}(?:把)?(?:剂量|用量).{0,12}(?:调成一半|减半|调整|减量|加量)/,
+  /(?:药|药物).{0,16}(?:副作用|不良反应)/,
+];
+const medicationContextPatterns = [/(?:服用|吃药|服药|正在用|使用).{0,12}(?:药|药物)/, /抗抑郁药|抗焦虑药|处方药/, /药物/];
+const contextualMedicationDecisionPatterns = [
+  /(?:能不能|可以不可以|可不可以|是否|是不是|能否|想|要不要|可以).{0,10}(?:减一点|少吃一点|减量|调成一半|减半|停药|加量|补服|补吃|补两片)/,
+  /(?:漏吃|漏服|忘了吃|忘记吃|忘服).{0,12}(?:补|两片|加倍|多吃)/,
+];
 const endPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 
 const correctionPatterns = [
@@ -258,6 +272,20 @@ export function deniedTopicsForText(text: string) {
   const denied: TopicCode[] = [];
   if (/(?:我)?(?:没有|没|并没有|并非).{0,8}(?:提到|说过|说).{0,12}(?:经济|收入|钱|欠钱|财务|房租)/.test(text)) denied.push('MONEY');
   return denied;
+}
+
+/**
+ * A medication mention alone is ordinary context. This helper only matches a
+ * concrete medication decision or side-effect question, which must not be
+ * answered by the general growth-support route.
+ */
+export function isMedicationDecisionRequest(text: string, issueContextText = '') {
+  if (medicationDecisionPatterns.some((pattern) => pattern.test(text))) return true;
+  if (!issueContextText || !medicationContextPatterns.some((pattern) => pattern.test(issueContextText))) return false;
+  // An omitted subject is only safe to inherit when the latest turn does not
+  // explicitly name a non-medical object such as work or a task.
+  if (/(?:任务|工作量|工作压力|工作|事情|计划|安排|时间)/.test(text)) return false;
+  return contextualMedicationDecisionPatterns.some((pattern) => pattern.test(text));
 }
 
 function effectiveUserLines(lines: string[], latestText: string) {
@@ -554,6 +582,10 @@ export function buildConversationUnderstanding(messages: ChatMessage[], issueTop
 export function isDuplicateQuestion(text: string, analysis: Pick<ConversationAnalysis, 'known_facts' | 'asked_questions'>) {
   const field = questionField(text);
   if (!field) return false;
+  // A broad scene summary inferred from the user's latest sentence is not an
+  // answer to a useful request for one concrete example. Only treat scene
+  // questions as duplicates after that field was explicitly asked and answered.
+  if (field === 'scene') return analysis.asked_questions.some((item) => item.field === field && item.answered);
   return analysis.known_facts[field] !== undefined || analysis.asked_questions.some((item) => item.field === field && item.answered);
 }
 
@@ -588,7 +620,7 @@ export function selectDialogueStrategy(input: {
   if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
-  if (input.openQuestionRequested && input.nextQuestion) return 'CLARIFY_FACT';
+  if (input.openQuestionRequested && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
   if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
   return 'LISTEN';
@@ -715,8 +747,11 @@ function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexi
     && humanHelpLevel(text, intent, complexity, problemMap, supportFeedback) === 'HIGH';
 }
 
-function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, complexity: Complexity, sufficiency: number, assessment: AssessmentRecommendation, supportFeedback: string | null, handoffReady = false): TriageRouting {
+function routeFor(safety: SafetyStatus, text: string, intent: UserIntent, complexity: Complexity, sufficiency: number, assessment: AssessmentRecommendation, supportFeedback: string | null, handoffReady = false, issueContextText = ''): TriageRouting {
   if (safety !== 'NO_SIGNAL_DETECTED') return 'SAFETY_SUPPORT';
+  // A general mentor handoff must not replace a concrete medication decision
+  // that needs a prescriber or another qualified medical professional.
+  if (isMedicationDecisionRequest(text, issueContextText)) return 'PROFESSIONAL_REFERRAL';
   if (intent === 'WANTS_HUMAN') return 'HUMAN_MENTOR';
   if (handoffReady) return 'HUMAN_MENTOR';
   if (isHumanHandoffDecline(text)) return 'AI_SUPPORT';
@@ -834,7 +869,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
     && (intent === 'WANTS_HUMAN' || (!handoffWasOffered && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback, userTurnCount)));
-  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady);
+  const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady, contextText);
   const handoffReady = routing === 'HUMAN_MENTOR';
   // A question about human support is not consent to offer a booking CTA.
   // Keep the conversation on AI until the user explicitly chooses to book.
@@ -854,7 +889,17 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const handoffState = declinedHuman ? 'DECLINED' as const : (handoffReady || optionalHumanOffer) ? 'OFFERED' as const : handoffWasOffered ? 'READY' as const : 'NOT_READY' as const;
   const nextQuestionCandidate = handoffReady ? null : chooseNextQuestion(gaps, text, problemMap);
   const questionValue = Number(questionValueFor(intent, nextQuestionCandidate, problemMap, userTurnCount, text).toFixed(2));
-  const openQuestionRequested = hasExplicitClarificationRequest(text) || deniedTopics.size > 0;
+  // `ask_question` is a structured gap suggestion. `no_more_questions` is a
+  // hard conversational boundary. Ordinary VENTING is allowed to receive one
+  // useful, context-specific open question from the model even when no
+  // predefined field question was selected; explicit comfort/end, safety,
+  // professional and handoff paths remain non-questioning.
+  const hardNoQuestionBoundary = handoffReady
+    || routing === 'PROFESSIONAL_REFERRAL'
+    || safety !== 'NO_SIGNAL_DETECTED'
+    || intent === 'WANTS_COMFORT'
+    || intent === 'WANTS_END';
+  const openQuestionRequested = !hardNoQuestionBoundary;
   const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested });
   const askQuestion = !handoffReady
     && responseGoal !== 'HANDOFF'
@@ -864,12 +909,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     && Boolean(nextQuestionCandidate)
     && ['CLARIFY_FACT', 'QUANTIFY', 'CLARIFY_GOAL'].includes(primaryResponseStrategy)
     && questionValue >= 0.72;
-  const noMoreQuestions = handoffReady
-    || routing === 'PROFESSIONAL_REFERRAL'
-    || intent === 'WANTS_COMFORT'
-    || intent === 'WANTS_ACTION'
-    || intent === 'WANTS_END'
-    || !openQuestionRequested;
+  const noMoreQuestions = hardNoQuestionBoundary;
   const legacyRoute = legacyRouting(routing);
   const reasons = [
     safety === 'URGENT' ? '检测到可信的即时危险表达' : '',

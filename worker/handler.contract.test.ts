@@ -232,7 +232,7 @@ describe('worker handler API 契约', () => {
       const body = await json(response);
       expect(response.status).toBe(200);
       expect(body.reply).toBe(item.rawReply);
-      expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+      expect(body.analysis).toMatchObject({ ...item.expected, ask_question: false, routing: 'AI_SUPPORT' });
       expect(body.diagnostics).toMatchObject({ codes: ['MODEL_SUCCESS', 'MODEL_PARSE_FAILED'], fallback_used: false });
     }
   });
@@ -267,9 +267,123 @@ describe('worker handler API 契约', () => {
     }), baseEnv);
     const actionBody = await json(action);
     expect(action.status).toBe(200);
-    expect(actionBody.analysis).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: true, routing: 'AI_SUPPORT' });
+    expect(actionBody.analysis).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: false, routing: 'AI_SUPPORT' });
     expect(actionBody.reply).toBe(actionReply);
     expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('审计回归：保留普通开放问题，并覆盖模型对口语化用药决策的原始建议', async () => {
+    const openIssueId = 'issue-open-exploration';
+    const rawQuestion = '听起来工作压力很实在。最近具体卡在哪一部分？';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(rawQuestion));
+    const openResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: openIssueId,
+      issue: { issue_id: openIssueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '最近工作压力很大', issueId: openIssueId }],
+    }), baseEnv);
+    const openBody = await json(openResponse);
+    expect(openBody.reply).toBe(rawQuestion);
+    expect(openBody.analysis).toMatchObject({ routing: 'AI_SUPPORT', no_more_questions: false });
+    expect(openBody.diagnostics.codes).toContain('MODEL_PARSE_FAILED');
+
+    const medicationIssueId = 'issue-medication-boundary';
+    const rawMedication = '你可以先自行减量观察。';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(rawMedication));
+    const medicationText = '我正在吃抗抑郁药，药是不是该自己减量？';
+    const medicationResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: medicationIssueId,
+      issue: { issue_id: medicationIssueId, status: 'ACTIVE', topic_tags: ['BODY_LIFE'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: medicationText, issueId: medicationIssueId }],
+    }), baseEnv);
+    const medicationBody = await json(medicationResponse);
+    expect(medicationBody.analysis.routing).toBe('PROFESSIONAL_REFERRAL');
+    expect(medicationBody.reply).toContain('不要自行更改');
+    expect(medicationBody.reply).toContain('开药的医生');
+    expect(medicationBody.reply).not.toContain('自行减量观察');
+    expect(medicationBody.analysis.show_booking_button).toBe(false);
+    expect(medicationBody.diagnostics.codes).toContain('MODEL_PARSE_FAILED');
+  });
+
+  it('P0：当前 Issue 的用药背景覆盖省略主语决策，且不跨 Issue 串线', async () => {
+    const issueId = 'issue-medication-context';
+    const firstText = '我在服用抗抑郁药。';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('按医生说的继续观察就好。'));
+    const first = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['BODY_LIFE'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: firstText, issueId }],
+    }), baseEnv);
+    const firstBody = await json(first);
+    expect(firstBody.analysis.routing).toBe('AI_SUPPORT');
+
+    const secondText = '那我能不能减一点？';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('可以自行减量观察。'));
+    const second = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['BODY_LIFE'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: firstText, issueId },
+        { role: 'assistant', content: firstBody.reply, issueId },
+        { role: 'user', content: secondText, issueId },
+      ],
+    }), baseEnv);
+    const secondBody = await json(second);
+    expect(secondBody.analysis.routing).toBe('PROFESSIONAL_REFERRAL');
+    expect(secondBody.reply).toContain('不要自行更改');
+    expect(secondBody.reply).not.toContain('自行减量观察');
+    expect(secondBody.analysis.show_booking_button).toBe(false);
+
+    for (const [text, raw] of [
+      ['我今天漏吃了，能补两片吗？', '可以补两片。'],
+      ['药想少吃一点可以吗？', '可以少吃一点。'],
+      ['我想把剂量调成一半可以吗？', '可以调成一半。'],
+    ] as const) {
+      fetchMock.mockResolvedValueOnce(deepSeekResponse(raw));
+      const response = await handleApi(request('/api/chat', 'POST', {
+        currentIssueId: `issue-${text.slice(0, 4)}`,
+        issue: { issue_id: `issue-${text.slice(0, 4)}`, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY' },
+        messages: [{ role: 'user', content: text, issueId: `issue-${text.slice(0, 4)}` }],
+      }), baseEnv);
+      const body = await json(response);
+      expect(body.analysis.routing).toBe('PROFESSIONAL_REFERRAL');
+      expect(body.reply).toContain('不要自行更改');
+      expect(body.reply).not.toContain(raw.replace('。', ''));
+    }
+
+    const otherIssue = 'issue-old-medication';
+    const workIssue = 'issue-current-work';
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('可以把今天的工作量减到一件最紧急的。'));
+    const isolated = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: workIssue,
+      issue: { issue_id: workIssue, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      issues: [
+        { issue_id: otherIssue, status: 'PAUSED', topic_tags: ['BODY_LIFE'], handoff_offered: false, handoff_state: 'NOT_READY' },
+        { issue_id: workIssue, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      ],
+      messages: [
+        { role: 'user', content: '我在服用抗抑郁药。', issueId: otherIssue },
+        { role: 'assistant', content: '我记住了。', issueId: otherIssue },
+        { role: 'user', content: '最近工作压力很大。', issueId: workIssue },
+        { role: 'assistant', content: '最近具体卡在哪？', issueId: workIssue },
+        { role: 'user', content: '能不能减一点？', issueId: workIssue },
+      ],
+    }), baseEnv);
+    const isolatedBody = await json(isolated);
+    expect(isolatedBody.analysis.routing).toBe('AI_SUPPORT');
+    expect(isolatedBody.reply).toBe('可以把今天的工作量减到一件最紧急的。');
+    expect(isolatedBody.reply).not.toContain('不要自行更改');
+
+    fetchMock.mockClear();
+    const safety = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-safety-medication',
+      issue: { issue_id: 'issue-safety-medication', status: 'ACTIVE', topic_tags: ['BODY_LIFE'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '我现在准备伤害自己，也想把药加量。', issueId: 'issue-safety-medication' }],
+    }), baseEnv);
+    expect(safety.status).toBe(200);
+    const safetyBody = await json(safety);
+    expect(safetyBody.analysis.routing).toBe('SAFETY_SUPPORT');
+    expect(safetyBody.reply).toContain('请立刻');
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('chat 不强制 JSON，保留有效 JSON 或自然语言，并明确报告空白和截断输出', async () => {

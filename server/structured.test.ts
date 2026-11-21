@@ -119,7 +119,7 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(clarification, { allowQuestion: false })).not.toMatch(/[？?]/);
   });
 
-  it('倾诉模式会移除模型仍然生成的追问，但不影响明确求助', () => {
+  it('明确只想倾诉时移除模型追问，但普通对话保留有价值的开放问题', () => {
     const comfort = analyzeConversation('我只想把这些乱七八糟的感觉说出来。');
     expect(normalizeUserReply('那就说吧。你最怕的是什么？', comfort)).toBe('那就说吧。');
     expect(normalizeUserReply('你最怕的是什么？', comfort)).not.toMatch(/[？?]/);
@@ -128,11 +128,25 @@ describe('结构化 AI 输出校验', () => {
 
     const normal = analyzeConversation('完全没有收入。');
     expect(normalizeUserReply('收入断了，压力会很具体。你现在还能撑多久？', normal))
-      .toBe('收入断了，压力会很具体。');
+      .toBe('收入断了，压力会很具体。你现在还能撑多久？');
+
+    const explicitComfort = analyzeConversation('我只想说说，别给建议');
+    expect(normalizeUserReply('我听见你很累。你最想先说哪一部分？', explicitComfort))
+      .toBe('我听见你很累。');
 
     const action = analyzeConversation('现在我愿意做点事，但别给长计划。');
     expect(normalizeUserReply('今天先把下个月房租和手头可用的钱写下来。', action))
       .toBe('今天先把下个月房租和手头可用的钱写下来。');
+  });
+
+  it('服务端覆盖模型对口语化用药决策的不安全建议', () => {
+    const latestUserMessage = '我正在吃抗抑郁药，药是不是该自己减量？';
+    const analysis = analyzeConversation(latestUserMessage);
+    expect(analysis.routing).toBe('PROFESSIONAL_REFERRAL');
+    const reply = normalizeUserReply('可以先自行减量观察。', analysis, { latestUserMessage });
+    expect(reply).toContain('不要自行更改');
+    expect(reply).toContain('开药的医生');
+    expect(reply).not.toContain('自行减量观察');
   });
 
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {

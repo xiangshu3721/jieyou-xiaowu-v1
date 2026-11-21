@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, recentSafetyStatus, resolveConversationIntent, routeConcern } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, isMedicationDecisionRequest, recentSafetyStatus, resolveConversationIntent, routeConcern } from './rules.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('工作压力延伸到伴侣关系不自动拆成新 Issue，独立关系话题仍可切换', () => {
@@ -135,7 +135,7 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('其实最怕的是下个月房租。', context, { userTurnCount: 3 }))
       .toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', ask_question: false, no_more_questions: true });
     expect(analyzeConversation('现在我愿意做点事，但别给长计划。', context, { userTurnCount: 4 }))
-      .toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: true });
+      .toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: false });
     expect(analyzeConversation('那今天我该先看什么？')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP' });
   });
 
@@ -143,6 +143,42 @@ describe('解忧小屋智能导诊规则', () => {
     const analysis = analyzeConversation('我想知道自己是不是需要心理治疗或精神科帮助');
     expect(analysis.routing_state).toBe('PROFESSIONAL_REFERRAL');
     expect(routeConcern('我想了解心理咨询', 'NO_SIGNAL_DETECTED')).toBe('AI_SELF_HELP');
+  });
+
+  it('口语化用药决策进入专业边界，但普通服药叙述不误判', () => {
+    for (const text of [
+      '我正在吃抗抑郁药，药是不是该自己减量？',
+      '我想自己停药，应该怎么做？',
+      '药物副作用让我想换药，能自己调整吗？',
+      '我今天漏吃了，能补两片吗？',
+      '药想少吃一点可以吗？',
+      '我想把剂量调成一半可以吗？',
+    ]) {
+      expect(isMedicationDecisionRequest(text)).toBe(true);
+      expect(analyzeConversation(text)).toMatchObject({ routing: 'PROFESSIONAL_REFERRAL', show_booking_button: false });
+    }
+    for (const text of ['我最近按医生说的吃药，睡得比以前好。', '我今天忘了吃药，有点担心。', '我去年停药以后睡得好多了。']) {
+      expect(isMedicationDecisionRequest(text)).toBe(false);
+      expect(analyzeConversation(text).routing).toBe('AI_SUPPORT');
+    }
+    expect(analyzeConversation('我想找真人导师聊聊，但药是不是该自己减量？').routing).toBe('PROFESSIONAL_REFERRAL');
+  });
+
+  it('用药背景可承接省略主语的后续决策，但不跨 Issue 串线', () => {
+    const medicationContext = '用户：我在服用抗抑郁药。';
+    expect(isMedicationDecisionRequest('那我能不能减一点？', medicationContext)).toBe(true);
+    expect(analyzeConversation('那我能不能减一点？', medicationContext).routing).toBe('PROFESSIONAL_REFERRAL');
+    expect(isMedicationDecisionRequest('最近工作压力很大，能不能减一点任务？', medicationContext)).toBe(false);
+    expect(analyzeConversation('能不能减一点？', '用户：最近工作压力很大。').routing).toBe('AI_SUPPORT');
+    expect(analyzeConversation('我按医生说的吃药，最近睡得好一些。').routing).toBe('AI_SUPPORT');
+  });
+
+  it('普通交流允许开放探索，只有明确边界才禁止提问', () => {
+    expect(analyzeConversation('最近工作压力很大')).toMatchObject({ no_more_questions: false });
+    expect(analyzeConversation('事情有点乱，心里着急').no_more_questions).toBe(false);
+    expect(analyzeConversation('我只想说说，别给建议')).toMatchObject({ ask_question: false, no_more_questions: true });
+    expect(analyzeConversation('我现在想要一个具体办法')).toMatchObject({ no_more_questions: false });
+    expect(analyzeConversation('我先不聊了')).toMatchObject({ ask_question: false, no_more_questions: true });
   });
 
   it('记录用户对帮助效果的反馈', () => {
