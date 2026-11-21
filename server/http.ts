@@ -221,7 +221,8 @@ async function handle(request: http.IncomingMessage, response: http.ServerRespon
       const raw = await callDeepSeek([{ role: 'system', content: prompts.chat + serverGuidance }, ...analysisMessages.map(({ role, content }) => ({ role, content }))]);
       const parsed = parseAssistantOutput(raw);
       const analysis = mergeAnalysis(baseline, parsed);
-      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis, { latestUserMessage: latestText }) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis, { latestUserMessage: latestText }), analysis, { latestUserMessage: latestText });
+      const replyContext = { latestUserMessage: latestText, issueUserContext: contextText };
+      const reply = analysis.safety_status !== 'NO_SIGNAL_DETECTED' ? fallbackReply(analysis, replyContext) : normalizeUserReply(parsed?.reply || naturalReply(raw) || fallbackReply(analysis, replyContext), analysis, replyContext);
       return send(response, 200, { reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: config.promptVersion, model: config.deepseek.model });
     } catch (error) {
       const message = error instanceof DeepSeekUnavailableError ? error.message : 'AI 暂时没有回应，请稍后重试';

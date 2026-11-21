@@ -150,6 +150,9 @@ describe('解忧小屋智能导诊规则', () => {
       '我正在吃抗抑郁药，药是不是该自己减量？',
       '我想自己停药，应该怎么做？',
       '药物副作用让我想换药，能自己调整吗？',
+      '我今天漏吃了，能补两片吗？',
+      '药想少吃一点可以吗？',
+      '我想把剂量调成一半可以吗？',
     ]) {
       expect(isMedicationDecisionRequest(text)).toBe(true);
       expect(analyzeConversation(text)).toMatchObject({ routing: 'PROFESSIONAL_REFERRAL', show_booking_button: false });
@@ -159,6 +162,15 @@ describe('解忧小屋智能导诊规则', () => {
       expect(analyzeConversation(text).routing).toBe('AI_SUPPORT');
     }
     expect(analyzeConversation('我想找真人导师聊聊，但药是不是该自己减量？').routing).toBe('PROFESSIONAL_REFERRAL');
+  });
+
+  it('用药背景可承接省略主语的后续决策，但不跨 Issue 串线', () => {
+    const medicationContext = '用户：我在服用抗抑郁药。';
+    expect(isMedicationDecisionRequest('那我能不能减一点？', medicationContext)).toBe(true);
+    expect(analyzeConversation('那我能不能减一点？', medicationContext).routing).toBe('PROFESSIONAL_REFERRAL');
+    expect(isMedicationDecisionRequest('最近工作压力很大，能不能减一点任务？', medicationContext)).toBe(false);
+    expect(analyzeConversation('能不能减一点？', '用户：最近工作压力很大。').routing).toBe('AI_SUPPORT');
+    expect(analyzeConversation('我按医生说的吃药，最近睡得好一些。').routing).toBe('AI_SUPPORT');
   });
 
   it('普通交流允许开放探索，只有明确边界才禁止提问', () => {

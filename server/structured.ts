@@ -233,6 +233,7 @@ export function replyPartsForDisplay(reply: string, analysis?: ConversationAnaly
 
 export interface ReplyContext {
   latestUserMessage?: string;
+  issueUserContext?: string;
   recentUserMessages?: string[];
   recentAssistantReplies?: string[];
 }
@@ -277,7 +278,7 @@ function removeQuestions(reply: string) {
 
 export function normalizeUserReply(reply: string, analysis?: ConversationAnalysis, context: ReplyContext = {}) {
   if (analysis) {
-    if (analysis.routing === 'PROFESSIONAL_REFERRAL' && isMedicationDecisionRequest(context.latestUserMessage || '')) {
+    if (analysis.routing === 'PROFESSIONAL_REFERRAL' && isMedicationDecisionRequest(context.latestUserMessage || '', context.issueUserContext || '')) {
       return medicationBoundaryReply;
     }
     // 去重仅针对提问子句，不能覆盖同条回复中已经给出的解释或帮助。
@@ -464,7 +465,7 @@ export function fallbackReply(analysis: ConversationAnalysis, options: { allowQu
     return handoffCopyFor(analysis);
   }
   if (analysis.routing === 'PROFESSIONAL_REFERRAL') {
-    if (isMedicationDecisionRequest(latestUserMessage)) return medicationBoundaryReply;
+    if (isMedicationDecisionRequest(latestUserMessage, options.issueUserContext || '')) return medicationBoundaryReply;
     return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   }
   if (isReplyChallenge(latestUserMessage)) return challengeFallback(analysis, options, userContext);

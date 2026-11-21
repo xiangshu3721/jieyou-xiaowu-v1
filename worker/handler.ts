@@ -638,6 +638,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       if (analysis.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, request);
       const replyContext = {
         latestUserMessage: latestText,
+        issueUserContext: userContextText(analysisMessages.slice(0, -1)),
         recentUserMessages: analysisMessages.filter((message) => message.role === 'user').slice(-2).map((message) => message.content),
         recentAssistantReplies: analysisMessages.filter((message) => message.role === 'assistant').slice(-2).map((message) => message.content),
       };
