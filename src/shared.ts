@@ -2,15 +2,23 @@
  * are different acts. Keep one conservative decision shared by UI and server. */
 export type HumanHelpDecision = 'DECLINED' | 'CONSIDERING' | 'EXPLICIT' | 'NONE';
 
+const explicitHumanBookingPattern = /(?:^|[，,。！!；;\s])(?:(?:现在|现在就)?(?:我(?:现在|现在就|真的|确实|已经|就|还是)?|请|麻烦)?)(?:想|希望|需要|决定|确定|愿意|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|心理咨询师|咨询师)|一对一|1\s*v\s*1)/i;
+
 export function humanHelpDecision(textInput: string): HumanHelpDecision {
   const text = textInput.trim().replace(/^(?:那|嗯|好)[，, ]*/, '');
   if (!/(?:真人|人工|导师|老师|咨询师|心理咨询|专业的人|找人聊|找个人聊|和人聊|一对一|1\s*v\s*1|预约|咨询服务)/i.test(text)) return 'NONE';
+
+  // If the user first denies booking and then explicitly changes their mind in
+  // the same message, the latest clear decision wins.
+  const explicitMatch = explicitHumanBookingPattern.exec(text);
+  if (explicitMatch && /(?:不想|不愿意|不需要|先不|不用|拒绝|不打算|不是|并不是|并非|不是真的|没有|不要|别|我只是|只是|仅仅)/.test(text.slice(0, explicitMatch.index))) return 'EXPLICIT';
 
   // Negation and corrections must win over a quoted positive phrase such as
   // “不是真的要找真人” or “不要我一提到真人就跳转”.
   if (/(?:不想|不愿意|不需要|先不|不用|拒绝|不打算).{0,12}(?:找真人|预约|真人|人工|导师|老师|咨询师)/.test(text)
     || /(?:不是|并不是|并非|不是真的|没有).{0,9}(?:想|要|需要|决定).{0,10}(?:找真人|预约|找导师|找咨询师|找老师)/.test(text)
     || /(?:不要|别).{0,18}(?:提到真人|提起真人|真人.{0,8}(?:跳转|推荐|预约)|跳转|导流|推(?:荐|销)真人)/.test(text)
+    || /(?:不急着|不要急着).{0,8}(?:安排|预约)(?:真人|人工|导师|老师|咨询师)/.test(text)
     || /(?:我只是|只是|仅仅).{0,8}(?:问你|问一下|询问).{0,15}(?:真人|预约|咨询师)/.test(text)) {
     return 'DECLINED';
   }
@@ -22,7 +30,7 @@ export function humanHelpDecision(textInput: string): HumanHelpDecision {
 
   // Only an unambiguous *affirmative request* authorizes booking. AI being
   // unhelpful, a service existing, or the word “找真人” alone do not.
-  if (/(?:^|[，,。！!；;\s])(?:(?:我(?:现在|现在就|真的|确实|已经|就|还是)?|请|麻烦)?(?:想|希望|需要|决定|确定|我要|要|准备|打算|现在就|马上|直接|帮我|请帮我|给我)).{0,12}(?:找(?:个|位)?真人|真人聊|真人导师|预约(?:真人|导师|咨询师)?|约(?:个|位)?真人|找(?:个|位)?(?:导师|老师|心理咨询师|咨询师)|一对一|1\s*v\s*1)/i.test(text)
+  if (explicitHumanBookingPattern.test(text)
     || /(?:^|[，,。！!；;\s])(?:我想|我希望|我需要|我决定|我确定|帮我|请帮我|我要).{0,10}(?:找个人聊|找人聊|和真人聊|和人聊)/.test(text)) {
     return 'EXPLICIT';
   }
