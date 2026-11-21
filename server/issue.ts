@@ -1,4 +1,4 @@
-import { isUndecidedHumanHelpQuestion } from '../src/shared.js';
+import { isHumanHandoffDecline, wantsHumanBooking } from '../src/shared.js';
 import type { ChatMessage, ConversationAnalysis, ConversationControlIntent, HumanHandoffState, IssueAction, IssueLifecycle, IssueStatus, TopicCode } from '../src/shared.js';
 import { classifyConcern, detectIssueSwitch } from './rules.js';
 
@@ -30,7 +30,6 @@ const topicSwitchPatterns = [
   /换个话题/, /聊点别的/, /这个先不聊/, /先不聊这个/, /这个先不说/, /先说别的/, /换一个问题/, /以后再说/, /还有另一个烦恼/, /还有个别的问题/, /我还有另外一个/, /我想说另外一件事/,
 ];
 const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
-const acceptHandoffPatterns = [/(?:想|希望|需要|我要|帮我).{0,8}(?:找真人|真人聊|预约真人|找导师|导师聊)/, /(?:预约|找).{0,8}(?:真人|导师|老师)/];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
 const contextualDeclineHandoffPatterns = [/^算了[。！! ]*$/, /^不用了[。！! ]*$/];
@@ -61,8 +60,8 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
 export function detectConversationControl(text: string, handoffOffered = false): ConversationControlIntent {
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
-  if (declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
-  if (!isUndecidedHumanHelpQuestion(latest) && acceptHandoffPatterns.some((pattern) => pattern.test(latest))) return 'ACCEPT_HANDOFF';
+  if (isHumanHandoffDecline(latest) || declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
+  if (wantsHumanBooking(latest)) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
   if (closeTopicPatterns.some((pattern) => pattern.test(latest))) return 'CLOSE_TOPIC';
   return 'GENERAL_CHAT';
