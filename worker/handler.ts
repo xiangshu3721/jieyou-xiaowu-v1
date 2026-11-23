@@ -2,6 +2,7 @@ import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage }
 import { analyzeConversation, buildConversationUnderstanding, deniedTopicsForText, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from '../server/structured.js';
+import { currentJobShadowFromAnalysis } from '../server/current-job.js';
 import { modelGuidanceFor } from '../server/model-guidance.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
@@ -678,6 +679,16 @@ export async function handleApi(request: Request, env: WorkerEnv) {
         } else {
           reply = normalized;
         }
+      }
+      // JTBD-01 影子模式：仅在请求显式开启 `currentJobShadow` 诊断开关时附加
+      // 可解释的 current_job 影子分类。默认请求不写入该字段，回复与现有可见
+      // 响应逐字不变；该字段不参与任何路由、Prompt、CTA、Fallback 或状态机。
+      if (body.currentJobShadow === true) {
+        analysis.current_job = currentJobShadowFromAnalysis(
+          analysis,
+          latestText,
+          analysisMessages.filter((message) => message.role === 'user').map((message) => message.content),
+        );
       }
       return json(200, { reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: diagnostics.model, diagnostics }, request);
     } catch (error) {

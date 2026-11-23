@@ -1254,4 +1254,37 @@ describe('worker handler API 契约', () => {
     expect(await json(response)).toMatchObject({ code: 'SAFETY_GATE_BLOCKED', safety_status: 'URGENT' });
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  it('JTBD-01 影子模式：默认请求不写 current_job，开启 currentJobShadow 才附加且回复逐字不变', async () => {
+    const issueId = 'issue-jtbd-shadow';
+    const rawReply = '先把今天最紧急的一件事列出来，只做它的第一步。';
+
+    // 默认请求：不携带 currentJobShadow，analysis 中不得出现 current_job 字段。
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply));
+    const defaultResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '工作压力很大，我接下来该怎么办？', issueId }],
+    }), baseEnv);
+    const defaultBody = await json(defaultResponse);
+    expect(defaultResponse.status).toBe(200);
+    expect(defaultBody.reply).toBe(rawReply);
+    expect(defaultBody.analysis).not.toHaveProperty('current_job');
+
+    // 开启诊断开关：附加可解释的 current_job 影子分类，回复保持逐字一致。
+    fetchMock.mockResolvedValueOnce(deepSeekResponse(rawReply));
+    const shadowResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      currentJobShadow: true,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '工作压力很大，我接下来该怎么办？', issueId }],
+    }), baseEnv);
+    const shadowBody = await json(shadowResponse);
+    expect(shadowResponse.status).toBe(200);
+    expect(shadowBody.reply).toBe(rawReply);
+    expect(shadowBody.analysis.current_job).toBeDefined();
+    expect(shadowBody.analysis.current_job.current_job).toBe('ACT');
+    expect(shadowBody.analysis.current_job.evidence.some((item: { signal: string }) => item.signal === 'user_intent')).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
