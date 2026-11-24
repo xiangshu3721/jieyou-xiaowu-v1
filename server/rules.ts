@@ -43,6 +43,33 @@ const possibleDangerPatterns = [
   /家暴|人身安全|被威胁|可能会被伤害/,
 ];
 
+// SAFE-01：间接轻生意念（第一人称、条件/愿望/假设框架、无即时计划）。
+// 仅用于 NEEDS_CLARIFICATION，不升级 URGENT。
+// 不含宽泛的"不在/消失/离开"，避免误伤普通外出、日常离开或第三人称叙述。
+const indirectSuicidalPatterns = [
+  // "如果/要是/会想如果(我)不在了就好了/该多好" — 允许主语省略或前导
+  /(?:如果|要是|若能).{0,10}(?:我|自己)?.{0,8}(?:不在|没有|不存在).{0,10}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
+  // "要是没有我/我没有了+就好了" — 倒序"没有我"
+  /(?:要是|如果|若能).{0,6}(?:没有|看不到).{0,4}(?:我|自己).{0,10}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
+  // "希望/想不用再醒过来"
+  /(?:希望|想|但愿|真希望).{0,8}(?:不用|不必|再也不用).{0,8}(?:醒|起来|睁开).{0,4}(?:来|眼)/,
+  // "我不在了就好/也好/也无所谓"
+  /(?:我|自己).{0,4}(?:不在|不见|消失).{0,4}(?:了|的).{0,6}(?:就好|也好|也无所谓|也行|也无妨|该多好|也可以)/,
+  // "消失了也没人在意/也不会有人发现/也不会有人..."
+  /(?:我|自己).{0,6}(?:消失|不见|离开).{0,6}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
+  // "如果/要是+(我)消失了/不见了/离开了+也不会有人在意/也没人..."  — 允许主语省略
+  /(?:如果|要是|若能|万一).{0,10}(?:我|自己)?.{0,6}(?:消失|不见|离开).{0,6}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
+];
+
+// SAFE-01：第三人称转述（无引号的间接引述）与文学/讨论语境：抑制安全触发。
+// 只在整句明显属于他者叙述或作品讨论时生效，不误压第一人称混合表达。
+const suppressSafetyContextPatterns = [
+  // 第三人称报告："朋友/他/她说...不想活/轻生/..."
+  /(?:朋友|他|她|某人|有人|同事|同学|伴侣|家人|对方|客户|患者|来访者).{0,12}(?:说|表示|提到|告诉|聊到|谈到|讲).{0,16}(?:不想活|轻生|自杀|结束生命|伤害自己|自残|割腕|跳楼|活不下去)/,
+  // 文学/讨论语境："书/电影里提到轻生/自杀..."
+  /(?:书|电影|电视剧|小说|文章|故事|讨论|案例|课程|讲座|节目).{0,12}(?:里|中|提到|讲到|描述).{0,16}(?:轻生|自杀|结束生命|伤害自己|自残)/,
+];
+
 const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
 const medicationDecisionPatterns = [
   /(?:吃|服用|服|用|正在吃|正在服用|抗抑郁|抗焦虑|处方).{0,16}(?:药|药物).{0,18}(?:停药|减药|减量|加量|调整剂量|换药|剂量|副作用|不良反应)/,
@@ -200,9 +227,15 @@ export function detectSafety(text: string): SafetyStatus {
   const clauses = quotedText.split(/[，。！？\n]/).map((clause) => clause.trim()).filter(Boolean);
   const explicitNegative = /(?:没有|不会|不想|并没有|没打算).{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/;
   if (clauses.some((clause) => immediateDangerPatterns.some((pattern) => pattern.test(clause)) && !explicitNegative.test(clause))) return 'URGENT';
+  // SAFE-01：第三人称转述或文学/讨论语境中的安全词不触发本人澄清。
+  // 仅在整句明确属于他者叙述或作品讨论时抑制，不误压第一人称混合表达。
+  if (suppressSafetyContextPatterns.some((pattern) => pattern.test(quotedText))) return 'NO_SIGNAL_DETECTED';
   const negativeMatch = quotedText.match(explicitNegative);
   if (negativeMatch && !possibleDangerPatterns.some((pattern) => pattern.test(quotedText.replace(negativeMatch[0], '')))) return 'NO_SIGNAL_DETECTED';
   if (possibleDangerPatterns.some((pattern) => pattern.test(quotedText))) return 'NEEDS_CLARIFICATION';
+  // SAFE-01：间接轻生意念（第一人称、条件/愿望/假设框架、无即时计划）→ 安全澄清。
+  // 不含宽泛的"不在/消失/离开"，避免误伤普通外出或日常表达。
+  if (indirectSuicidalPatterns.some((pattern) => pattern.test(quotedText))) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
 }
 

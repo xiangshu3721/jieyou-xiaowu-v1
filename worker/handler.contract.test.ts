@@ -861,6 +861,44 @@ describe('worker handler API 契约', () => {
     expect(await json(clarification)).toMatchObject({ reply: safetyClarificationReply, model: 'safety-rule', analysis: { safety_status: 'NEEDS_CLARIFICATION' } });
   });
 
+  // SAFE-01：间接轻生意念在 handler 层触发安全澄清，绕过普通模型调用
+  it('SAFE-01：间接轻生表达触发安全澄清回复，不进入普通模型', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '有时候想，如果我不在了就好了' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toBe(safetyClarificationReply);
+    expect(body.model).toBe('safety-rule');
+    expect(body.analysis.safety_status).toBe('NEEDS_CLARIFICATION');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('SAFE-01：间接轻生+不想起床触发安全澄清，不误伤普通外出', async () => {
+    const indirect1 = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '真希望明天不用再醒过来' }],
+    }), baseEnv);
+    expect((await json(indirect1)).analysis.safety_status).toBe('NEEDS_CLARIFICATION');
+
+    // 普通外出保持普通对话
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，出门注意安全。"}'));
+    const normal = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我今天不在家，出门了' }],
+    }), baseEnv);
+    expect((await json(normal)).analysis.safety_status).toBe('NO_SIGNAL_DETECTED');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('SAFE-01：第三人称引述不误触发安全澄清', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你朋友的情况听起来不容易。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '朋友说他最近不想活了，我不知道怎么帮他' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(body.analysis.safety_status).toBe('NO_SIGNAL_DETECTED');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))

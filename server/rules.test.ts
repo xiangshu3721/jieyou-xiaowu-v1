@@ -36,7 +36,40 @@ describe('解忧小屋智能导诊规则', () => {
   it('安全识别覆盖否定、引述和矛盾表达，不把普通低落当成即时危险', () => {
     expect(detectSafety('最近很焦虑、睡不着，也很疲惫')).toBe('NO_SIGNAL_DETECTED');
     expect(detectSafety('我没有自杀念头，但有点活不下去的感觉')).toBe('NEEDS_CLARIFICATION');
-    expect(detectSafety('朋友说“我不想活了”，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说"我不想活了"，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01：间接轻生意念（条件/愿望/假设框架、无即时计划）→ NEEDS_CLARIFICATION
+  it('SAFE-01：间接轻生表达进入安全澄清，不误伤普通离开与第三人称引述', () => {
+    // 正向：第一人称间接轻生意念 → NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想，如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('有时候会想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('要是没有我这个人是就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('感觉如果消失了也不会有人在意')).toBe('NEEDS_CLARIFICATION');
+    // 反向：普通离开、第三人称引述、文学讨论、明确否定 → NO_SIGNAL_DETECTED
+    expect(detectSafety('我今天不在家')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我不在家，在朋友那里')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我出门了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我离开公司了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说他最近不想活了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('她消失了好几天')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('那本书里提到轻生的角色')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我没有自杀的想法')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我不会伤害自己')).toBe('NO_SIGNAL_DETECTED');
+    // 混合：第一人称间接+第三人称提及，第一人称信号优先
+    expect(detectSafety('有时候会想如果不在了就好了，朋友也说过类似的话')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  it('SAFE-01：recentSafetyStatus 能保持间接轻生的 NEEDS_CLARIFICATION 连续性', () => {
+    const indirect = [
+      { role: 'user' as const, content: '有时候想，如果我不在了就好了', issueId: 'issue-safe01' },
+    ];
+    expect(recentSafetyStatus(indirect)).toBe('NEEDS_CLARIFICATION');
+    // 普通后续消息不解除间接轻生 pending
+    expect(recentSafetyStatus([...indirect, { role: 'user' as const, content: '今天工作很忙', issueId: 'issue-safe01' }])).toBe('NEEDS_CLARIFICATION');
+    // 明确安全澄清可以解除
+    expect(recentSafetyStatus([...indirect, { role: 'user' as const, content: '我现在安全，身边有人', issueId: 'issue-safe01' }])).toBe('NO_SIGNAL_DETECTED');
   });
 
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
