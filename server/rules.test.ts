@@ -700,7 +700,12 @@ describe('解忧小屋智能导诊规则', () => {
       expect(detectConversationControl('这件事解决了')).toBe('RESOLVE_TOPIC');
       expect(detectConversationControl('问题处理好了，不用再聊它了')).toBe('RESOLVE_TOPIC');
       expect(detectConversationControl('我的焦虑已经没事了')).toBe('RESOLVE_TOPIC');
-      expect(detectConversationControl('不用再来聊它了')).toBe('RESOLVE_TOPIC');
+    });
+
+    it('否定/不确定/好转未解 → 不是 RESOLVE_TOPIC（阻断 2 修复）', () => {
+      expect(detectConversationControl('这件事好像解决了')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('不用再来聊它了')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('我的困扰好了点但还没解决')).not.toBe('RESOLVE_TOPIC');
     });
 
     it('否定已解决 → 不是 RESOLVE_TOPIC', () => {

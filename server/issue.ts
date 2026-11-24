@@ -36,18 +36,24 @@ const pauseTopicPatterns = [
   /今天先到这(?:儿|里)/, /现在不方便(?:说|聊)/, /我先(?:缓一缓|歇一(?:下|会))/,
   /给我(?:点|一些)时间(?:想想|消化)/, /暂时(?:不|先)(?:想|用)(?:聊|说|继续)/,
 ];
+// JTBD-04：显式继续意愿覆盖暂停（"但还想继续说"优先于"安静一会儿"）
+const explicitContinuePatterns = [/但.{0,8}(?:还想|想继续|还要)/, /不过.{0,8}(?:还想|想继续)/];
 // JTBD-04：用户明确确认已解决 → 允许 CLOSED
 // 排除否定："我不是说已经解决了" "我朋友的问题好了但我的没有"
+// 排除不确定："好像解决了" 不结案
+// 排除好转未解："好了点但还没解决" 不结案
 const resolveTopicPositivePatterns = [
-  /这(?:件|个)(?:事|问题|困扰|烦恼)(?:已经|总算|好像)?(?:解决|好|处理(?:好|完)|没(?:问题|事)了|过了|行了)/,
-  /我(?:的)?(?:问题|困扰|烦恼|焦虑|这件事|这事)(?:已经|总算|好像)?(?:解决|好|处理(?:好|完)|过了|行了|没(?:事|问题)了)/,
-  /(?:不用|不需要)(?:再|来|继续|再.{0,2}(?:来|去))?(?:聊|说|谈|处理)(?:它|这个|这(?:件|个))?(?:了|啦)/,
-  /(?:心结|疙瘩|心事)(?:已|已经|总算)?(?:解开|解了|放下|没了)/,
+  /这(?:件|个)(?:事|问题|困扰|烦恼)(?:已经|总算)?(?:解决|处理(?:好|完))了/,
+  /(?:我(?:的)?)?(?:问题|困扰|烦恼|焦虑|这件事|这事)(?:已经|总算)?(?:解决|处理(?:好|完)|没事)了/,
+  /(?:心结|疙瘩|心事)(?:已经|总算)?(?:解开|解了|放下)了/,
 ];
 const resolveTopicNegationPatterns = [
   /(?:我|自己)(?:并|又|也)?(?:没有|不是|还没|尚未).{0,12}(?:解决|好|处理|过了|行了)/,
   /(?:朋友|他|她|同事|家人).{0,8}(?:的)?(?:问题|事)(?:解决|好|行了).{0,10}(?:但|可是|然而|不过).{0,8}(?:我|自己|我的).{0,8}(?:没有|还没|未|不)/,
   /不是(?:说|意味着).{0,12}(?:已经|已)(?:解决|好|处理)/,
+  /好像.{0,8}(?:解决|好|处理)/,
+  /好(?:了)?(?:一点|一些|多了?).{0,12}(?:但|可是|然而|不过).{0,12}(?:还没|尚未|仍然|还是).{0,8}(?:解决|好|处理)/,
+  /还没(?:解决|好|处理)/,
 ];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
@@ -82,8 +88,9 @@ export function detectConversationControl(text: string, handoffOffered = false):
   // JTBD-04：用户明确确认已解决（排除否定和第三方引用）
   if (resolveTopicPositivePatterns.some((pattern) => pattern.test(latest))
     && !resolveTopicNegationPatterns.some((pattern) => pattern.test(latest))) return 'RESOLVE_TOPIC';
-  // JTBD-04：用户想暂停（不是关闭，也不是解决）
-  if (pauseTopicPatterns.some((pattern) => pattern.test(latest))) return 'PAUSE_TOPIC';
+  // JTBD-04：用户想暂停（不是关闭，也不是解决）；显式继续意愿覆盖暂停
+  if (pauseTopicPatterns.some((pattern) => pattern.test(latest))
+    && !explicitContinuePatterns.some((pattern) => pattern.test(latest))) return 'PAUSE_TOPIC';
   if (isHumanHandoffDecline(latest) || declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
   if (wantsHumanBooking(latest)) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
