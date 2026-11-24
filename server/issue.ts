@@ -30,6 +30,25 @@ const topicSwitchPatterns = [
   /换个话题/, /聊点别的/, /这个先不聊/, /先不聊这个/, /这个先不说/, /先说别的/, /换一个问题/, /以后再说/, /还有另一个烦恼/, /还有个别的问题/, /我还有另外一个/, /我想说另外一件事/,
 ];
 const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
+// JTBD-04：明确暂停 — 暂时停下但不关闭问题
+const pauseTopicPatterns = [
+  /我先安静一(?:会|下)/, /等下再聊/, /先暂停一(?:下|会)/, /过一(?:会|下)(?:再|又|来)?(?:说|聊)/,
+  /今天先到这(?:儿|里)/, /现在不方便(?:说|聊)/, /我先(?:缓一缓|歇一(?:下|会))/,
+  /给我(?:点|一些)时间(?:想想|消化)/, /暂时(?:不|先)(?:想|用)(?:聊|说|继续)/,
+];
+// JTBD-04：用户明确确认已解决 → 允许 CLOSED
+// 排除否定："我不是说已经解决了" "我朋友的问题好了但我的没有"
+const resolveTopicPositivePatterns = [
+  /这(?:件|个)(?:事|问题|困扰|烦恼)(?:已经|总算|好像)?(?:解决|好|处理(?:好|完)|没(?:问题|事)了|过了|行了)/,
+  /我(?:的)?(?:问题|困扰|烦恼|焦虑|这件事|这事)(?:已经|总算|好像)?(?:解决|好|处理(?:好|完)|过了|行了|没(?:事|问题)了)/,
+  /(?:不用|不需要)(?:再|来|继续|再.{0,2}(?:来|去))?(?:聊|说|谈|处理)(?:它|这个|这(?:件|个))?(?:了|啦)/,
+  /(?:心结|疙瘩|心事)(?:已|已经|总算)?(?:解开|解了|放下|没了)/,
+];
+const resolveTopicNegationPatterns = [
+  /(?:我|自己)(?:并|又|也)?(?:没有|不是|还没|尚未).{0,12}(?:解决|好|处理|过了|行了)/,
+  /(?:朋友|他|她|同事|家人).{0,8}(?:的)?(?:问题|事)(?:解决|好|行了).{0,10}(?:但|可是|然而|不过).{0,8}(?:我|自己|我的).{0,8}(?:没有|还没|未|不)/,
+  /不是(?:说|意味着).{0,12}(?:已经|已)(?:解决|好|处理)/,
+];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
 const contextualDeclineHandoffPatterns = [/^算了[。！! ]*$/, /^不用了[。！! ]*$/];
@@ -60,6 +79,11 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
 export function detectConversationControl(text: string, handoffOffered = false): ConversationControlIntent {
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
+  // JTBD-04：用户明确确认已解决（排除否定和第三方引用）
+  if (resolveTopicPositivePatterns.some((pattern) => pattern.test(latest))
+    && !resolveTopicNegationPatterns.some((pattern) => pattern.test(latest))) return 'RESOLVE_TOPIC';
+  // JTBD-04：用户想暂停（不是关闭，也不是解决）
+  if (pauseTopicPatterns.some((pattern) => pattern.test(latest))) return 'PAUSE_TOPIC';
   if (isHumanHandoffDecline(latest) || declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
   if (wantsHumanBooking(latest)) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
@@ -244,7 +268,7 @@ export function resolveCurrentIssue(input: {
       awaiting_topic: !newIssue,
     };
   }
-  if (control === 'CONTINUE_CURRENT_TOPIC' || control === 'DECLINE_HANDOFF' || control === 'ACCEPT_HANDOFF' || control === 'CLOSE_TOPIC') {
+  if (control === 'CONTINUE_CURRENT_TOPIC' || control === 'DECLINE_HANDOFF' || control === 'ACCEPT_HANDOFF' || control === 'CLOSE_TOPIC' || control === 'PAUSE_TOPIC' || control === 'RESOLVE_TOPIC') {
     return {
       control_intent: control,
       issue_action: 'CONTINUE_CURRENT',

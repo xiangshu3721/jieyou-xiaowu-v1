@@ -634,6 +634,10 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       }, baseline), request);
       if (resolution.awaiting_topic) return json(200, withCurrentJobShadow({ reply: '可以呀，换个话题。你想聊什么？', reply_parts: ['可以呀，换个话题。你想聊什么？'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
       if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, withCurrentJobShadow({ reply: '可以，我们继续按你舒服的节奏聊。', reply_parts: ['可以，我们继续按你舒服的节奏聊。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
+      // JTBD-04：暂停 — 温和承接，不暗示已解决，不调模型
+      if (resolution.control_intent === 'PAUSE_TOPIC') return json(200, withCurrentJobShadow({ reply: '好的，需要的时候随时回来。', reply_parts: ['好的，需要的时候随时回来。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
+      // JTBD-04：用户明确确认已解决 — 简短承接，不庆功不推测评/预约
+      if (resolution.control_intent === 'RESOLVE_TOPIC') return json(200, withCurrentJobShadow({ reply: '那就好，需要的时候随时回来。', reply_parts: ['那就好，需要的时候随时回来。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
       let watchGuidance = '';
       if (body.growthConsent === true && typeof body.growthId === 'string') {
         const growthStore = growthStoreFor(env);

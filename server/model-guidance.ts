@@ -32,5 +32,10 @@ export function modelGuidanceFor(analysis: ConversationAnalysis) {
     asked_fields: analysis.asked_fields,
     unresolved_fields: analysis.unresolved_fields,
     confirmed_goal: analysis.confirmed_goal,
+    // JTBD-03：帮助进展信号，模型据此调整回应
+    // PROGRESS：肯定用户说出的具体变化，不庆功
+    // NO_HELP：改变帮助方式，不重复盘问
+    // UNDETERMINED：不宣称已有进展或问题解决
+    help_progress: analysis.help_progress,
   };
 }
