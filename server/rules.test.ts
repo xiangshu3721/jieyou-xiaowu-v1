@@ -72,6 +72,36 @@ describe('解忧小屋智能导诊规则', () => {
     expect(recentSafetyStatus([...indirect, { role: 'user' as const, content: '我现在安全，身边有人', issueId: 'issue-safe01' }])).toBe('NO_SIGNAL_DETECTED');
   });
 
+  // SAFE-01 修订：P0-A 混合语境漏判 + P1-B 间接意念误报
+  it('SAFE-01 修订：混合语境（第三方/文学+本人风险）不漏判用户本人意念', () => {
+    // 第三方转述+本人间接轻生 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近不想活了，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了，我有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他最近不想活了，我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    // 文学讨论+本人间接轻生 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('那本书里提到轻生的角色，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    // 纯第三方/文学 → 仍 NO_SIGNAL
+    expect(detectSafety('朋友说他最近不想活了，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('那本书里提到轻生的角色，写得很真实')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  it('SAFE-01 修订：间接意念不误报非第一人称主体', () => {
+    // 第三人称 → NO_SIGNAL
+    expect(detectSafety('如果他不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('要是她消失了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('她希望明天不用再醒来')).toBe('NO_SIGNAL_DETECTED');
+    // 项目/工作/物品 → NO_SIGNAL
+    expect(detectSafety('如果这个项目不存在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('如果这份工作不存在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('要是这个麻烦消失了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 小说/虚构角色 → NO_SIGNAL
+    expect(detectSafety('如果小说主人公不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 第一人称显式/省略 → 仍 NEEDS_CLARIFICATION
+    expect(detectSafety('如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('有时候想，如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('要是没有我就好了')).toBe('NEEDS_CLARIFICATION');
+  });
+
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
     const urgent = [
       { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },
