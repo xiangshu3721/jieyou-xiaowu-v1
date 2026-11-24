@@ -36,7 +36,140 @@ describe('解忧小屋智能导诊规则', () => {
   it('安全识别覆盖否定、引述和矛盾表达，不把普通低落当成即时危险', () => {
     expect(detectSafety('最近很焦虑、睡不着，也很疲惫')).toBe('NO_SIGNAL_DETECTED');
     expect(detectSafety('我没有自杀念头，但有点活不下去的感觉')).toBe('NEEDS_CLARIFICATION');
-    expect(detectSafety('朋友说“我不想活了”，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说"我不想活了"，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01：间接轻生意念（条件/愿望/假设框架、无即时计划）→ NEEDS_CLARIFICATION
+  it('SAFE-01：间接轻生表达进入安全澄清，不误伤普通离开与第三人称引述', () => {
+    // 正向：第一人称间接轻生意念 → NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想，如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('有时候会想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('要是没有我这个人是就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('感觉如果消失了也不会有人在意')).toBe('NEEDS_CLARIFICATION');
+    // 反向：普通离开、第三人称引述、文学讨论、明确否定 → NO_SIGNAL_DETECTED
+    expect(detectSafety('我今天不在家')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我不在家，在朋友那里')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我出门了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我离开公司了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说他最近不想活了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('她消失了好几天')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('那本书里提到轻生的角色')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我没有自杀的想法')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我不会伤害自己')).toBe('NO_SIGNAL_DETECTED');
+    // 混合：第一人称间接+第三人称提及，第一人称信号优先
+    expect(detectSafety('有时候会想如果不在了就好了，朋友也说过类似的话')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  it('SAFE-01：recentSafetyStatus 能保持间接轻生的 NEEDS_CLARIFICATION 连续性', () => {
+    const indirect = [
+      { role: 'user' as const, content: '有时候想，如果我不在了就好了', issueId: 'issue-safe01' },
+    ];
+    expect(recentSafetyStatus(indirect)).toBe('NEEDS_CLARIFICATION');
+    // 普通后续消息不解除间接轻生 pending
+    expect(recentSafetyStatus([...indirect, { role: 'user' as const, content: '今天工作很忙', issueId: 'issue-safe01' }])).toBe('NEEDS_CLARIFICATION');
+    // 明确安全澄清可以解除
+    expect(recentSafetyStatus([...indirect, { role: 'user' as const, content: '我现在安全，身边有人', issueId: 'issue-safe01' }])).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01 修订：P0-A 混合语境漏判 + P1-B 间接意念误报
+  it('SAFE-01 修订：混合语境（第三方/文学+本人风险）不漏判用户本人意念', () => {
+    // 第三方转述+本人间接轻生 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近不想活了，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了，我有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他最近不想活了，我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    // 文学讨论+本人间接轻生 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('那本书里提到轻生的角色，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    // 纯第三方/文学 → 仍 NO_SIGNAL
+    expect(detectSafety('朋友说他最近不想活了，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('那本书里提到轻生的角色，写得很真实')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  it('SAFE-01 修订：间接意念不误报非第一人称主体', () => {
+    // 第三人称 → NO_SIGNAL
+    expect(detectSafety('如果他不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('要是她消失了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('她希望明天不用再醒来')).toBe('NO_SIGNAL_DETECTED');
+    // 项目/工作/物品 → NO_SIGNAL
+    expect(detectSafety('如果这个项目不存在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('如果这份工作不存在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('要是这个麻烦消失了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 小说/虚构角色 → NO_SIGNAL
+    expect(detectSafety('如果小说主人公不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 第一人称显式/省略 → 仍 NEEDS_CLARIFICATION
+    expect(detectSafety('如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('有时候想，如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('要是没有我就好了')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  // SAFE-01 第三轮：P0-A 否定语句不能屏蔽后面独立出现的间接轻生意念
+  it('SAFE-01 第三轮 P0-A：否定+间接意念混合仍澄清', () => {
+    // 否定+间接意念 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头，但有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('我没有自杀念头，但我真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('我没有想过自杀，但有时候会想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 纯否定 → 仍 NO_SIGNAL
+    expect(detectSafety('我没有自杀的想法')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我没有想过自杀')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01 第三轮：P0-B 缺标点的第三人称转述不能吞掉用户本人风险
+  it('SAFE-01 第三轮 P0-B：缺标点混合语境不漏判用户本人风险', () => {
+    // 缺标点：第三方+本人风险 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近很累我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说不想活了我也想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 有标点：第三方+本人风险 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近很累，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了，我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    // 纯第三方（有/无标点）→ 仍 NO_SIGNAL
+    expect(detectSafety('朋友说他最近很累我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说他最近很累，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01 第三轮：P1-C 前导语不能把他人或工作事项错误归因为用户本人
+  it('SAFE-01 第三轮 P1-C：前导语归因必须可靠指向用户本人', () => {
+    // 有时候想+第三人称 → NO_SIGNAL
+    expect(detectSafety('有时候想如果他不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 觉得+第三人称/工作 → NO_SIGNAL
+    expect(detectSafety('觉得如果他消失了也没有人会在意')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('感觉如果这份工作消失了也没有人会在意')).toBe('NO_SIGNAL_DETECTED');
+    // 她+真希望 → NO_SIGNAL
+    expect(detectSafety('她真希望明天不用再醒过来')).toBe('NO_SIGNAL_DETECTED');
+    // 第一人称前导语+省略主语 → 仍 NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('感觉如果消失了也没有人会在意')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  // SAFE-01 第四轮：句段级过滤过宽 — 同段内的第三方/否定/非第一人称不能一票否决全段
+  it('SAFE-01 第四轮：同段第三方不能屏蔽本人即时危险（URGENT 优先）', () => {
+    // 本人即时危险在前、朋友说在后 → URGENT
+    expect(detectSafety('我现在准备伤害自己朋友说让我别这样')).toBe('URGENT');
+    // 本人可能危险在前、朋友说在后 → NEEDS_CLARIFICATION
+    expect(detectSafety('我不想活了朋友说让我别这样')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  it('SAFE-01 第四轮：同段局部否定不能屏蔽后面的独立间接意念', () => {
+    // 无标点：否定+间接意念 → NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头但有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 更危险：否定+即时危险 → URGENT
+    expect(detectSafety('我没有自杀念头但现在准备伤害自己')).toBe('URGENT');
+  });
+
+  it('SAFE-01 第四轮：同段后半的非第一人称主体不能否决前半本人间接意念', () => {
+    // 前半本人间接意念、后半她希望 → NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想如果我不在了就好了但她希望我好好活')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  // SAFE-01 第五轮：同段多风险词必须全部检查，不能只查首个匹配
+  it('SAFE-01 第五轮：同段多风险词首匹配被否定时后续独立风险词仍须检出', () => {
+    // 首个"自杀"被否定，第二个独立 → NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头但偶尔想自杀')).toBe('NEEDS_CLARIFICATION');
+    // 首个"伤害自己"被否定，后面"自残"独立 → NEEDS_CLARIFICATION
+    expect(detectSafety('我不会伤害自己只是经常想自残')).toBe('NEEDS_CLARIFICATION');
+    // 对照：纯否定仍 NO_SIGNAL
+    expect(detectSafety('我没有自杀念头')).toBe('NO_SIGNAL_DETECTED');
   });
 
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {

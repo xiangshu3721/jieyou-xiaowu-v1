@@ -43,6 +43,54 @@ const possibleDangerPatterns = [
   /家暴|人身安全|被威胁|可能会被伤害/,
 ];
 
+// SAFE-01：间接轻生意念（第一人称、条件/愿望/假设框架、无即时计划）。
+// 仅用于 NEEDS_CLARIFICATION，不升级 URGENT。
+// 不含宽泛的"不在/消失/离开"，避免误伤普通外出、日常离开或第三人称叙述。
+const indirectSuicidalPatterns = [
+  // "如果/要是+我+不在了就好了/该多好" — 显式第一人称主语
+  /(?:如果|要是|若能).{0,4}(?:我|自己).{0,6}(?:不在|没有|不存在).{0,8}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
+  // "有时候想/我想/我觉得+如果不在了就好了" — 第一人称前导+省略主语
+  /(?:我|自己|有时候).{0,6}(?:想|觉得|感觉).{0,6}(?:如果|要是|若能).{0,6}(?:不在|没有|不存在).{0,8}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
+  // "要是没有我/看不到我+就好了" — 显式第一人称
+  /(?:要是|如果|若能).{0,6}(?:没有|看不到).{0,4}(?:我|自己).{0,10}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
+  // "我/真希望不用再醒过来" — 显式第一人称或"真"强调
+  /(?:我|自己|真)(?:希望|想|但愿|真希望).{0,8}(?:不用|不必|再也不用).{0,8}(?:醒|起来|睁开).{0,4}(?:来|眼)/,
+  // "我/有时候感觉+如果+消失了+也没人在意" — 第一人称前导+消失
+  /(?:我|自己|有时候)?(?:感觉|觉得).{0,6}(?:如果|要是|若能).{0,6}(?:消失|不见|离开).{0,6}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
+  // "我不在了就好/也好/也无所谓" — 显式第一人称
+  /(?:我|自己).{0,4}(?:不在|不见|消失).{0,4}(?:了|的).{0,6}(?:就好|也好|也无所谓|也行|也无妨|该多好|也可以)/,
+  // "我消失了也没人在意/也不会有人发现" — 显式第一人称
+  /(?:我|自己).{0,4}(?:消失|不见|离开).{0,4}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
+  // "如果/要是+我+消失了/不见了/离开了+也不会有人在意" — 显式第一人称
+  /(?:如果|要是|若能|万一).{0,4}(?:我|自己).{0,4}(?:消失|不见|离开).{0,4}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
+];
+
+// SAFE-01：非第一人称主体标记，用于排除间接模式的误归因。
+// 当句段中出现这些标记作为间接表达的主语时，不应归因于用户本人。
+const nonFirstPersonSubjectPatterns = [
+  // 第三人称代词作主语："他/她/它+如果/要是/觉得/希望"
+  /(?:他|她|它|他们|她们|其)\s*(?:如果|要是|若能|觉得|感觉|希望|想|但愿)/,
+  // 条件句+第三人称："如果/要是+他/她/它"
+  /(?:如果|要是|若能).{0,4}(?:他|她|它|他们|她们)/,
+  // 非人名词作主语："项目/工作/任务/麻烦/事情+如果/要是/消失"
+  /(?:项目|工作|任务|麻烦|事情)\s*(?:如果|要是|若能|消失|不存在)/,
+  // 条件句+非人名词："如果/要是+项目/工作/任务/麻烦/事情"
+  /(?:如果|要是|若能).{0,6}(?:项目|工作|任务|麻烦|事情)/,
+  // 虚构角色作主语："小说主人公/角色/人物+如果/要是/不在"
+  /(?:小说|书|电影|故事)?(?:主人公|角色|人物)\s*(?:如果|要是|若能|不在|没有|消失)/,
+  // 第三人称+希望/想："她/他+真希望/希望/想+不用+醒"
+  /(?:她|他|它|他们|她们)\s*(?:真)?(?:希望|想|但愿)/,
+];
+
+// SAFE-01：第三人称转述（无引号的间接引述）与文学/讨论语境标记。
+// 用于逐段判断某个句段是否属于他者叙述或作品讨论。
+const thirdPartyAttributionPatterns = [
+  // 第三人称报告："朋友/他/她说...不想活/轻生/..."
+  /(?:朋友|他|她|某人|有人|同事|同学|伴侣|家人|对方|客户|患者|来访者).{0,12}(?:说|表示|提到|告诉|聊到|谈到|讲)/,
+  // 文学/讨论语境："书/电影里提到轻生/自杀..."
+  /(?:书|电影|电视剧|小说|文章|故事|讨论|案例|课程|讲座|节目).{0,12}(?:里|中|提到|讲到|描述)/,
+];
+
 const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
 const medicationDecisionPatterns = [
   /(?:吃|服用|服|用|正在吃|正在服用|抗抑郁|抗焦虑|处方).{0,16}(?:药|药物).{0,18}(?:停药|减药|减量|加量|调整剂量|换药|剂量|副作用|不良反应)/,
@@ -197,13 +245,160 @@ export function detectSafety(text: string): SafetyStatus {
       || /^\s*[,，。:：]?\s*(?:朋友|他人|对方|家人|同事|同学|伴侣|父母|孩子|有人|某人)(?:刚刚|之前|曾经|一直)?(?:说|表示|提到|告诉我|发来|写道)/.test(after);
     return thirdParty ? ' ' : quote;
   });
-  const clauses = quotedText.split(/[，。！？\n]/).map((clause) => clause.trim()).filter(Boolean);
+  // SAFE-01 第三轮：按标点 + 主语切换分句。
+  // 处理无标点中文消息中用户本人表达被第三人称转述吞掉的问题。
+  const segments = splitSafetySegments(quotedText);
+
   const explicitNegative = /(?:没有|不会|不想|并没有|没打算).{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/;
-  if (clauses.some((clause) => immediateDangerPatterns.some((pattern) => pattern.test(clause)) && !explicitNegative.test(clause))) return 'URGENT';
-  const negativeMatch = quotedText.match(explicitNegative);
-  if (negativeMatch && !possibleDangerPatterns.some((pattern) => pattern.test(quotedText.replace(negativeMatch[0], '')))) return 'NO_SIGNAL_DETECTED';
-  if (possibleDangerPatterns.some((pattern) => pattern.test(quotedText))) return 'NEEDS_CLARIFICATION';
+
+  // SAFE-01 第四轮：以具体风险候选表达为最小判定单位。
+  // 否定、第三方归因、非第一人称主体只影响其对应的局部内容，不一票排除同段其他候选。
+
+  // Pass 1：即时危险 → URGENT（不被第三方归因抑制，但尊重局部否定）
+  // SAFE-01 第五轮：遍历所有匹配，不只查首个
+  for (const segment of segments) {
+    for (const pattern of immediateDangerPatterns) {
+      for (const m of findAllMatches(segment, pattern)) {
+        if (!isMatchLocallyNegated(segment, m.start, m.end)) {
+          return 'URGENT';
+        }
+      }
+    }
+  }
+
+  // Pass 2：可能危险 + 间接轻生意念 → NEEDS_CLARIFICATION（局部抑制）
+  let hasClarification = false;
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+
+    // 直接可能危险：遍历所有匹配，每个分别判断局部抑制
+    // SAFE-01 第五轮：不只查首个匹配
+    for (const pattern of possibleDangerPatterns) {
+      for (const m of findAllMatches(segment, pattern)) {
+        if (!isMatchLocallyNegated(segment, m.start, m.end)
+          && !isMatchInThirdPartyRegion(segment, m.start, m.end)) {
+          hasClarification = true;
+        }
+      }
+    }
+
+    // 间接轻生意念：仅当匹配被局部第三方归因或局部非第一人称主体否定时才抑制
+    // 同时支持跨段语境恢复（前段第一人称动词+本段条件句省略主语）
+    const indirectCandidates: { text: string; offset: number }[] = [{ text: segment, offset: 0 }];
+    if (i > 0 && /^(?:如果|要是|若能)/.test(segment)) {
+      const prev = segments[i - 1];
+      if (/(?:我|自己|有时候)?(?:想|觉得|感觉)$/.test(prev)) {
+        indirectCandidates.push({ text: prev.slice(-8) + segment, offset: 0 });
+      }
+    }
+    for (const candidate of indirectCandidates) {
+      for (const pattern of indirectSuicidalPatterns) {
+        // SAFE-01 第五轮：遍历所有匹配，不只查首个
+        for (const m of findAllMatches(candidate.text, pattern)) {
+          if (!isMatchInThirdPartyRegion(candidate.text, m.start, m.end)
+            && !isMatchLocallyNegated(candidate.text, m.start, m.end)
+            && !hasNonFirstPersonSubjectNearMatch(candidate.text, m.start, m.end)) {
+            hasClarification = true;
+          }
+        }
+      }
+    }
+  }
+
+  if (hasClarification) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
+}
+
+// SAFE-01 第五轮：枚举正则在全段的所有非重叠匹配及其位置。
+// 用 exec 循环，防止全局标志零宽匹配死循环。
+function findAllMatches(text: string, pattern: RegExp): { start: number; end: number; text: string }[] {
+  const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
+  const regex = new RegExp(pattern.source, flags);
+  const results: { start: number; end: number; text: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    results.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    if (m[0].length === 0) regex.exec(text); // 零宽推进防死循环
+  }
+  return results;
+}
+
+// SAFE-01 第三轮：按标点和主语切换分句。
+// 先按标点分割，再在每个片段内检测主语切换（"我也/我自己/但我/我也会/我也想/我觉得/我感觉"）进一步拆分。
+function splitSafetySegments(text: string): string[] {
+  const byPunctuation = text.split(/[，。！？\n]/).map((s) => s.trim()).filter(Boolean);
+  const result: string[] = [];
+  // 主语切换标记：前面是逗号/无标点分隔，后面是新的第一人称主语
+  const subjectSwitch = /(?<=[，,]?\s*)(?=(?:但|可)?(?:我也|我自己|我也会|我也想|我觉得|我感觉|我现在|我正在))/;
+  for (const clause of byPunctuation) {
+    const subClauses = clause.split(subjectSwitch).map((s) => s.trim()).filter(Boolean);
+    result.push(...subClauses);
+  }
+  return result;
+}
+
+// SAFE-01 第三轮：判断句段是否属于第三方/文学归属。
+// 仅用于辅助，不在 detectSafety 主循环中整段使用。
+function isThirdPartySegment(segment: string): boolean {
+  return thirdPartyAttributionPatterns.some((pattern) => pattern.test(segment));
+}
+
+// SAFE-01 第三轮：判断句段是否包含非第一人称主体（他/她/项目/工作/角色等）。
+// 仅用于辅助，不在 detectSafety 主循环中整段使用。
+function hasNonFirstPersonSubject(segment: string): boolean {
+  return nonFirstPersonSubjectPatterns.some((pattern) => pattern.test(segment));
+}
+
+// SAFE-01 第四轮：判断风险匹配是否被局部否定覆盖。
+// 否定模式与风险匹配在文本中有重叠区域时，视为被局部否定。
+// 但否定不能跨越对比/转折标记（但/可/只），只作用于同一局部主语范围。
+function isMatchLocallyNegated(text: string, matchStart: number, matchEnd: number): boolean {
+  const negPattern = /(?:没有|不会|不想|并没有|没打算)[^但可只]{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/g;
+  let m: RegExpExecArray | null;
+  while ((m = negPattern.exec(text)) !== null) {
+    const negStart = m.index;
+    const negEnd = negStart + m[0].length;
+    // 否定范围与风险匹配有重叠 → 被否定
+    if (negStart < matchEnd && negEnd > matchStart) return true;
+  }
+  return false;
+}
+
+// SAFE-01 第四轮：判断风险匹配是否处于第三方/文学归因区域内。
+// 第三方归因区域从归属动词开始，延伸到下一个第一人称主语切换或段尾。
+function isMatchInThirdPartyRegion(text: string, matchStart: number, matchEnd: number): boolean {
+  for (const pattern of thirdPartyAttributionPatterns) {
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : 'g');
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(text)) !== null) {
+      const regionStart = m.index;
+      const verbEnd = m.index + m[0].length;
+      // 第三方区域延伸到下一个第一人称主语切换或段尾
+      const rest = text.slice(verbEnd);
+      const switchMatch = rest.match(/(?:但|可)?(?:我也|我自己|我也会|我也想|我觉得|我感觉|我现在|我正在)/);
+      const regionEnd = switchMatch && switchMatch.index !== undefined ? verbEnd + switchMatch.index : text.length;
+      // 风险匹配完全在第三方区域内
+      if (matchStart >= regionStart && matchEnd <= regionEnd) return true;
+    }
+  }
+  return false;
+}
+
+// SAFE-01 第四轮：判断风险匹配附近是否有非第一人称主体在修饰它。
+// 仅当非第一人称主体出现在匹配之前或之内（修饰该匹配）时，才视为修饰。
+// 出现在匹配之后的主体（如"如果我不在了就好了但她希望"中的"她希望"）不否决前面的匹配。
+function hasNonFirstPersonSubjectNearMatch(text: string, matchStart: number, matchEnd: number): boolean {
+  for (const pattern of nonFirstPersonSubjectPatterns) {
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : 'g');
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(text)) !== null) {
+      const subjStart = m.index;
+      const subjEnd = subjStart + m[0].length;
+      // 非第一人称主体在匹配之前或之内（起始在匹配结束之前）→ 修饰该匹配
+      if (subjStart < matchEnd && subjEnd > matchStart) return true;
+    }
+  }
+  return false;
 }
 
 function isSafetyClarification(text: string) {
