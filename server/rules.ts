@@ -509,11 +509,11 @@ function detectIntent(text: string): UserIntent {
     return correctionDeclinesExploration(text) ? 'WANTS_COMFORT' : 'VENTING';
   }
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
-  // JTBD-02B D7：拒绝分析+想倾诉应为 WANTS_COMFORT（不含"分析成/为..."等讨论性用法）
-  if (/别(?:再)?(?:给我|往)?.{0,4}分析|不用(?:再)?分析|不想被分析(?![成为])/.test(text)) return 'WANTS_COMFORT';
-  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|只想(?:把)?[^。！？\n]{0,30}(?:感觉|感受|心里话).{0,8}说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
+  if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|(?:只想|就想|只是想把?)(?:把)?[^。！？\n]{0,30}(?:(?:感觉|感受|心里话).{0,8})?说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
+  // JTBD-02B D7：拒绝分析+想倾诉应为 WANTS_COMFORT（放在显式请求之后，防止吞掉混合意愿）
+  if (/别(?:再)?(?:给我|往)?.{0,4}分析|不用(?:再)?分析|不想被分析(?![成为])/.test(text)) return 'WANTS_COMFORT';
   return 'VENTING';
 }
 
@@ -810,10 +810,13 @@ export function selectDialogueStrategy(input: {
   problemMap: ProblemMap;
   openQuestionRequested?: boolean;
   latestText?: string;
+  responseGoal?: string;
 }): DialogueStrategy {
   if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
   if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
   if (input.intent === 'WANTS_COMFORT') return 'EMPATHIZE';
+  // JTBD-02B P1-C/D3：结束意愿优先于普通测评/探索/追问
+  if (input.intent === 'WANTS_END') return 'MIRROR';
   if (input.assessment.needed) return 'ASSESSMENT';
   if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
@@ -827,6 +830,8 @@ export function selectDialogueStrategy(input: {
     return 'MIRROR';
   }
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
+  // JTBD-02B P1-A/D4：倾听为主时不被追问策略覆盖；明确想探索时保留有价值提问
+  if (input.responseGoal === 'LISTEN') return input.problemMap.scene_summary || input.problemMap.user_goal ? 'MIRROR' : 'LISTEN';
   if (input.openQuestionRequested && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
   if (input.problemMap.scene_summary || input.problemMap.user_goal) return 'MIRROR';
@@ -937,11 +942,11 @@ function hasSustainedHandoffEvidence(problemMap: ProblemMap) {
   return impactful && (sustainedDuration || isRepeated('', problemMap) || problemMap.attempts.length > 0);
 }
 
-function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1) {
+function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1, latestText = '') {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
-  // JTBD-02B D5：用户纠正理解不应触发真人交接
-  if (correctionPatterns.some((pattern) => pattern.test(text))) return false;
+  // JTBD-02B P1-B/D5：纠正保护只对当前轮生效，不永久禁止真人交接
+  if (latestText && correctionPatterns.some((pattern) => pattern.test(latestText))) return false;
   if (userTurnCount < 3) return false;
   // A user who is actively asking to clarify or work through a concrete next
   // step normally still has a useful AI-support path. Keep that protection
@@ -1078,7 +1083,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
   const sufficiency = diagnosticSufficiency(problemMap, safety);
   const supportFeedback = /没用|没什么用|没帮助|更焦虑|不太有用|不适合/.test(text) ? '用户反馈当前帮助效果不足' : null;
   const preliminaryHandoffReady = safety === 'NO_SIGNAL_DETECTED'
-    && (intent === 'WANTS_HUMAN' || (!handoffWasOffered && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback, userTurnCount)));
+    && (intent === 'WANTS_HUMAN' || (!handoffWasOffered && shouldOfferHuman(allUserText, intent, complexity, problemMap, sufficiency, supportFeedback, userTurnCount, text)));
   const routing = routeFor(safety, text, intent, complexity, sufficiency, assessmentCandidate, supportFeedback, preliminaryHandoffReady, contextText);
   const handoffReady = routing === 'HUMAN_MENTOR';
   // A question about human support is not consent to offer a booking CTA.
@@ -1110,7 +1115,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     || intent === 'WANTS_COMFORT'
     || intent === 'WANTS_END';
   const openQuestionRequested = !hardNoQuestionBoundary;
-  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested, latestText: text });
+  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested, latestText: text, responseGoal });
   const askQuestion = !handoffReady
     && responseGoal !== 'HANDOFF'
     && responseGoal !== 'HELP'

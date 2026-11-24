@@ -963,6 +963,139 @@ describe('worker handler API 契约', () => {
     expect(body.analysis.primary_response_strategy).toBe('EMPATHIZE');
   });
 
+  // JTBD-02B 收尾：集中覆盖 10+ 重点 Handler Mock 场景
+  it('JTBD-02B 收尾：安全边界 → URGENT 紧急回复，不调用模型', async () => {
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我现在正准备伤害自己' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(r.status).toBe(200);
+    expect(b.analysis.safety_status).toBe('URGENT');
+    expect(b.model).toBe('safety-rule');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('JTBD-02B 收尾：主动预约 → HUMAN_MENTOR + booking CTA', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，帮你预约。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我想找真人导师聊聊' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.routing).toBe('HUMAN_MENTOR');
+    expect(b.analysis.handoff_ready).toBe(true);
+    expect(b.analysis.show_booking_button).toBe(true);
+  });
+
+  it('JTBD-02B 收尾：拒绝真人后保留自然回应，不推 CTA', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，继续聊。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '不用了，我就想继续和你聊' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.routing).toBe('AI_SUPPORT');
+    expect(b.analysis.show_booking_button).toBe(false);
+    expect(b.analysis.handoff_mode).toBe('NONE');
+  });
+
+  it('JTBD-02B 收尾：明确行动 → PROVIDE_HELP，不追问', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你可以试试这个方法。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '工作压力很大，我该怎么办，给我个下一步' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('WANTS_ACTION');
+    expect(b.analysis.response_goal).toBe('HELP');
+    expect(b.analysis.primary_response_strategy).toBe('PROVIDE_HELP');
+  });
+
+  it('JTBD-02B 收尾：明确探索 → WANTS_CLARITY + CLARIFY_FACT', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"能具体说说吗？"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我想理清楚为什么最近总是失眠' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('WANTS_CLARITY');
+    expect(b.analysis.response_goal).toBe('CLARIFY');
+    expect(b.analysis.primary_response_strategy).toBe('CLARIFY_FACT');
+  });
+
+  it('JTBD-02B 收尾：倾听不追问 → VENTING + LISTEN/MIRROR', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"听起来很不容易。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '最近工作压力很大，整个人很疲惫，也说不清在烦什么' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('VENTING');
+    expect(b.analysis.response_goal).toBe('LISTEN');
+    expect(b.analysis.primary_response_strategy).toMatch(/MIRROR|LISTEN/);
+  });
+
+  it('JTBD-02B 收尾：拒绝建议 → WANTS_COMFORT + EMPATHIZE', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"嗯，我听着。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '别给我建议，我就想先说说，不用分析' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('WANTS_COMFORT');
+    expect(b.analysis.no_more_questions).toBe(true);
+    expect(b.analysis.primary_response_strategy).toBe('EMPATHIZE');
+  });
+
+  it('JTBD-02B 收尾：纠正后不追问 → MIRROR', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"明白了，不是工作的问题。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '你理解错了，不是收入的问题，是我和伴侣之间缺少沟通' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('VENTING');
+    expect(b.analysis.primary_response_strategy).toBe('MIRROR');
+    expect(b.analysis.routing).not.toBe('HUMAN_MENTOR');
+  });
+
+  it('JTBD-02B 收尾：用药决策 → PROFESSIONAL_REFERRAL', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"用药调整建议咨询医生。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我在吃抗抑郁药，想自己减量，可以吗' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.routing).toBe('PROFESSIONAL_REFERRAL');
+    expect(b.analysis.no_more_questions).toBe(true);
+  });
+
+  it('JTBD-02B 收尾：专业支持讨论 → AI_SUPPORT + MIRROR，不追问', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"心理咨询可以是一个选项。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我这种情况是不是需要心理咨询' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.routing).toBe('AI_SUPPORT');
+    expect(b.analysis.primary_response_strategy).toBe('MIRROR');
+  });
+
+  it('JTBD-02B 收尾：结束意愿完整验证 → LISTEN + MIRROR + SHORT + no questions', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，需要时随时回来。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '先这样吧，我先不聊了，晚安' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('WANTS_END');
+    expect(b.analysis.response_goal).toMatch(/LISTEN|MIRROR/);
+    expect(b.analysis.primary_response_strategy).toBe('MIRROR');
+    expect(b.analysis.reply_length).toBe('SHORT');
+    expect(b.analysis.no_more_questions).toBe(true);
+    expect(b.analysis.show_booking_button).toBe(false);
+  });
+
+  it('JTBD-02B 收尾：D7 混合意愿 — 拒绝分析但想弄清 → WANTS_CLARITY 优先', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好，我们一起来看。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '别给我分析了，但我想弄清这次争吵的原因' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.user_intent).toBe('WANTS_CLARITY');
+    expect(b.analysis.response_goal).toBe('CLARIFY');
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
