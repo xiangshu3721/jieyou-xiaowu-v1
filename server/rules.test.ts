@@ -602,4 +602,49 @@ describe('解忧小屋智能导诊规则', () => {
     });
     expect(analysis.primary_topic).toBe('CAREER');
   });
+
+  // JTBD-02B：对话策略冲突修复
+  it('JTBD-02B D3：WANTS_END 的 response_goal 不能是 CLARIFY（应 MIRROR 或 LISTEN）', () => {
+    const analysis = analyzeConversation('先这样吧，我先不聊了，晚安');
+    expect(analysis.user_intent).toBe('WANTS_END');
+    expect(analysis.response_goal).not.toBe('CLARIFY');
+    expect(analysis.response_goal).toMatch(/MIRROR|LISTEN/);
+    expect(analysis.no_more_questions).toBe(true);
+    expect(analysis.reply_length).toBe('SHORT');
+  });
+
+  it('JTBD-02B D5：纠正理解后不应触发真人交接（即使多轮）', () => {
+    const ctx = '用户：我最近特别崩溃，工作压力大\nAI：听起来很不容易\n用户：每天都觉得很累，睡不好';
+    const analysis = analyzeConversation('你理解错了，不是收入的问题，是我和伴侣之间缺少沟通', ctx, { userTurnCount: 3 });
+    expect(analysis.user_intent).toBe('VENTING');
+    expect(analysis.routing).not.toBe('HUMAN_MENTOR');
+    expect(analysis.handoff_ready).toBe(false);
+  });
+
+  it('JTBD-02B D5b：纠正后策略应为 MIRROR/EMPATHIZE，不应追问事实', () => {
+    const ctx = '用户：我最近压力很大\nAI：能多说说吗\n用户：工作压力大，每天都累\nAI：这种状态持续多久了\n用户：好几个月了\nAI：有没有试过什么办法\n用户：试过沟通但没用';
+    const analysis = analyzeConversation('你理解错了，不是工作的问题，是我和伴侣的沟通方式', ctx, { userTurnCount: 5 });
+    expect(analysis.user_intent).toBe('VENTING');
+    expect(analysis.primary_response_strategy).not.toBe('CLARIFY_FACT');
+    expect(analysis.primary_response_strategy).toMatch(/MIRROR|EMPATHIZE|LISTEN/);
+  });
+
+  it('JTBD-02B D6：讨论专业支持时不应追问事实，应说明专业边界', () => {
+    const ctx = '用户：我最近心情很低落\nAI：听起来不容易\n用户：持续好几个月了';
+    const analysis = analyzeConversation('我这种情况是不是需要心理咨询', ctx, { userTurnCount: 3 });
+    expect(analysis.routing).toBe('AI_SUPPORT');
+    expect(analysis.primary_response_strategy).not.toBe('CLARIFY_FACT');
+    expect(analysis.primary_response_strategy).toMatch(/MIRROR|LISTEN/);
+  });
+
+  it('JTBD-02B D7：拒绝分析+想倾诉应为 WANTS_COMFORT，不是 WANTS_CLARITY', () => {
+    expect(resolveConversationIntent('别给我分析了，我就想把心里的感受说出来')).toBe('WANTS_COMFORT');
+    expect(resolveConversationIntent('别给我分析了，我就想把这件事说出来')).toBe('WANTS_COMFORT');
+  });
+
+  it('JTBD-02B D7b：纠正理解后策略应为 MIRROR，不应追问事实', () => {
+    const analysis = analyzeConversation('你理解错了，我不是想换工作');
+    expect(analysis.user_intent).toBe('VENTING');
+    expect(analysis.primary_response_strategy).not.toBe('CLARIFY_FACT');
+  });
 });

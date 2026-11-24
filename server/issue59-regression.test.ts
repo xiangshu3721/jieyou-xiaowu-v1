@@ -9,9 +9,10 @@ describe('Issue #59 导师式开放探索回归', () => {
       { issueTopicTags: ['CAREER', 'MONEY'], userTurnCount: 3 },
     );
     expect(correction.user_intent).toBe('VENTING');
-    expect(correction.ask_question).toBe(true);
+    // JTBD-02B：纠正后先镜像确认，不追问事实（覆盖 Issue #59 旧行为）
+    expect(correction.primary_response_strategy).toMatch(/MIRROR|EMPATHIZE|LISTEN/);
+    expect(correction.ask_question).toBe(false);
     expect(correction.no_more_questions).toBe(false);
-    expect(correction.next_question).toContain('工作压力');
 
     const refusal = analyzeConversation('我只想倾诉，不想被问问题。', '用户：最近工作压力很大。', { userTurnCount: 3 });
     expect(refusal).toMatchObject({ user_intent: 'WANTS_COMFORT', ask_question: false, no_more_questions: true });

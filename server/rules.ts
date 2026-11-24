@@ -509,6 +509,8 @@ function detectIntent(text: string): UserIntent {
     return correctionDeclinesExploration(text) ? 'WANTS_COMFORT' : 'VENTING';
   }
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
+  // JTBD-02B D7：拒绝分析+想倾诉应为 WANTS_COMFORT（不含"分析成/为..."等讨论性用法）
+  if (/别(?:再)?(?:给我|往)?.{0,4}分析|不用(?:再)?分析|不想被分析(?![成为])/.test(text)) return 'WANTS_COMFORT';
   if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|只想(?:把)?[^。！？\n]{0,30}(?:感觉|感受|心里话).{0,8}说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
   if (/理清|弄清|分析|为什么|到底|看不明白|梳理|帮我理/.test(text)) return 'WANTS_CLARITY';
@@ -807,6 +809,7 @@ export function selectDialogueStrategy(input: {
   questionValue: number;
   problemMap: ProblemMap;
   openQuestionRequested?: boolean;
+  latestText?: string;
 }): DialogueStrategy {
   if (input.routing === 'SAFETY_SUPPORT') return 'EMPATHIZE';
   if (input.routing === 'HUMAN_MENTOR') return 'HANDOFF';
@@ -814,6 +817,15 @@ export function selectDialogueStrategy(input: {
   if (input.assessment.needed) return 'ASSESSMENT';
   if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
+  // JTBD-02B D5b/D7b：纠正理解后先镜像确认，不追问事实
+  const latestText = input.latestText ?? '';
+  if (latestText && correctionPatterns.some((pattern) => pattern.test(latestText))) {
+    return 'MIRROR';
+  }
+  // JTBD-02B D6：讨论专业支持时（犹豫中的询问）先镜像说明边界，不追问事实
+  if (latestText && professionalPatterns.some((pattern) => pattern.test(latestText)) && isUndecidedHumanHelpQuestion(latestText)) {
+    return 'MIRROR';
+  }
   if (input.intent === 'WANTS_CLARITY' && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.openQuestionRequested && input.nextQuestion && input.questionValue >= 0.6) return 'CLARIFY_FACT';
   if (input.nextQuestion && input.questionValue >= 0.72) return questionField(input.nextQuestion) === 'severity_score' ? 'QUANTIFY' : input.intent === 'WANTS_CLARITY' ? 'CLARIFY_FACT' : 'CONTINUE';
@@ -928,6 +940,8 @@ function hasSustainedHandoffEvidence(problemMap: ProblemMap) {
 function shouldOfferHuman(text: string, intent: UserIntent, complexity: Complexity, problemMap: ProblemMap, sufficiency: number, supportFeedback: string | null, userTurnCount = 1) {
   if (intent === 'WANTS_HUMAN') return true;
   if (intent === 'WANTS_COMFORT' || intent === 'WANTS_END') return false;
+  // JTBD-02B D5：用户纠正理解不应触发真人交接
+  if (correctionPatterns.some((pattern) => pattern.test(text))) return false;
   if (userTurnCount < 3) return false;
   // A user who is actively asking to clarify or work through a concrete next
   // step normally still has a useful AI-support path. Keep that protection
@@ -1027,6 +1041,7 @@ export function routeConcern(text: string, safety: SafetyStatus): RoutingState {
 
 function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: string[], assessment: AssessmentRecommendation, supportFeedback: string | null): 'LISTEN' | 'CLARIFY' | 'MIRROR' | 'ASSESS' | 'HELP' | 'ASSESSMENT' | 'HANDOFF' {
   if (routing === 'HUMAN_MENTOR') return 'HANDOFF';
+  if (intent === 'WANTS_END') return 'MIRROR';
   if (intent === 'WANTS_COMFORT') return 'LISTEN';
   if (assessment.needed) return 'ASSESSMENT';
   if (intent === 'WANTS_ACTION') return 'HELP';
@@ -1095,7 +1110,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     || intent === 'WANTS_COMFORT'
     || intent === 'WANTS_END';
   const openQuestionRequested = !hardNoQuestionBoundary;
-  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested });
+  const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested, latestText: text });
   const askQuestion = !handoffReady
     && responseGoal !== 'HANDOFF'
     && responseGoal !== 'HELP'

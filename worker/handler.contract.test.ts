@@ -937,6 +937,32 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // JTBD-02B：对话策略冲突修复 — Handler 链路验证
+  it('JTBD-02B D3：结束意愿不产生 CLARIFY response_goal，不调用模型也合理结束', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，需要的时候随时回来。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '先这样吧，我先不聊了，晚安' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.user_intent).toBe('WANTS_END');
+    expect(body.analysis.response_goal).not.toBe('CLARIFY');
+    expect(body.analysis.no_more_questions).toBe(true);
+    expect(body.analysis.reply_length).toBe('SHORT');
+  });
+
+  it('JTBD-02B D7：拒绝分析+想倾诉 → WANTS_COMFORT，不追问', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"嗯，我听着。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '别给我分析了，我就想把心里的感受说出来' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.user_intent).toBe('WANTS_COMFORT');
+    expect(body.analysis.no_more_questions).toBe(true);
+    expect(body.analysis.primary_response_strategy).toBe('EMPATHIZE');
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
