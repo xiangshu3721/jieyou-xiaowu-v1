@@ -162,6 +162,16 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectSafety('有时候想如果我不在了就好了但她希望我好好活')).toBe('NEEDS_CLARIFICATION');
   });
 
+  // SAFE-01 第五轮：同段多风险词必须全部检查，不能只查首个匹配
+  it('SAFE-01 第五轮：同段多风险词首匹配被否定时后续独立风险词仍须检出', () => {
+    // 首个"自杀"被否定，第二个独立 → NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头但偶尔想自杀')).toBe('NEEDS_CLARIFICATION');
+    // 首个"伤害自己"被否定，后面"自残"独立 → NEEDS_CLARIFICATION
+    expect(detectSafety('我不会伤害自己只是经常想自残')).toBe('NEEDS_CLARIFICATION');
+    // 对照：纯否定仍 NO_SIGNAL
+    expect(detectSafety('我没有自杀念头')).toBe('NO_SIGNAL_DETECTED');
+  });
+
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
     const urgent = [
       { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },

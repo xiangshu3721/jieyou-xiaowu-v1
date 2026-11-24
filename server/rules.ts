@@ -255,11 +255,11 @@ export function detectSafety(text: string): SafetyStatus {
   // 否定、第三方归因、非第一人称主体只影响其对应的局部内容，不一票排除同段其他候选。
 
   // Pass 1：即时危险 → URGENT（不被第三方归因抑制，但尊重局部否定）
+  // SAFE-01 第五轮：遍历所有匹配，不只查首个
   for (const segment of segments) {
     for (const pattern of immediateDangerPatterns) {
-      const m = segment.match(pattern);
-      if (m && m.index !== undefined) {
-        if (!isMatchLocallyNegated(segment, m.index, m.index + m[0].length)) {
+      for (const m of findAllMatches(segment, pattern)) {
+        if (!isMatchLocallyNegated(segment, m.start, m.end)) {
           return 'URGENT';
         }
       }
@@ -271,14 +271,12 @@ export function detectSafety(text: string): SafetyStatus {
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
 
-    // 直接可能危险：仅当匹配词被局部否定或在第三方区域内时才抑制
+    // 直接可能危险：遍历所有匹配，每个分别判断局部抑制
+    // SAFE-01 第五轮：不只查首个匹配
     for (const pattern of possibleDangerPatterns) {
-      const m = segment.match(pattern);
-      if (m && m.index !== undefined) {
-        const matchStart = m.index;
-        const matchEnd = matchStart + m[0].length;
-        if (!isMatchLocallyNegated(segment, matchStart, matchEnd)
-          && !isMatchInThirdPartyRegion(segment, matchStart, matchEnd)) {
+      for (const m of findAllMatches(segment, pattern)) {
+        if (!isMatchLocallyNegated(segment, m.start, m.end)
+          && !isMatchInThirdPartyRegion(segment, m.start, m.end)) {
           hasClarification = true;
         }
       }
@@ -295,13 +293,11 @@ export function detectSafety(text: string): SafetyStatus {
     }
     for (const candidate of indirectCandidates) {
       for (const pattern of indirectSuicidalPatterns) {
-        const m = candidate.text.match(pattern);
-        if (m && m.index !== undefined) {
-          const matchStart = m.index;
-          const matchEnd = m.index + m[0].length;
-          if (!isMatchInThirdPartyRegion(candidate.text, matchStart, matchEnd)
-            && !isMatchLocallyNegated(candidate.text, matchStart, matchEnd)
-            && !hasNonFirstPersonSubjectNearMatch(candidate.text, matchStart, matchEnd)) {
+        // SAFE-01 第五轮：遍历所有匹配，不只查首个
+        for (const m of findAllMatches(candidate.text, pattern)) {
+          if (!isMatchInThirdPartyRegion(candidate.text, m.start, m.end)
+            && !isMatchLocallyNegated(candidate.text, m.start, m.end)
+            && !hasNonFirstPersonSubjectNearMatch(candidate.text, m.start, m.end)) {
             hasClarification = true;
           }
         }
@@ -311,6 +307,20 @@ export function detectSafety(text: string): SafetyStatus {
 
   if (hasClarification) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
+}
+
+// SAFE-01 第五轮：枚举正则在全段的所有非重叠匹配及其位置。
+// 用 exec 循环，防止全局标志零宽匹配死循环。
+function findAllMatches(text: string, pattern: RegExp): { start: number; end: number; text: string }[] {
+  const flags = pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g';
+  const regex = new RegExp(pattern.source, flags);
+  const results: { start: number; end: number; text: string }[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = regex.exec(text)) !== null) {
+    results.push({ start: m.index, end: m.index + m[0].length, text: m[0] });
+    if (m[0].length === 0) regex.exec(text); // 零宽推进防死循环
+  }
+  return results;
 }
 
 // SAFE-01 第三轮：按标点和主语切换分句。
@@ -341,9 +351,9 @@ function hasNonFirstPersonSubject(segment: string): boolean {
 
 // SAFE-01 第四轮：判断风险匹配是否被局部否定覆盖。
 // 否定模式与风险匹配在文本中有重叠区域时，视为被局部否定。
-// 但否定不能跨越主语切换标记（但/可+我），只作用于同一局部主语范围。
+// 但否定不能跨越对比/转折标记（但/可/只），只作用于同一局部主语范围。
 function isMatchLocallyNegated(text: string, matchStart: number, matchEnd: number): boolean {
-  const negPattern = /(?:没有|不会|不想|并没有|没打算)[^但可]{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/g;
+  const negPattern = /(?:没有|不会|不想|并没有|没打算)[^但可只]{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/g;
   let m: RegExpExecArray | null;
   while ((m = negPattern.exec(text)) !== null) {
     const negStart = m.index;

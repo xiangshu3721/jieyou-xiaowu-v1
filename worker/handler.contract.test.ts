@@ -924,6 +924,19 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  // SAFE-01 第五轮：同段多风险词首个被否定时后续独立风险词仍触发安全澄清
+  it('SAFE-01 第五轮：同段多风险词首匹配被否定时后续独立风险词仍触发安全澄清', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我不会伤害自己只是经常想自残' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toBe(safetyClarificationReply);
+    expect(body.model).toBe('safety-rule');
+    expect(body.analysis.safety_status).toBe('NEEDS_CLARIFICATION');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
