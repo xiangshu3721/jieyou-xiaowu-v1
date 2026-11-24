@@ -142,6 +142,26 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectSafety('真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
   });
 
+  // SAFE-01 第四轮：句段级过滤过宽 — 同段内的第三方/否定/非第一人称不能一票否决全段
+  it('SAFE-01 第四轮：同段第三方不能屏蔽本人即时危险（URGENT 优先）', () => {
+    // 本人即时危险在前、朋友说在后 → URGENT
+    expect(detectSafety('我现在准备伤害自己朋友说让我别这样')).toBe('URGENT');
+    // 本人可能危险在前、朋友说在后 → NEEDS_CLARIFICATION
+    expect(detectSafety('我不想活了朋友说让我别这样')).toBe('NEEDS_CLARIFICATION');
+  });
+
+  it('SAFE-01 第四轮：同段局部否定不能屏蔽后面的独立间接意念', () => {
+    // 无标点：否定+间接意念 → NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头但有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 更危险：否定+即时危险 → URGENT
+    expect(detectSafety('我没有自杀念头但现在准备伤害自己')).toBe('URGENT');
+  });
+
+  it('SAFE-01 第四轮：同段后半的非第一人称主体不能否决前半本人间接意念', () => {
+    // 前半本人间接意念、后半她希望 → NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想如果我不在了就好了但她希望我好好活')).toBe('NEEDS_CLARIFICATION');
+  });
+
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
     const urgent = [
       { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },

@@ -251,29 +251,62 @@ export function detectSafety(text: string): SafetyStatus {
 
   const explicitNegative = /(?:没有|不会|不想|并没有|没打算).{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/;
 
-  // SAFE-01 第三轮：逐段识别风险证据，限定第三方归属与局部否定后汇总。
+  // SAFE-01 第四轮：以具体风险候选表达为最小判定单位。
+  // 否定、第三方归因、非第一人称主体只影响其对应的局部内容，不一票排除同段其他候选。
+
+  // Pass 1：即时危险 → URGENT（不被第三方归因抑制，但尊重局部否定）
+  for (const segment of segments) {
+    for (const pattern of immediateDangerPatterns) {
+      const m = segment.match(pattern);
+      if (m && m.index !== undefined) {
+        if (!isMatchLocallyNegated(segment, m.index, m.index + m[0].length)) {
+          return 'URGENT';
+        }
+      }
+    }
+  }
+
+  // Pass 2：可能危险 + 间接轻生意念 → NEEDS_CLARIFICATION（局部抑制）
   let hasClarification = false;
   for (let i = 0; i < segments.length; i++) {
     const segment = segments[i];
-    // 第三方/文学归属 → 跳过本段
-    if (isThirdPartySegment(segment)) continue;
-    // 局部否定 → 跳过本段
-    if (explicitNegative.test(segment)) continue;
-    // 即时危险 → URGENT（任一段命中即返回）
-    if (immediateDangerPatterns.some((pattern) => pattern.test(segment))) return 'URGENT';
-    // 直接可能危险 → 累积 NEEDS_CLARIFICATION
-    if (possibleDangerPatterns.some((pattern) => pattern.test(segment))) hasClarification = true;
-    // 间接轻生意念：需排除非第一人称主体 → 累积 NEEDS_CLARIFICATION
-    // 如果本段以条件句开头且无显式主语，检查前一段是否提供第一人称语境
-    let segmentForIndirect = segment;
-    if (i > 0 && /^(?:如果|要是|若能)/.test(segment)) {
-      const prevSegment = segments[i - 1];
-      // 前一段以第一人称动词结尾（想/觉得/感觉），提供语境
-      if (/(?:我|自己|有时候)?(?:想|觉得|感觉)$/.test(prevSegment)) {
-        segmentForIndirect = prevSegment.slice(-8) + segment;
+
+    // 直接可能危险：仅当匹配词被局部否定或在第三方区域内时才抑制
+    for (const pattern of possibleDangerPatterns) {
+      const m = segment.match(pattern);
+      if (m && m.index !== undefined) {
+        const matchStart = m.index;
+        const matchEnd = matchStart + m[0].length;
+        if (!isMatchLocallyNegated(segment, matchStart, matchEnd)
+          && !isMatchInThirdPartyRegion(segment, matchStart, matchEnd)) {
+          hasClarification = true;
+        }
       }
     }
-    if (!hasNonFirstPersonSubject(segmentForIndirect) && indirectSuicidalPatterns.some((pattern) => pattern.test(segmentForIndirect))) hasClarification = true;
+
+    // 间接轻生意念：仅当匹配被局部第三方归因或局部非第一人称主体否定时才抑制
+    // 同时支持跨段语境恢复（前段第一人称动词+本段条件句省略主语）
+    const indirectCandidates: { text: string; offset: number }[] = [{ text: segment, offset: 0 }];
+    if (i > 0 && /^(?:如果|要是|若能)/.test(segment)) {
+      const prev = segments[i - 1];
+      if (/(?:我|自己|有时候)?(?:想|觉得|感觉)$/.test(prev)) {
+        indirectCandidates.push({ text: prev.slice(-8) + segment, offset: 0 });
+      }
+    }
+    for (const candidate of indirectCandidates) {
+      for (const pattern of indirectSuicidalPatterns) {
+        const m = candidate.text.match(pattern);
+        if (m && m.index !== undefined) {
+          const matchStart = m.index;
+          const matchEnd = m.index + m[0].length;
+          if (!isMatchInThirdPartyRegion(candidate.text, matchStart, matchEnd)
+            && !isMatchLocallyNegated(candidate.text, matchStart, matchEnd)
+            && !hasNonFirstPersonSubjectNearMatch(candidate.text, matchStart, matchEnd)) {
+            hasClarification = true;
+          }
+        }
+      }
+    }
   }
 
   if (hasClarification) return 'NEEDS_CLARIFICATION';
@@ -295,14 +328,67 @@ function splitSafetySegments(text: string): string[] {
 }
 
 // SAFE-01 第三轮：判断句段是否属于第三方/文学归属。
+// 仅用于辅助，不在 detectSafety 主循环中整段使用。
 function isThirdPartySegment(segment: string): boolean {
   return thirdPartyAttributionPatterns.some((pattern) => pattern.test(segment));
 }
 
 // SAFE-01 第三轮：判断句段是否包含非第一人称主体（他/她/项目/工作/角色等）。
-// 用于排除间接模式中将他者或非人物事项误归因为用户本人的风险。
+// 仅用于辅助，不在 detectSafety 主循环中整段使用。
 function hasNonFirstPersonSubject(segment: string): boolean {
   return nonFirstPersonSubjectPatterns.some((pattern) => pattern.test(segment));
+}
+
+// SAFE-01 第四轮：判断风险匹配是否被局部否定覆盖。
+// 否定模式与风险匹配在文本中有重叠区域时，视为被局部否定。
+// 但否定不能跨越主语切换标记（但/可+我），只作用于同一局部主语范围。
+function isMatchLocallyNegated(text: string, matchStart: number, matchEnd: number): boolean {
+  const negPattern = /(?:没有|不会|不想|并没有|没打算)[^但可]{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/g;
+  let m: RegExpExecArray | null;
+  while ((m = negPattern.exec(text)) !== null) {
+    const negStart = m.index;
+    const negEnd = negStart + m[0].length;
+    // 否定范围与风险匹配有重叠 → 被否定
+    if (negStart < matchEnd && negEnd > matchStart) return true;
+  }
+  return false;
+}
+
+// SAFE-01 第四轮：判断风险匹配是否处于第三方/文学归因区域内。
+// 第三方归因区域从归属动词开始，延伸到下一个第一人称主语切换或段尾。
+function isMatchInThirdPartyRegion(text: string, matchStart: number, matchEnd: number): boolean {
+  for (const pattern of thirdPartyAttributionPatterns) {
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : 'g');
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(text)) !== null) {
+      const regionStart = m.index;
+      const verbEnd = m.index + m[0].length;
+      // 第三方区域延伸到下一个第一人称主语切换或段尾
+      const rest = text.slice(verbEnd);
+      const switchMatch = rest.match(/(?:但|可)?(?:我也|我自己|我也会|我也想|我觉得|我感觉|我现在|我正在)/);
+      const regionEnd = switchMatch && switchMatch.index !== undefined ? verbEnd + switchMatch.index : text.length;
+      // 风险匹配完全在第三方区域内
+      if (matchStart >= regionStart && matchEnd <= regionEnd) return true;
+    }
+  }
+  return false;
+}
+
+// SAFE-01 第四轮：判断风险匹配附近是否有非第一人称主体在修饰它。
+// 仅当非第一人称主体出现在匹配之前或之内（修饰该匹配）时，才视为修饰。
+// 出现在匹配之后的主体（如"如果我不在了就好了但她希望"中的"她希望"）不否决前面的匹配。
+function hasNonFirstPersonSubjectNearMatch(text: string, matchStart: number, matchEnd: number): boolean {
+  for (const pattern of nonFirstPersonSubjectPatterns) {
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : 'g');
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(text)) !== null) {
+      const subjStart = m.index;
+      const subjEnd = subjStart + m[0].length;
+      // 非第一人称主体在匹配之前或之内（起始在匹配结束之前）→ 修饰该匹配
+      if (subjStart < matchEnd && subjEnd > matchStart) return true;
+    }
+  }
+  return false;
 }
 
 function isSafetyClarification(text: string) {

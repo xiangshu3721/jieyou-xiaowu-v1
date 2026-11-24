@@ -899,6 +899,31 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  // SAFE-01 第四轮：句段级过滤过宽 — Handler 链路验证
+  it('SAFE-01 第四轮：同段第三方不屏蔽本人即时危险 → URGENT 紧急回复，不调用模型', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我现在准备伤害自己朋友说让我别这样' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toBe(emergencyReply);
+    expect(body.model).toBe('safety-rule');
+    expect(body.analysis.safety_status).toBe('URGENT');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('SAFE-01 第四轮：同段局部否定不屏蔽独立间接意念 → NEEDS_CLARIFICATION 安全澄清，不调用模型', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我没有自杀念头但有时候想如果我不在了就好了' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.reply).toBe(safetyClarificationReply);
+    expect(body.model).toBe('safety-rule');
+    expect(body.analysis.safety_status).toBe('NEEDS_CLARIFICATION');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))
