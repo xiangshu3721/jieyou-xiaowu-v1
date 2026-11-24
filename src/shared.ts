@@ -81,6 +81,34 @@ export type UserIntent =
   | 'WANTS_END'
   | 'UNKNOWN';
 
+/**
+ * JTBD-01 影子识别：用户在这一刻想让 AI 完成什么任务。
+ *
+ * 这是「内部、不展示给用户」的保守分类，刻意不与 `UserIntent`、`response_goal`、
+ * 路由或安全分流 1:1 对应。真人交接与专业/安全分流不归入这五类，保持
+ * `UNDETERMINED`，避免把系统判断当成用户任务。
+ */
+export type CurrentJob = 'EXPRESS' | 'UNDERSTAND' | 'ACT' | 'SETTLE' | 'UNDETERMINED';
+export type CurrentJobConfidence = 'HIGH' | 'MEDIUM' | 'LOW';
+
+export interface CurrentJobEvidence {
+  /** 驱动判断的信号名，例如 user_intent / routing / safety_status。 */
+  signal: string;
+  /** 信号取值，便于解释为什么得到该 current_job。 */
+  value: string;
+  /** 来自最新轮用户消息的简短引用（截断），可为空。 */
+  quote?: string;
+}
+
+export interface CurrentJobShadow {
+  current_job: CurrentJob;
+  confidence: CurrentJobConfidence;
+  /** 可解释的证据链；`UNDETERMINED` 时记录为什么无法判断。 */
+  evidence: CurrentJobEvidence[];
+  /** 仅在被刻意排除于五类之外（安全/真人/专业边界、切换话题）时填写。 */
+  notes?: string[];
+}
+
 export type RoutingState =
   | 'AI_SELF_HELP'
   | 'HUMAN_SUPPORT'
@@ -261,6 +289,12 @@ export interface ConversationAnalysis {
   asked_questions: AskedQuestion[];
   primary_response_strategy: DialogueStrategy;
   question_value: number;
+
+  /**
+   * JTBD-01 影子识别结果（可选、向后兼容）。默认不写入 `/api/chat` 公开响应，
+   * 仅在请求显式开启 `currentJobShadow` 诊断开关时附加，因此不影响现有 UI 与回复。
+   */
+  current_job?: CurrentJobShadow;
 }
 
 export interface ChatResponse {

@@ -1,7 +1,8 @@
-import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage } from '../src/shared.js';
+import { hasRequiredAppointmentFields, type AppointmentInput, type ChatMessage, type ConversationAnalysis } from '../src/shared.js';
 import { analyzeConversation, buildConversationUnderstanding, deniedTopicsForText, emergencyReply, recentSafetyStatus, resetForAwaitingTopic, safetyClarificationReply } from '../server/rules.js';
 import { annotateAnalysis, applyDeclinedHandoff, messagesForIssue, parseIssueContext, resolveCurrentIssue, userContextText, userMessagesForIssue } from '../server/issue.js';
 import { fallbackReply, mergeAnalysis, naturalReply, normalizeUserReply, parseAssistantOutput, replyPartsForDisplay } from '../server/structured.js';
+import { currentJobShadowFromAnalysis } from '../server/current-job.js';
 import { modelGuidanceFor } from '../server/model-guidance.js';
 import { deleteLearningSession, learningDashboard, recordLearningEvent, recordMentorFeedback, reviewConversation, runLearningInsights } from '../server/learning-service.js';
 import { createCloudBaseLearningStore } from './learning-store.js';
@@ -417,6 +418,28 @@ function isDevAuthorized(request: Request, env: WorkerEnv) {
   return Boolean(env.DEV_TOKEN && request.headers.get('X-Dev-Token') === env.DEV_TOKEN);
 }
 
+/**
+ * JTBD-01 影子模式：集中、无副作用地按需为 HTTP 200 /api/chat 响应附加 current_job。
+ * 仅在 enabled 时写入 analysis.current_job，绝不触碰 reply / reply_parts / routing /
+ * CTA / safety / Fallback；默认（未开启开关）原样返回，JSON 契约完全不变。
+ * `responseBody.analysis` 与传入的 `analysis` 是同一对象引用，写入即反映到响应体。
+ */
+function attachCurrentJobShadow(
+  responseBody: Record<string, unknown>,
+  analysis: ConversationAnalysis,
+  enabled: boolean,
+  analysisMessages: ChatMessage[],
+  latestUserMessage: string,
+): Record<string, unknown> {
+  if (!enabled) return responseBody;
+  analysis.current_job = currentJobShadowFromAnalysis(
+    analysis,
+    latestUserMessage,
+    analysisMessages.filter((message) => message.role === 'user').map((message) => message.content),
+  );
+  return responseBody;
+}
+
 export async function handleApi(request: Request, env: WorkerEnv) {
   const url = new URL(request.url);
   if (request.method === 'OPTIONS') return json(204, {}, request);
@@ -593,9 +616,14 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       });
       let baseline = resolution.awaiting_topic ? resetForAwaitingTopic(rawBaseline, resolution.previous_issue_id) : annotateAnalysis(rawBaseline, resolution);
       if (resolution.control_intent === 'DECLINE_HANDOFF' || (resolution.issue_action !== 'CREATE_NEW' && targetIssue.handoff_state === 'DECLINED' && resolution.control_intent !== 'ACCEPT_HANDOFF')) baseline = applyDeclinedHandoff(baseline);
-      if (baseline.safety_status === 'URGENT') return json(200, { reply: emergencyReply, reply_parts: replyPartsForDisplay(emergencyReply, baseline), analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
-      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, baseline), analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, request);
-      if (resolution.return_lookup) return json(200, {
+      // JTBD-01 影子模式：单个集中开关，覆盖所有 HTTP 200 正常与控制回复。
+      // 默认（未带 currentJobShadow）完全不变；开启时只附加 analysis.current_job。
+      const currentJobShadowEnabled = body.currentJobShadow === true;
+      const withCurrentJobShadow = (responseBody: Record<string, unknown>, analysis: ConversationAnalysis) =>
+        attachCurrentJobShadow(responseBody, analysis, currentJobShadowEnabled, analysisMessages, latestText);
+      if (baseline.safety_status === 'URGENT') return json(200, withCurrentJobShadow({ reply: emergencyReply, reply_parts: replyPartsForDisplay(emergencyReply, baseline), analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, baseline), request);
+      if (baseline.safety_status === 'NEEDS_CLARIFICATION') return json(200, withCurrentJobShadow({ reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, baseline), analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule' }, baseline), request);
+      if (resolution.return_lookup) return json(200, withCurrentJobShadow({
         reply: resolution.return_lookup === 'AMBIGUOUS'
           ? '我们前面聊过不止一件事。你想回到哪一件？说说那个主题，我就接着之前的内容聊。'
           : '我在这次聊天记录里没找到那个旧话题。你可以简单提醒我之前聊到了哪儿。',
@@ -603,9 +631,9 @@ export async function handleApi(request: Request, env: WorkerEnv) {
           ? '我们前面聊过不止一件事。你想回到哪一件？说说那个主题，我就接着之前的内容聊。'
           : '我在这次聊天记录里没找到那个旧话题。你可以简单提醒我之前聊到了哪儿。', baseline),
         analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule',
-      }, request);
-      if (resolution.awaiting_topic) return json(200, { reply: '可以呀，换个话题。你想聊什么？', reply_parts: ['可以呀，换个话题。你想聊什么？'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
-      if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, { reply: '可以，我们继续按你舒服的节奏聊。', reply_parts: ['可以，我们继续按你舒服的节奏聊。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, request);
+      }, baseline), request);
+      if (resolution.awaiting_topic) return json(200, withCurrentJobShadow({ reply: '可以呀，换个话题。你想聊什么？', reply_parts: ['可以呀，换个话题。你想聊什么？'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
+      if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, withCurrentJobShadow({ reply: '可以，我们继续按你舒服的节奏聊。', reply_parts: ['可以，我们继续按你舒服的节奏聊。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
       let watchGuidance = '';
       if (body.growthConsent === true && typeof body.growthId === 'string') {
         const growthStore = growthStoreFor(env);
@@ -634,8 +662,8 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       };
       const parsed = completion.content && completion.finishReason !== 'length' ? parseAssistantOutput(completion.content) : null;
       const analysis = mergeAnalysis(baseline, parsed);
-      if (analysis.safety_status === 'URGENT') return json(200, { reply: emergencyReply, reply_parts: replyPartsForDisplay(emergencyReply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, request);
-      if (analysis.safety_status === 'NEEDS_CLARIFICATION') return json(200, { reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, request);
+      if (analysis.safety_status === 'URGENT') return json(200, withCurrentJobShadow({ reply: emergencyReply, reply_parts: replyPartsForDisplay(emergencyReply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, analysis), request);
+      if (analysis.safety_status === 'NEEDS_CLARIFICATION') return json(200, withCurrentJobShadow({ reply: safetyClarificationReply, reply_parts: replyPartsForDisplay(safetyClarificationReply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'safety-rule', diagnostics }, analysis), request);
       const replyContext = {
         latestUserMessage: latestText,
         issueUserContext: userContextText(analysisMessages.slice(0, -1)),
@@ -679,7 +707,9 @@ export async function handleApi(request: Request, env: WorkerEnv) {
           reply = normalized;
         }
       }
-      return json(200, { reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: diagnostics.model, diagnostics }, request);
+      // JTBD-01 影子模式：默认请求不写入 current_job；开启 currentJobShadow 时，
+      // 由上方统一的 withCurrentJobShadow 在所有 HTTP 200 出口附加，回复逐字不变。
+      return json(200, withCurrentJobShadow({ reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: diagnostics.model, diagnostics }, analysis), request);
     } catch (error) {
       const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
       return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
