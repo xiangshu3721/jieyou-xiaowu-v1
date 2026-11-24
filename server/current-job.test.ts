@@ -36,10 +36,11 @@ describe('JTBD-01 current_job 影子分类', () => {
     expect(result.evidence.some((item) => item.signal === 'user_intent' && item.value === 'WANTS_COMFORT')).toBe(true);
   });
 
-  it('EXPRESS：被动但有实质表达时归为被倾听，而非行动/理清', () => {
+  it('被动情绪表达不等于雇用 AI 来倾诉，保持 UNDETERMINED（记录实质性证据）', () => {
     const result = classifyCurrentJob(input({ userIntent: 'VENTING', latestUserMessage: '最近工作压力很大，整个人很疲惫，也说不清在烦什么。' }));
-    expect(result.current_job).toBe('EXPRESS');
-    expect(result.confidence).toBe('MEDIUM');
+    expect(result.current_job).toBe('UNDETERMINED');
+    expect(result.evidence.some((item) => item.signal === 'disclosure' && item.value === 'substantive')).toBe(true);
+    expect(result.notes?.join('')).toMatch(/不等于|雇用|UNDEFINED|不确定/);
   });
 
   it('EXPRESS：拒绝建议后仍以被倾听为主，不升级成行动', () => {
@@ -63,6 +64,23 @@ describe('JTBD-01 current_job 影子分类', () => {
     const result = classifyCurrentJob(input({ userIntent: 'WANTS_END', latestUserMessage: '先这样吧，我先不聊了，晚安。' }));
     expect(result.current_job).toBe('SETTLE');
     expect(result.confidence).toBe('HIGH');
+  });
+
+  it('SETTLE 正反向：明确暂缓/休息为 SETTLE；安定/疲惫类现有信号不足则 UNDETERMINED（不堆关键词）', () => {
+    // 正向：明确的结束/暂缓/休息表达（已属 WANTS_END）。
+    for (const text of ['先这样吧，我想先去休息一下。', '今天就到这吧，我去休息了，晚安。', '我先不聊了，先这样。']) {
+      const result = classifyCurrentJob(input({ userIntent: 'WANTS_END', latestUserMessage: text }));
+      expect(result.current_job, `${text} → ${result.current_job}`).toBe('SETTLE');
+    }
+    // 反向：安定/稳定/疲惫类请求若现有确定性信号不足，保持 UNDETERMINED，
+    // 不误作 ACT（行动）或 SETTLE（结束）。已知局限：待 JTBD-02 设计策略再深化。
+    for (const text of ['我很乱，先想安静一下', '带我简单稳定一下情绪', '我累了但还想聊']) {
+      const analysis = analyzeConversation(text);
+      const result = currentJobShadowFromAnalysis(analysis, text);
+      expect(result.current_job, `${text} → ${result.current_job}`).toBe('UNDETERMINED');
+      expect(result.current_job, text).not.toBe('ACT');
+      expect(result.current_job, text).not.toBe('SETTLE');
+    }
   });
 
   it('UNDETERMINED：仅简短情绪标签、证据不足时不臆测任务', () => {
@@ -102,6 +120,17 @@ describe('JTBD-01 current_job 影子分类', () => {
       latestUserMessage: '真人导师会有帮助吗？我还不确定要不要找。',
     }));
     expect(result.current_job).toBe('UNDERSTAND');
+  });
+
+  it('QUICK_HANDOFF：系统建议交接（routing=HUMAN_MENTOR，用户未明确）不归入五类', () => {
+    // 即便 user_intent 看似 WANTS_ACTION，只要已进入 QUICK_HANDOFF 路径就保持 UNDETERMINED。
+    const result = classifyCurrentJob(input({
+      userIntent: 'WANTS_ACTION', humanIntent: 'NOT_EXPLICIT', bookingPreference: 'NOT_EXPRESSED',
+      routing: 'HUMAN_MENTOR', latestUserMessage: '前面这些建议没用，我现在到底怎么办？',
+    }));
+    expect(result.current_job).toBe('UNDETERMINED');
+    expect(result.evidence.some((item) => item.signal === 'routing' && item.value === 'HUMAN_MENTOR')).toBe(true);
+    expect(result.notes?.join('')).toMatch(/真人|交接/);
   });
 
   it('专业边界（用药决策）不属于五类，保持 UNDETERMINED', () => {
@@ -158,12 +187,12 @@ describe('JTBD-01 current_job 影子分类', () => {
     expect(second.current_job).toBe('EXPRESS');
   });
 
-  it('多轮5：纠正“不是想辞职”后不归为职业行动，仍按当下表达处理', () => {
+  it('多轮5：纠正“不是想辞职”后不归为职业行动，被动表达保持 UNDETERMINED', () => {
     const second = classifyCurrentJob(input({
       userIntent: 'VENTING', latestUserMessage: '你理解错了，我不是想辞职，我只是觉得很累。',
       recentUserMessages: ['我在想要不要辞职转行。'],
     }));
-    expect(second.current_job).toBe('EXPRESS');
+    expect(second.current_job).toBe('UNDETERMINED');
     expect(second.current_job).not.toBe('ACT');
   });
 
@@ -178,12 +207,12 @@ describe('JTBD-01 current_job 影子分类', () => {
 
   // —— 不串线：Issue 切换/恢复 ——
 
-  it('不串线：旧 Issue 在求助（ACT），切到新 Issue 仅倾诉（EXPRESS）不被旧任务污染', () => {
+  it('不串线：旧 Issue 在求助（ACT），切到新 Issue 仅被动倾诉（UNDETERMINED）不被旧任务污染', () => {
     const resumed = classifyCurrentJob(input({
       userIntent: 'VENTING', issueStatus: 'ACTIVE', controlIntent: 'CONTINUE_CURRENT_TOPIC',
       latestUserMessage: '嗯，我就是想找个人说说话。',
     }));
-    expect(resumed.current_job).toBe('EXPRESS');
+    expect(resumed.current_job).toBe('UNDETERMINED');
     expect(resumed.current_job).not.toBe('ACT');
   });
 

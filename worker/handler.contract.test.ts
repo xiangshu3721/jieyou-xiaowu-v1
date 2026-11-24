@@ -1287,4 +1287,114 @@ describe('worker handler API 契约', () => {
     expect(shadowBody.analysis.current_job.evidence.some((item: { signal: string }) => item.signal === 'user_intent')).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it('JTBD-01 P1-C：安全提前返回路径在开启影子时记为 UNDETERMINED，默认不写，回复逐字不变', async () => {
+    const issueId = 'issue-jtbd-safety';
+    const messages = [{ role: 'user' as const, content: '我现在正准备伤害自己。', issueId }];
+
+    // 默认请求：不携带 currentJobShadow，analysis 中不得出现 current_job。
+    const defaultResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const defaultBody = await json(defaultResponse);
+    expect(defaultResponse.status).toBe(200);
+    expect(defaultBody.reply).toBe(emergencyReply);
+    expect(defaultBody.analysis).not.toHaveProperty('current_job');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // 开启诊断开关：安全路径也附加 current_job（安全分流不入五类 → UNDETERMINED）。
+    const shadowResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      currentJobShadow: true,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const shadowBody = await json(shadowResponse);
+    expect(shadowResponse.status).toBe(200);
+    expect(shadowBody.reply).toBe(emergencyReply);
+    expect(shadowBody.analysis.current_job.current_job).toBe('UNDETERMINED');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('JTBD-01 P1-C：换话题（awaiting_topic）提前返回路径默认不写、开启时为 UNDETERMINED', async () => {
+    const issueId = 'issue-jtbd-switch';
+    const messages = [{ role: 'user' as const, content: '换个话题', issueId }];
+
+    const defaultResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const defaultBody = await json(defaultResponse);
+    expect(defaultResponse.status).toBe(200);
+    expect(defaultBody.reply).toBe('可以呀，换个话题。你想聊什么？');
+    expect(defaultBody.analysis).not.toHaveProperty('current_job');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const shadowResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId,
+      currentJobShadow: true,
+      issue: { issue_id: issueId, status: 'ACTIVE', topic_tags: ['CAREER'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages,
+    }), baseEnv);
+    const shadowBody = await json(shadowResponse);
+    expect(shadowResponse.status).toBe(200);
+    expect(shadowBody.reply).toBe('可以呀，换个话题。你想聊什么？');
+    expect(shadowBody.analysis.current_job.current_job).toBe('UNDETERMINED');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('JTBD-01 P1-C：拒绝预约（DECLINE_HANDOFF）提前返回路径默认不写、开启时为 UNDETERMINED', async () => {
+    const issueId = 'issue-jtbd-decline';
+    const issue = { issue_id: issueId, status: 'HANDOFF_OFFERED', topic_tags: ['CAREER'], handoff_offered: true, handoff_state: 'OFFERED' };
+    const messages = [{ role: 'user' as const, content: '不找真人了', issueId }];
+
+    const defaultResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId, issue, issues: [issue], messages,
+    }), baseEnv);
+    const defaultBody = await json(defaultResponse);
+    expect(defaultResponse.status).toBe(200);
+    expect(defaultBody.reply).toBe('可以，我们继续按你舒服的节奏聊。');
+    expect(defaultBody.analysis).not.toHaveProperty('current_job');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const shadowResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: issueId, currentJobShadow: true, issue, issues: [issue], messages,
+    }), baseEnv);
+    const shadowBody = await json(shadowResponse);
+    expect(shadowResponse.status).toBe(200);
+    expect(shadowBody.reply).toBe('可以，我们继续按你舒服的节奏聊。');
+    expect(shadowBody.analysis.current_job.current_job).toBe('UNDETERMINED');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
+
+  it('JTBD-01 P1-C：回到旧 Issue 的歧义控制回复默认不写、开启时为 UNDETERMINED', async () => {
+    const history = [
+      { role: 'user' as const, content: '工作中和同事总吵架', issueId: 'issue-w1' },
+      { role: 'user' as const, content: '我最近在求职', issueId: 'issue-w2' },
+      { role: 'user' as const, content: '和伴侣关系很紧张', issueId: 'issue-c' },
+      { role: 'user' as const, content: '回到之前工作的问题吧', issueId: 'issue-c' },
+    ];
+    const issue = { issue_id: 'issue-c', status: 'ACTIVE', topic_tags: ['INTIMACY'], handoff_offered: false, handoff_state: 'NOT_READY' };
+
+    const defaultResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-c', issue, messages: history,
+    }), baseEnv);
+    const defaultBody = await json(defaultResponse);
+    expect(defaultResponse.status).toBe(200);
+    expect(defaultBody.reply).toContain('哪一件');
+    expect(defaultBody.analysis).not.toHaveProperty('current_job');
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    const shadowResponse = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-c', currentJobShadow: true, issue, messages: history,
+    }), baseEnv);
+    const shadowBody = await json(shadowResponse);
+    expect(shadowResponse.status).toBe(200);
+    expect(shadowBody.reply).toContain('哪一件');
+    expect(shadowBody.analysis.current_job.current_job).toBe('UNDETERMINED');
+    expect(fetchMock).toHaveBeenCalledTimes(0);
+  });
 });

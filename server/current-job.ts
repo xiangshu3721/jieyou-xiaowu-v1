@@ -61,7 +61,8 @@ function evidence(signal: string, value: string, latestUserMessage: string): Cur
 
 /**
  * 一条消息是否有“实质性表达”：能归类出真实主题，或包含一段像样的句子。
- * 仅用于区分“在倾诉被听见”与“证据不足”，不会把被动情绪标签当成明确任务。
+ * 当前仅用于记录 `disclosure` 证据，**不再**据此把被动情绪表达判定为 EXPRESS；
+ * 只有用户明确选择倾诉（WANTS_COMFORT）才记为 EXPRESS。
  */
 function hasSubstantiveDisclosure(latestUserMessage: string): boolean {
   if (classifyConcern(latestUserMessage).some((topic) => topic !== 'OTHER')) return true;
@@ -98,14 +99,16 @@ export function classifyCurrentJob(input: CurrentJobInput): CurrentJobShadow {
     ], ['安全分流不属于 JTBD 五类，保持 UNDETERMINED。']);
   }
 
-  // 2) 真人预约/交接：用户明确选择真人时不归入五类。
-  //    注意：仅“考虑真人”的疑问（human_intent 非 EXPLICIT）会落到下面的意图分支。
-  if (humanIntent === 'EXPLICIT' || bookingPreference === 'ACCEPTED' || controlIntent === 'ACCEPT_HANDOFF') {
+  // 2) 真人预约/交接（含系统建议的 QUICK_HANDOFF）：不归入五类，保持 UNDETERMINED。
+  //    仅“考虑真人”的疑问（human_intent 非 EXPLICIT、booking 非 ACCEPTED、
+  //    control 非 ACCEPT_HANDOFF 且 routing 非 HUMAN_MENTOR）才会落到下面的意图分支。
+  if (humanIntent === 'EXPLICIT' || bookingPreference === 'ACCEPTED' || controlIntent === 'ACCEPT_HANDOFF' || routing === 'HUMAN_MENTOR') {
     return shadow('UNDETERMINED', 'HIGH', [
       evidence('human_intent', humanIntent, latest),
       evidence('booking_preference', bookingPreference, latest),
       evidence('control_intent', controlIntent || 'GENERAL_CHAT', latest),
-    ], ['真人预约/交接在 JTBD 五类之外，保持 UNDETERMINED。']);
+      evidence('routing', routing, latest),
+    ], ['真人预约/交接（含系统建议的 QUICK_HANDOFF）在 JTBD 五类之外，保持 UNDETERMINED。']);
   }
 
   // 3) 专业边界（医疗/法律/用药等）：需要合格专业人士，不归入五类。
@@ -153,19 +156,14 @@ export function classifyCurrentJob(input: CurrentJobInput): CurrentJobShadow {
     ]);
   }
 
-  // 9) 被动情绪流露：有实质性表达→被倾听（EXPRESS）；否则证据不足→UNDETERMINED。
-  //    这里不把“情绪标签”等同于任务，也不强行升级成 ACT/UNDERSTAND。
+  // 9) 被动情绪流露不等于用户雇用 AI 来倾诉。任务不明确时保持 UNDETERMINED，
+  //    仅记录 disclosure 证据；只有明确的 WANTS_COMFORT（如“我想说说”“先听我说”
+  //    “不用给建议”）才在前面步骤记为 EXPRESS。“消息很长”不能成为确定任务的理由。
   if (userIntent === 'VENTING') {
-    if (hasSubstantiveDisclosure(latest)) {
-      return shadow('EXPRESS', 'MEDIUM', [
-        evidence('user_intent', userIntent, latest),
-        evidence('disclosure', 'substantive', latest),
-      ]);
-    }
     return shadow('UNDETERMINED', 'LOW', [
       evidence('user_intent', userIntent, latest),
-      evidence('disclosure', 'insufficient', latest),
-    ], ['仅有简短情绪表达、证据不足以判断当前任务，保持 UNDETERMINED。']);
+      evidence('disclosure', hasSubstantiveDisclosure(latest) ? 'substantive' : 'insufficient', latest),
+    ], ['被动情绪表达不等于用户雇用 AI 来倾诉；任务不明确时保持 UNDETERMINED。']);
   }
 
   // 10) 未知或矛盾：保持不确定。
