@@ -47,15 +47,15 @@ const possibleDangerPatterns = [
 // 仅用于 NEEDS_CLARIFICATION，不升级 URGENT。
 // 不含宽泛的"不在/消失/离开"，避免误伤普通外出、日常离开或第三人称叙述。
 const indirectSuicidalPatterns = [
-  // "如果/要是+(我)不在了就好了/该多好" — 显式第一人称主语
+  // "如果/要是+我+不在了就好了/该多好" — 显式第一人称主语
   /(?:如果|要是|若能).{0,4}(?:我|自己).{0,6}(?:不在|没有|不存在).{0,8}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
-  // "有时候想/我觉得+如果不在了就好了" — 第一人称前导+省略主语
+  // "有时候想/我想/我觉得+如果不在了就好了" — 第一人称前导+省略主语
   /(?:我|自己|有时候).{0,6}(?:想|觉得|感觉).{0,6}(?:如果|要是|若能).{0,6}(?:不在|没有|不存在).{0,8}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
   // "要是没有我/看不到我+就好了" — 显式第一人称
   /(?:要是|如果|若能).{0,6}(?:没有|看不到).{0,4}(?:我|自己).{0,10}(?:了|的话)?.{0,4}(?:就好|该多好|就好了|就行了|也可以|也无所谓)/,
-  // "我/(真)希望/想不用再醒过来" — 显式第一人称或"真"强调
+  // "我/真希望不用再醒过来" — 显式第一人称或"真"强调
   /(?:我|自己|真)(?:希望|想|但愿|真希望).{0,8}(?:不用|不必|再也不用).{0,8}(?:醒|起来|睁开).{0,4}(?:来|眼)/,
-  // "(有时候)感觉/觉得+如果+消失了+也没人在意" — 第一人称前导+消失
+  // "我/有时候感觉+如果+消失了+也没人在意" — 第一人称前导+消失
   /(?:我|自己|有时候)?(?:感觉|觉得).{0,6}(?:如果|要是|若能).{0,6}(?:消失|不见|离开).{0,6}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
   // "我不在了就好/也好/也无所谓" — 显式第一人称
   /(?:我|自己).{0,4}(?:不在|不见|消失).{0,4}(?:了|的).{0,6}(?:就好|也好|也无所谓|也行|也无妨|该多好|也可以)/,
@@ -65,14 +65,30 @@ const indirectSuicidalPatterns = [
   /(?:如果|要是|若能|万一).{0,4}(?:我|自己).{0,4}(?:消失|不见|离开).{0,4}(?:了|的).{0,10}(?:也没|也不).{0,8}(?:有人|没人|不会|会有).{0,8}(?:在意|关心|知道|发现|注意|记得|察觉|关心我|记得我|发现|注意到)/,
 ];
 
-// SAFE-01：第三人称转述（无引号的间接引述）与文学/讨论语境：局部抑制安全触发。
-// 匹配到的片段会被剔除，剩余文本继续检查第一人称风险。
-// 使用 [^，。！？]*? 避免跨越句子边界。
-const suppressSafetyContextPatterns = [
+// SAFE-01：非第一人称主体标记，用于排除间接模式的误归因。
+// 当句段中出现这些标记作为间接表达的主语时，不应归因于用户本人。
+const nonFirstPersonSubjectPatterns = [
+  // 第三人称代词作主语："他/她/它+如果/要是/觉得/希望"
+  /(?:他|她|它|他们|她们|其)\s*(?:如果|要是|若能|觉得|感觉|希望|想|但愿)/,
+  // 条件句+第三人称："如果/要是+他/她/它"
+  /(?:如果|要是|若能).{0,4}(?:他|她|它|他们|她们)/,
+  // 非人名词作主语："项目/工作/任务/麻烦/事情+如果/要是/消失"
+  /(?:项目|工作|任务|麻烦|事情)\s*(?:如果|要是|若能|消失|不存在)/,
+  // 条件句+非人名词："如果/要是+项目/工作/任务/麻烦/事情"
+  /(?:如果|要是|若能).{0,6}(?:项目|工作|任务|麻烦|事情)/,
+  // 虚构角色作主语："小说主人公/角色/人物+如果/要是/不在"
+  /(?:小说|书|电影|故事)?(?:主人公|角色|人物)\s*(?:如果|要是|若能|不在|没有|消失)/,
+  // 第三人称+希望/想："她/他+真希望/希望/想+不用+醒"
+  /(?:她|他|它|他们|她们)\s*(?:真)?(?:希望|想|但愿)/,
+];
+
+// SAFE-01：第三人称转述（无引号的间接引述）与文学/讨论语境标记。
+// 用于逐段判断某个句段是否属于他者叙述或作品讨论。
+const thirdPartyAttributionPatterns = [
   // 第三人称报告："朋友/他/她说...不想活/轻生/..."
-  /(?:朋友|他|她|某人|有人|同事|同学|伴侣|家人|对方|客户|患者|来访者).{0,12}(?:说|表示|提到|告诉|聊到|谈到|讲)[^，。！？]*?(?:不想活|轻生|自杀|结束生命|伤害自己|自残|割腕|跳楼|活不下去)/,
+  /(?:朋友|他|她|某人|有人|同事|同学|伴侣|家人|对方|客户|患者|来访者).{0,12}(?:说|表示|提到|告诉|聊到|谈到|讲)/,
   // 文学/讨论语境："书/电影里提到轻生/自杀..."
-  /(?:书|电影|电视剧|小说|文章|故事|讨论|案例|课程|讲座|节目).{0,12}(?:里|中|提到|讲到|描述)[^，。！？]*?(?:轻生|自杀|结束生命|伤害自己|自残)/,
+  /(?:书|电影|电视剧|小说|文章|故事|讨论|案例|课程|讲座|节目).{0,12}(?:里|中|提到|讲到|描述)/,
 ];
 
 const professionalPatterns = [/心理咨询/, /心理治疗/, /精神科/, /心理诊断/, /心理评估/, /医疗/, /法律/, /律师/, /合同纠纷/, /诉讼/, /借贷纠纷/, /投资建议/, /税务/];
@@ -229,22 +245,64 @@ export function detectSafety(text: string): SafetyStatus {
       || /^\s*[,，。:：]?\s*(?:朋友|他人|对方|家人|同事|同学|伴侣|父母|孩子|有人|某人)(?:刚刚|之前|曾经|一直)?(?:说|表示|提到|告诉我|发来|写道)/.test(after);
     return thirdParty ? ' ' : quote;
   });
-  const clauses = quotedText.split(/[，。！？\n]/).map((clause) => clause.trim()).filter(Boolean);
+  // SAFE-01 第三轮：按标点 + 主语切换分句。
+  // 处理无标点中文消息中用户本人表达被第三人称转述吞掉的问题。
+  const segments = splitSafetySegments(quotedText);
+
   const explicitNegative = /(?:没有|不会|不想|并没有|没打算).{0,10}(?:自杀|轻生|结束生命|伤害自己|自残|伤害别人)/;
-  if (clauses.some((clause) => immediateDangerPatterns.some((pattern) => pattern.test(clause)) && !explicitNegative.test(clause))) return 'URGENT';
-  // SAFE-01 修订：第三人称转述或文学/讨论语境的局部抑制。
-  // 剔除匹配片段后，剩余文本继续检查第一人称风险，避免混合语境漏判。
-  let remainingText = quotedText;
-  for (const pattern of suppressSafetyContextPatterns) {
-    remainingText = remainingText.replace(pattern, ' ');
+
+  // SAFE-01 第三轮：逐段识别风险证据，限定第三方归属与局部否定后汇总。
+  let hasClarification = false;
+  for (let i = 0; i < segments.length; i++) {
+    const segment = segments[i];
+    // 第三方/文学归属 → 跳过本段
+    if (isThirdPartySegment(segment)) continue;
+    // 局部否定 → 跳过本段
+    if (explicitNegative.test(segment)) continue;
+    // 即时危险 → URGENT（任一段命中即返回）
+    if (immediateDangerPatterns.some((pattern) => pattern.test(segment))) return 'URGENT';
+    // 直接可能危险 → 累积 NEEDS_CLARIFICATION
+    if (possibleDangerPatterns.some((pattern) => pattern.test(segment))) hasClarification = true;
+    // 间接轻生意念：需排除非第一人称主体 → 累积 NEEDS_CLARIFICATION
+    // 如果本段以条件句开头且无显式主语，检查前一段是否提供第一人称语境
+    let segmentForIndirect = segment;
+    if (i > 0 && /^(?:如果|要是|若能)/.test(segment)) {
+      const prevSegment = segments[i - 1];
+      // 前一段以第一人称动词结尾（想/觉得/感觉），提供语境
+      if (/(?:我|自己|有时候)?(?:想|觉得|感觉)$/.test(prevSegment)) {
+        segmentForIndirect = prevSegment.slice(-8) + segment;
+      }
+    }
+    if (!hasNonFirstPersonSubject(segmentForIndirect) && indirectSuicidalPatterns.some((pattern) => pattern.test(segmentForIndirect))) hasClarification = true;
   }
-  const negativeMatch = remainingText.match(explicitNegative);
-  if (negativeMatch && !possibleDangerPatterns.some((pattern) => pattern.test(remainingText.replace(negativeMatch[0], '')))) return 'NO_SIGNAL_DETECTED';
-  if (possibleDangerPatterns.some((pattern) => pattern.test(remainingText))) return 'NEEDS_CLARIFICATION';
-  // SAFE-01：间接轻生意念（第一人称、条件/愿望/假设框架、无即时计划）→ 安全澄清。
-  // 不含宽泛的"不在/消失/离开"，避免误伤普通外出或日常表达。
-  if (indirectSuicidalPatterns.some((pattern) => pattern.test(remainingText))) return 'NEEDS_CLARIFICATION';
+
+  if (hasClarification) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
+}
+
+// SAFE-01 第三轮：按标点和主语切换分句。
+// 先按标点分割，再在每个片段内检测主语切换（"我也/我自己/但我/我也会/我也想/我觉得/我感觉"）进一步拆分。
+function splitSafetySegments(text: string): string[] {
+  const byPunctuation = text.split(/[，。！？\n]/).map((s) => s.trim()).filter(Boolean);
+  const result: string[] = [];
+  // 主语切换标记：前面是逗号/无标点分隔，后面是新的第一人称主语
+  const subjectSwitch = /(?<=[，,]?\s*)(?=(?:但|可)?(?:我也|我自己|我也会|我也想|我觉得|我感觉|我现在|我正在))/;
+  for (const clause of byPunctuation) {
+    const subClauses = clause.split(subjectSwitch).map((s) => s.trim()).filter(Boolean);
+    result.push(...subClauses);
+  }
+  return result;
+}
+
+// SAFE-01 第三轮：判断句段是否属于第三方/文学归属。
+function isThirdPartySegment(segment: string): boolean {
+  return thirdPartyAttributionPatterns.some((pattern) => pattern.test(segment));
+}
+
+// SAFE-01 第三轮：判断句段是否包含非第一人称主体（他/她/项目/工作/角色等）。
+// 用于排除间接模式中将他者或非人物事项误归因为用户本人的风险。
+function hasNonFirstPersonSubject(segment: string): boolean {
+  return nonFirstPersonSubjectPatterns.some((pattern) => pattern.test(segment));
 }
 
 function isSafetyClarification(text: string) {

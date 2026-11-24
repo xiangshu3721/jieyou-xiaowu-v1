@@ -102,6 +102,46 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectSafety('要是没有我就好了')).toBe('NEEDS_CLARIFICATION');
   });
 
+  // SAFE-01 第三轮：P0-A 否定语句不能屏蔽后面独立出现的间接轻生意念
+  it('SAFE-01 第三轮 P0-A：否定+间接意念混合仍澄清', () => {
+    // 否定+间接意念 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('我没有自杀念头，但有时候想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('我没有自杀念头，但我真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('我没有想过自杀，但有时候会想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 纯否定 → 仍 NO_SIGNAL
+    expect(detectSafety('我没有自杀的想法')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我没有想过自杀')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01 第三轮：P0-B 缺标点的第三人称转述不能吞掉用户本人风险
+  it('SAFE-01 第三轮 P0-B：缺标点混合语境不漏判用户本人风险', () => {
+    // 缺标点：第三方+本人风险 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近很累我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说不想活了我也想如果我不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    // 有标点：第三方+本人风险 → 应 NEEDS_CLARIFICATION
+    expect(detectSafety('朋友说他最近很累，我也不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('朋友说他不想活了，我也觉得活不下去')).toBe('NEEDS_CLARIFICATION');
+    // 纯第三方（有/无标点）→ 仍 NO_SIGNAL
+    expect(detectSafety('朋友说他最近很累我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说他最近很累，我不知道怎么帮他')).toBe('NO_SIGNAL_DETECTED');
+  });
+
+  // SAFE-01 第三轮：P1-C 前导语不能把他人或工作事项错误归因为用户本人
+  it('SAFE-01 第三轮 P1-C：前导语归因必须可靠指向用户本人', () => {
+    // 有时候想+第三人称 → NO_SIGNAL
+    expect(detectSafety('有时候想如果他不在了就好了')).toBe('NO_SIGNAL_DETECTED');
+    // 觉得+第三人称/工作 → NO_SIGNAL
+    expect(detectSafety('觉得如果他消失了也没有人会在意')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('感觉如果这份工作消失了也没有人会在意')).toBe('NO_SIGNAL_DETECTED');
+    // 她+真希望 → NO_SIGNAL
+    expect(detectSafety('她真希望明天不用再醒过来')).toBe('NO_SIGNAL_DETECTED');
+    // 第一人称前导语+省略主语 → 仍 NEEDS_CLARIFICATION
+    expect(detectSafety('有时候想如果不在了就好了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('感觉如果消失了也没有人会在意')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('真希望明天不用再醒过来')).toBe('NEEDS_CLARIFICATION');
+  });
+
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
     const urgent = [
       { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },
