@@ -55,6 +55,8 @@ npm test -- server/jtbd-05-offline.test.ts
 - CLOSED 恢复场景（S18）
 - 多轮序列逐个用户回合的状态、安全与规则结果检查
 - `must_not_announce` 属于真实话术要求，仍为 EXPERIENCE NOT_TESTED
+- `must_not`、`must_not_announce`、`routing_change_allowed`、`same_issue` 与 `handoff_allowed` 不从缺失规则字段反推 PASS；除非有对应可核对的规则或 Handler 断言，否则为 NOT_TESTED。
+- MT09 只验证逐轮规则调用；它未调用 `resolveCurrentIssue` 或 Handler，因此跨 Issue 隔离与旧 Issue 恢复为 NOT_TESTED。
 
 ## 依赖
 - 需要 PR #73 (JTBD-03+04) 的 `help_progress`、`PAUSE_TOPIC`、`RESOLVE_TOPIC` 功能

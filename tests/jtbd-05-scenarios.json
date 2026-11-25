@@ -474,7 +474,8 @@
         { "role": "user", "content": "我想回到刚才工作的问题" }
       ],
       "turn_expectations": [],
-      "final_expected": { "issue_status": "ACTIVE" }
+      "final_expected": { "issue_status": "ACTIVE" },
+      "evaluation": { "cross_issue_isolation": "NOT_TESTED", "note": "本离线循环未调用 resolveCurrentIssue 或 Handler，不把本序列计为跨 Issue 隔离验收。" }
     },
     {
       "id": "MT10-safety-overrides-control",
