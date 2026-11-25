@@ -931,6 +931,18 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it('SAFE-02：无标点教育文本后的独立本人计划仍走紧急安全出口', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我参加自杀预防课我计划今晚自杀' }],
+    }), baseEnv);
+    expect(await json(response)).toMatchObject({
+      reply: emergencyReply,
+      model: 'safety-rule',
+      analysis: { safety_status: 'URGENT', show_booking_button: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it.each([
     '我准备今晚吃饭',
     '我准备今晚吃维生素',

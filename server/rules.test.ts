@@ -209,6 +209,9 @@ describe('解忧小屋智能导诊规则', () => {
 
   it('SAFE-02：教育语境不吞掉同一消息中的独立本人危险表达', () => {
     expect(detectSafety('我明天参加自杀预防讲座，但我计划今晚自杀')).toBe('URGENT');
+    expect(detectSafety('我参加自杀预防课我计划今晚自杀')).toBe('URGENT');
+    expect(detectSafety('我刚参加自杀预防讲座我计划今晚自杀')).toBe('URGENT');
+    expect(detectSafety('我准备今晚参加自杀预防课程我计划今晚自杀')).toBe('URGENT');
   });
 
   it('SAFE-02：同一 Issue 已有明确风险时，后续模糊用药不能解除安全状态', () => {

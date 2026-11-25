@@ -355,10 +355,15 @@ export function detectSafety(text: string): SafetyStatus {
   return 'NO_SIGNAL_DETECTED';
 }
 
-// 只排除命中点附近的预防/教育活动，不能吞掉同条消息中的独立危险表达。
+// 只排除当前命中的“自杀”词本身被预防/教育修饰的情形；不能用固定窗口，
+// 否则无标点文本中另一处独立本人计划会被错误吞掉。
 function isSafetyEducationContext(text: string, matchStart: number, matchEnd: number) {
-  const local = text.slice(Math.max(0, matchStart - 12), Math.min(text.length, matchEnd + 16));
-  return /自杀(?:预防|防治|干预|教育|科普)|(?:预防|防治|干预|教育|科普).{0,4}自杀/.test(local);
+  const matchedSuicide = text.lastIndexOf('自杀', matchEnd - 1);
+  if (matchedSuicide < matchStart || matchedSuicide >= matchEnd) return false;
+  const before = text.slice(Math.max(matchStart, matchedSuicide - 4), matchedSuicide);
+  const after = text.slice(matchedSuicide + 2, Math.min(text.length, matchedSuicide + 6));
+  return /(?:预防|防治|干预|教育|科普)$/.test(before)
+    || /^(?:预防|防治|干预|教育|科普)/.test(after);
 }
 
 // SAFE-01 第五轮：枚举正则在全段的所有非重叠匹配及其位置。
