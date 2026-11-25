@@ -127,7 +127,7 @@ export type HandoffMode = 'NONE' | 'DIRECT_HANDOFF' | 'QUICK_HANDOFF';
 export type HumanIntentLevel = 'EXPLICIT' | 'NOT_EXPLICIT' | 'DECLINED';
 export type ValueLevel = 'HIGH' | 'MEDIUM' | 'LOW';
 export type IssueStatus = 'ACTIVE' | 'HANDOFF_OFFERED' | 'BOOKING_SUBMITTED' | 'PAUSED' | 'AWAITING_TOPIC' | 'CLOSED';
-export type ConversationControlIntent = 'SWITCH_TOPIC' | 'CONTINUE_CURRENT_TOPIC' | 'DECLINE_HANDOFF' | 'ACCEPT_HANDOFF' | 'NEW_ISSUE' | 'CLOSE_TOPIC' | 'GENERAL_CHAT';
+export type ConversationControlIntent = 'SWITCH_TOPIC' | 'CONTINUE_CURRENT_TOPIC' | 'DECLINE_HANDOFF' | 'ACCEPT_HANDOFF' | 'NEW_ISSUE' | 'CLOSE_TOPIC' | 'PAUSE_TOPIC' | 'RESOLVE_TOPIC' | 'GENERAL_CHAT';
 export type IssueAction = 'CREATE_NEW' | 'CONTINUE_CURRENT' | 'RESUME_PREVIOUS';
 
 export interface ProblemMap {
@@ -150,6 +150,14 @@ export interface AssessmentRecommendation {
 }
 
 export type BookingPreference = 'NOT_EXPRESSED' | 'INTERESTED' | 'ACCEPTED' | 'DECLINED';
+/**
+ * JTBD-03：用户表达的帮助进展信号。
+ * 只基于用户最新表达中的明确证据，不由 AI 自评、建议轮数或回复长度推断。
+ * - PROGRESS：用户明确表达理解有进展或有可执行下一步
+ * - NO_HELP：用户明确表达当前帮助不足或无进展
+ * - UNDETERMINED：无足够证据判断（含"嗯""好吧""谢谢"等中性回应）
+ */
+export type HelpProgressSignal = 'PROGRESS' | 'NO_HELP' | 'UNDETERMINED';
 export type SafetyStatus = 'NO_SIGNAL_DETECTED' | 'NEEDS_CLARIFICATION' | 'URGENT';
 export type FactField = 'main_issue' | 'scene' | 'severity_score' | 'duration' | 'frequency' | 'functional_impact' | 'trigger' | 'attempts' | 'user_goal';
 export type FactSource = 'user_explicit' | 'user_confirmed';
@@ -289,6 +297,12 @@ export interface ConversationAnalysis {
   asked_questions: AskedQuestion[];
   primary_response_strategy: DialogueStrategy;
   question_value: number;
+
+  /**
+   * JTBD-03：基于用户最新表达的帮助进展信号。
+   * 可选字段，向后兼容。默认不改变现有行为，仅在分析输出中附带。
+   */
+  help_progress?: HelpProgressSignal;
 
   /**
    * JTBD-01 影子识别结果（可选、向后兼容）。默认不写入 `/api/chat` 公开响应，

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectIssueSwitch, detectSafety, isDuplicateQuestion, isMedicationDecisionRequest, recentSafetyStatus, resolveConversationIntent, routeConcern } from './rules.js';
+import { analyzeConversation, buildConversationUnderstanding, classifyConcern, detectHelpProgress, detectIssueSwitch, detectSafety, isDuplicateQuestion, isMedicationDecisionRequest, recentSafetyStatus, resolveConversationIntent, routeConcern } from './rules.js';
+import { detectConversationControl } from './issue.js';
 
 describe('解忧小屋智能导诊规则', () => {
   it('工作压力延伸到伴侣关系不自动拆成新 Issue，独立关系话题仍可切换', () => {
@@ -646,5 +647,151 @@ describe('解忧小屋智能导诊规则', () => {
     const analysis = analyzeConversation('你理解错了，我不是想换工作');
     expect(analysis.user_intent).toBe('VENTING');
     expect(analysis.primary_response_strategy).not.toBe('CLARIFY_FACT');
+  });
+
+  // JTBD-03：帮助进展信号 — 正反向测试
+  describe('JTBD-03：帮助进展信号（detectHelpProgress）', () => {
+    it('用户明确表达理解进展 → PROGRESS', () => {
+      expect(detectHelpProgress('我好像看清了一些，原来我一直在担心别人的评价')).toBe('PROGRESS');
+      expect(detectHelpProgress('我知道明天先做什么了')).toBe('PROGRESS');
+      expect(detectHelpProgress('这件事我决定先试试跟伴侣谈一次')).toBe('PROGRESS');
+      expect(detectHelpProgress('听你这么一说，我明白了')).toBe('PROGRESS');
+      expect(detectHelpProgress('好像有点头绪了')).toBe('PROGRESS');
+    });
+
+    it('用户明确表达当前帮助没用 → NO_HELP', () => {
+      expect(detectHelpProgress('这对我没什么帮助')).toBe('NO_HELP');
+      expect(detectHelpProgress('你一直问相同的问题')).toBe('NO_HELP');
+      expect(detectHelpProgress('不是我想解决的问题')).toBe('NO_HELP');
+      expect(detectHelpProgress('聊了这么久好像还是回到原点')).toBe('NO_HELP');
+    });
+
+    it('中性回应或无证据 → UNDETERMINED（不得宣称已解决）', () => {
+      expect(detectHelpProgress('嗯')).toBe('UNDETERMINED');
+      expect(detectHelpProgress('好吧')).toBe('UNDETERMINED');
+      expect(detectHelpProgress('谢谢')).toBe('UNDETERMINED');
+      expect(detectHelpProgress('我不太知道')).toBe('UNDETERMINED');
+      expect(detectHelpProgress('很累')).toBe('UNDETERMINED');
+      expect(detectHelpProgress('工作压力很大')).toBe('UNDETERMINED');
+    });
+
+    it('analyzeConversation 输出 help_progress 字段', () => {
+      const progress = analyzeConversation('我好像看清了，原来我一直在担心别人的评价', '', { controlIntent: 'GENERAL_CHAT' });
+      expect(progress.help_progress).toBe('PROGRESS');
+      const noHelp = analyzeConversation('这对我没什么帮助', '', { controlIntent: 'GENERAL_CHAT' });
+      expect(noHelp.help_progress).toBe('NO_HELP');
+      const neutral = analyzeConversation('嗯，好吧', '', { controlIntent: 'GENERAL_CHAT' });
+      expect(neutral.help_progress).toBe('UNDETERMINED');
+    });
+  });
+
+  // JTBD-04：暂停/结束/解决区分 — 正反向测试
+  describe('JTBD-04：暂停/结束/解决区分（detectConversationControl）', () => {
+    it('暂停意图 → PAUSE_TOPIC', () => {
+      expect(detectConversationControl('我先安静一会儿')).toBe('PAUSE_TOPIC');
+      expect(detectConversationControl('等下再聊')).toBe('PAUSE_TOPIC');
+      expect(detectConversationControl('今天先到这儿')).toBe('PAUSE_TOPIC');
+      expect(detectConversationControl('给我点时间想想')).toBe('PAUSE_TOPIC');
+      expect(detectConversationControl('现在不方便说')).toBe('PAUSE_TOPIC');
+      expect(detectConversationControl('暂时不想聊了')).toBe('PAUSE_TOPIC');
+    });
+
+    it('明确已解决 → RESOLVE_TOPIC', () => {
+      expect(detectConversationControl('这件事解决了')).toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('问题处理好了，不用再聊它了')).toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('我的焦虑已经没事了')).toBe('RESOLVE_TOPIC');
+    });
+
+    it('否定/不确定/好转未解 → 不是 RESOLVE_TOPIC（阻断 2 修复）', () => {
+      expect(detectConversationControl('这件事好像解决了')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('不用再来聊它了')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('我的困扰好了点但还没解决')).not.toBe('RESOLVE_TOPIC');
+    });
+
+    it('否定已解决 → 不是 RESOLVE_TOPIC', () => {
+      expect(detectConversationControl('我不是说已经解决了')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('我朋友的问题解决了但我的没有')).not.toBe('RESOLVE_TOPIC');
+    });
+
+    it('结束聊天 → CLOSE_TOPIC（不是 RESOLVE_TOPIC）', () => {
+      expect(detectConversationControl('先这样吧')).toBe('CLOSE_TOPIC');
+      expect(detectConversationControl('我先不聊了')).toBe('CLOSE_TOPIC');
+      expect(detectConversationControl('晚安')).toBe('CLOSE_TOPIC');
+      expect(detectConversationControl('再见')).toBe('CLOSE_TOPIC');
+    });
+
+    it('谢谢/明白 ≠ 已解决', () => {
+      expect(detectConversationControl('谢谢你听我说')).not.toBe('RESOLVE_TOPIC');
+      expect(detectConversationControl('我明白了')).not.toBe('RESOLVE_TOPIC');
+    });
+
+    it('还想继续 → GENERAL_CHAT', () => {
+      expect(detectConversationControl('我累了但还想聊')).toBe('GENERAL_CHAT');
+      expect(detectConversationControl('我还想继续说')).toBe('GENERAL_CHAT');
+    });
+  });
+
+  // JTBD-04：Issue 状态集成 — 通过 analyzeConversation 验证
+  describe('JTBD-04：Issue 状态集成', () => {
+    it('用户明确解决 → issue_status=CLOSED', () => {
+      const r = analyzeConversation('这件事解决了，不用再聊了', '', { controlIntent: 'RESOLVE_TOPIC' });
+      expect(r.issue_status).toBe('CLOSED');
+    });
+
+    it('用户想暂停 → issue_status=PAUSED', () => {
+      const r = analyzeConversation('我先安静一会儿', '', { controlIntent: 'PAUSE_TOPIC' });
+      expect(r.issue_status).toBe('PAUSED');
+    });
+
+    it('结束聊天 ≠ 已解决 → issue_status=ACTIVE（不是 CLOSED）', () => {
+      const r = analyzeConversation('先这样吧，晚安', '', { controlIntent: 'CLOSE_TOPIC' });
+      expect(r.issue_status).toBe('ACTIVE');
+    });
+
+    it('同轮风险不得被结案信号遮蔽：安全+解决 → 不安慰结案，走安全路径', () => {
+      const r = analyzeConversation('这件事解决了，但我现在想自杀', '', { controlIntent: 'RESOLVE_TOPIC', userTurnCount: 3 });
+      expect(r.safety_status).toBe('URGENT');
+      expect(r.routing).toBe('SAFETY_SUPPORT');
+      expect(r.issue_status).not.toBe('CLOSED');
+    });
+
+    it('否定已解决 → 不触发 CLOSED', () => {
+      const r = analyzeConversation('我不是说已经解决了，只是好一点', '', { controlIntent: 'GENERAL_CHAT' });
+      expect(r.issue_status).toBe('ACTIVE');
+    });
+
+    it('第三方已解决 ≠ 我解决了', () => {
+      const r = analyzeConversation('我朋友的问题解决了但我的没有', '', { controlIntent: 'GENERAL_CHAT' });
+      expect(r.issue_status).toBe('ACTIVE');
+    });
+  });
+
+  // JTBD-03/04：多轮对话序列
+  describe('JTBD-03/04：多轮对话序列', () => {
+    it('进展序列：倾诉 → 理解 → 明确下一步', () => {
+      const ctx = '用户：最近工作压力很大\nAI：能多说说吗\n用户：每天都觉得很累\nAI：听起来很不容易\n用户：是啊';
+      const r = analyzeConversation('我知道明天先做什么了', ctx, { userTurnCount: 3, controlIntent: 'GENERAL_CHAT' });
+      expect(r.help_progress).toBe('PROGRESS');
+      expect(r.issue_status).toBe('ACTIVE');
+    });
+
+    it('无帮助序列：倾诉 → 追问 → 反馈无效', () => {
+      const ctx = '用户：我和伴侣总是吵架\nAI：什么时候开始的\n用户：好几个月了\nAI：有没有试过沟通\n用户：试过但没用';
+      const r = analyzeConversation('你一直问相同的问题', ctx, { userTurnCount: 3, controlIntent: 'GENERAL_CHAT' });
+      expect(r.help_progress).toBe('NO_HELP');
+    });
+
+    it('暂停序列：倾诉 → 暂停 → 不自动关闭', () => {
+      const ctx = '用户：最近压力很大\nAI：能多说说吗\n用户：每天都觉得很累';
+      const r = analyzeConversation('今天先到这儿吧', ctx, { userTurnCount: 2, controlIntent: 'PAUSE_TOPIC' });
+      expect(r.issue_status).toBe('PAUSED');
+      expect(r.no_more_questions).toBe(true);
+    });
+
+    it('纠正已解决：先说解决了然后改口 → 不触发 CLOSED', () => {
+      const ctx = '用户：这件事解决了\nAI：那就好\n用户：不对';
+      const r = analyzeConversation('我不是说已经解决了，只是好一点', ctx, { userTurnCount: 3, controlIntent: 'GENERAL_CHAT' });
+      expect(r.issue_status).toBe('ACTIVE');
+    });
   });
 });

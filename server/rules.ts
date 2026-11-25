@@ -108,6 +108,39 @@ const contextualMedicationDecisionPatterns = [
 ];
 const endPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 
+// JTBD-03：用户明确表达的进展信号（帮助进展识别）
+// PROGRESS：用户明确说理解了、有下一步、做了决定
+const progressPatterns = [
+  /我好像(?:看清|想明白|弄明白|知道|理解|懂了)/,
+  /原来(?:我|自己).{0,12}(?:是|在)/,
+  /我(?:现在|终于)(?:知道|明白|清楚)(?:了|一点)/,
+  /我(?:决定|打算|准备|想好)(?:先|要)?(?:试|做|从|跟|找|去|跟.{0,6}谈谈)/,
+  /我知道(?:明天|接下来|第一步|该).{0,12}(?:做|先|怎么)/,
+  /听你(?:这么)?一说.{0,8}(?:明白|清楚|懂了|明白了)/,
+  /好像(?:有点|有些)?(?:头绪|方向|思路|答案)/,
+  /(?:这个|这个角度|这样)(?:对|有)我(?:有)?(?:帮助|用|启发)/,
+];
+// NO_HELP：用户明确说当前帮助没用或不是在帮自己
+const noHelpPatterns = [
+  /(?:这|你|这些|这样)(?:对|给|帮).{0,4}(?:我|自己).{0,4}(?:没什么|没有|没啥|完全没有)(?:帮助|用|效果|意义)/,
+  /你(?:一直|总在|总是)(?:问|重复|追问).{0,8}(?:相同|一样的|同样的)/,
+  /不是(?:我)?想解决(?:的)?(?:事|问题|事)/,
+  /你(?:说|给|建议)的(?:都)?(?:不|没)(?:适合|对口|相关|是.{0,6}问题)/,
+  /感觉(?:越聊|越说|越.{0,4}(?:焦虑|烦|乱|迷茫))/,
+  /(?:说了|聊了).{0,8}(?:半天|这么久).{0,8}(?:还是|好像|似乎).{0,8}(?:没|不|回到)/,
+  /不太是(?:我)?想(?:要|聊|解决)(?:的)?/,
+];
+
+/**
+ * JTBD-03：检测用户最新表达中的帮助进展信号。
+ * 只基于用户明确表达的证据；"嗯""好吧""谢谢"等中性回应返回 UNDETERMINED。
+ */
+export function detectHelpProgress(text: string): import('../src/shared.js').HelpProgressSignal {
+  if (progressPatterns.some((pattern) => pattern.test(text))) return 'PROGRESS';
+  if (noHelpPatterns.some((pattern) => pattern.test(text))) return 'NO_HELP';
+  return 'UNDETERMINED';
+}
+
 const correctionPatterns = [
   /你(?:理解|弄)错了/,
   /不是这个意思/,
@@ -1113,7 +1146,9 @@ export function analyzeConversation(latestText: string, contextText = '', option
     || routing === 'PROFESSIONAL_REFERRAL'
     || safety !== 'NO_SIGNAL_DETECTED'
     || intent === 'WANTS_COMFORT'
-    || intent === 'WANTS_END';
+    || intent === 'WANTS_END'
+    || options.controlIntent === 'PAUSE_TOPIC'
+    || options.controlIntent === 'RESOLVE_TOPIC';
   const openQuestionRequested = !hardNoQuestionBoundary;
   const primaryResponseStrategy = selectDialogueStrategy({ routing, intent, assessment, supportFeedback, nextQuestion: nextQuestionCandidate, questionValue, problemMap, openQuestionRequested, latestText: text, responseGoal });
   const askQuestion = !handoffReady
@@ -1187,7 +1222,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     new_issue_detected: switchResult.detected,
     new_issue_confidence: Number(Math.max(0, Math.min(1, switchResult.confidence)).toFixed(2)),
     user_turn_count: userTurnCount,
-    issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : issueStatus,
+    issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : options.controlIntent === 'PAUSE_TOPIC' && safety === 'NO_SIGNAL_DETECTED' ? 'PAUSED' : options.controlIntent === 'RESOLVE_TOPIC' && safety === 'NO_SIGNAL_DETECTED' ? 'CLOSED' : issueStatus,
     handoff_offered: handoffWasOffered || showBookingButton,
     control_intent: options.controlIntent,
     known_facts: understanding.known_facts,
@@ -1196,6 +1231,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     asked_questions: understanding.asked_questions,
     primary_response_strategy: primaryResponseStrategy,
     question_value: questionValue,
+    help_progress: detectHelpProgress(text),
   };
 }
 
@@ -1273,6 +1309,7 @@ export function resetForAwaitingTopic(analysis: ConversationAnalysis, previousIs
     asked_questions: [],
     primary_response_strategy: 'LISTEN',
     question_value: 0,
+    help_progress: 'UNDETERMINED',
   };
 }
 

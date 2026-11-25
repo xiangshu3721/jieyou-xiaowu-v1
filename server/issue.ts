@@ -29,7 +29,35 @@ const topicCodes = new Set<TopicCode>(['EMOTION', 'CAREER', 'MONEY', 'INTIMACY',
 const topicSwitchPatterns = [
   /换个话题/, /聊点别的/, /这个先不聊/, /先不聊这个/, /这个先不说/, /先说别的/, /换一个问题/, /以后再说/, /还有另一个烦恼/, /还有个别的问题/, /我还有另外一个/, /我想说另外一件事/,
 ];
-const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
+const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/, /(?:想|要)(?:接着|继续)聊/];
+// JTBD-04：明确暂停 — 暂时停下但不关闭问题
+const pauseTopicPatterns = [
+  /我先安静一(?:会|下)/, /等下再聊/, /先暂停一(?:下|会)/, /过一(?:会|下)(?:再|又|来)?(?:说|聊)/,
+  /今天先到这(?:儿|里)/, /现在不方便(?:说|聊)/, /我先(?:缓一缓|歇一(?:下|会))/,
+  /给我(?:点|一些)时间(?:想想|消化)/, /暂时(?:不|先)(?:想|用)(?:聊|说|继续)/,
+];
+// JTBD-04：显式继续意愿覆盖暂停（"但还想继续说"优先于"安静一会儿"）
+const explicitContinuePatterns = [/但.{0,8}(?:还想|想继续|还要)/, /不过.{0,8}(?:还想|想继续)/];
+// JTBD-04：用户明确确认已解决 → 允许 CLOSED
+// 排除否定："我不是说已经解决了" "我朋友的问题好了但我的没有"
+// 排除不确定："好像解决了" 不结案
+// 排除好转未解："好了点但还没解决" 不结案
+const resolveTopicPositivePatterns = [
+  /这(?:件|个)(?:事|问题|困扰|烦恼)(?:已经|总算)?(?:解决|处理(?:好|完))了/,
+  /(?:我(?:的)?)?(?:问题|困扰|烦恼|焦虑|这件事|这事)(?:已经|总算)?(?:解决|处理(?:好|完)|没事)了/,
+  /(?:心结|疙瘩|心事)(?:已经|总算)?(?:解开|解了|放下)了/,
+];
+const resolveTopicNegationPatterns = [
+  /(?:我|自己)(?:并|又|也)?(?:没有|不是|还没|尚未).{0,12}(?:解决|好|处理|过了|行了)/,
+  /(?:朋友|他|她|同事|家人).{0,8}(?:的)?(?:问题|事)(?:解决|好|行了).{0,10}(?:但|可是|然而|不过).{0,8}(?:我|自己|我的).{0,8}(?:没有|还没|未|不)/,
+  /不是(?:说|意味着).{0,12}(?:已经|已)(?:解决|好|处理)/,
+  /好像.{0,8}(?:解决|好|处理)/,
+  /好(?:了)?(?:一点|一些|多了?).{0,12}(?:但|可是|然而|不过).{0,12}(?:还没|尚未|仍然|还是).{0,8}(?:解决|好|处理)/,
+  /还没(?:解决|好|处理)/,
+  // JTBD-03/04 收尾：第三方归因不触发本人结案
+  /^(?:我)?(?:朋友|他|她|同事|同学|客户|家人|伴侣|对象|姐姐|妹妹|哥哥|弟弟|爸爸|妈妈|父亲|母亲).{0,12}(?:的)?(?:问题|事|困扰|烦恼|焦虑).{0,12}(?:解决|好|行了)/,
+  /^(?:朋友|他|她|同事|同学|客户|家人|伴侣|对象)说.{0,16}(?:解决|好|行了)/,
+];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
 const contextualDeclineHandoffPatterns = [/^算了[。！! ]*$/, /^不用了[。！! ]*$/];
@@ -60,8 +88,17 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
 export function detectConversationControl(text: string, handoffOffered = false): ConversationControlIntent {
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
+  // JTBD-03/04 收尾：真人预约请求优先级高于暂停/结案
+  // 包含被暂停/结案前缀后的转折（"我先安静一会儿，但我想找真人导师聊聊"）
+  if (wantsHumanBooking(latest)
+    || /(?:但|可是|然而|不过).{0,8}(?:我想|我还是|我决定|我要).{0,10}(?:找真人|找导师|找咨询师|预约|找人聊|和真人聊)/.test(latest)) return 'ACCEPT_HANDOFF';
+  // JTBD-04：用户明确确认已解决（排除否定和第三方引用）
+  if (resolveTopicPositivePatterns.some((pattern) => pattern.test(latest))
+    && !resolveTopicNegationPatterns.some((pattern) => pattern.test(latest))) return 'RESOLVE_TOPIC';
+  // JTBD-04：用户想暂停（不是关闭，也不是解决）；显式继续意愿覆盖暂停
+  if (pauseTopicPatterns.some((pattern) => pattern.test(latest))
+    && !explicitContinuePatterns.some((pattern) => pattern.test(latest))) return 'PAUSE_TOPIC';
   if (isHumanHandoffDecline(latest) || declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
-  if (wantsHumanBooking(latest)) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
   if (closeTopicPatterns.some((pattern) => pattern.test(latest))) return 'CLOSE_TOPIC';
   return 'GENERAL_CHAT';
@@ -244,7 +281,7 @@ export function resolveCurrentIssue(input: {
       awaiting_topic: !newIssue,
     };
   }
-  if (control === 'CONTINUE_CURRENT_TOPIC' || control === 'DECLINE_HANDOFF' || control === 'ACCEPT_HANDOFF' || control === 'CLOSE_TOPIC') {
+  if (control === 'CONTINUE_CURRENT_TOPIC' || control === 'DECLINE_HANDOFF' || control === 'ACCEPT_HANDOFF' || control === 'CLOSE_TOPIC' || control === 'PAUSE_TOPIC' || control === 'RESOLVE_TOPIC') {
     return {
       control_intent: control,
       issue_action: 'CONTINUE_CURRENT',

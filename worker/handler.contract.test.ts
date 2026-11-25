@@ -1096,6 +1096,208 @@ describe('worker handler API 契约', () => {
     expect(b.analysis.response_goal).toBe('CLARIFY');
   });
 
+  // JTBD-03/04：集中覆盖 10+ Handler Mock 场景
+  it('JTBD-03/04：进展信号 → PROGRESS + model guidance', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"这是你自己看到的变化。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我好像看清了，原来我一直在担心别人的评价' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.help_progress).toBe('PROGRESS');
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+  });
+
+  it('JTBD-03/04：无帮助信号 → NO_HELP + 不庆功', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"那我们换个方式。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '这对我没什么帮助，你一直问相同的问题' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.help_progress).toBe('NO_HELP');
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+  });
+
+  it('JTBD-03/04：中性回应 → UNDETERMINED + 不宣称进展', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"嗯，我听着。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '嗯，好吧' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.help_progress).toBe('UNDETERMINED');
+  });
+
+  it('JTBD-03/04：暂停 → PAUSED + 短回复 + 不调模型', async () => {
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我先安静一会儿' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.control_intent).toBe('PAUSE_TOPIC');
+    expect(b.analysis.issue_status).toBe('PAUSED');
+    expect(b.analysis.no_more_questions).toBe(true);
+    expect(b.analysis.show_booking_button).toBe(false);
+    expect(b.reply).toContain('随时回来');
+    expect(b.model).toBe('control-rule');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('JTBD-03/04：明确解决 → CLOSED + 不调模型 + 不推测评', async () => {
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '这件事解决了，不用再聊了' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.control_intent).toBe('RESOLVE_TOPIC');
+    expect(b.analysis.issue_status).toBe('CLOSED');
+    expect(b.analysis.no_more_questions).toBe(true);
+    expect(b.analysis.show_booking_button).toBe(false);
+    expect(b.analysis.assessment.needed).toBe(false);
+    expect(b.reply).toContain('那就好');
+    expect(b.model).toBe('control-rule');
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('JTBD-03/04：结束聊天 ≠ 已解决 → ACTIVE + 短回复', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，需要时随时回来。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '先这样吧，晚安' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+    expect(b.analysis.control_intent).toBe('CLOSE_TOPIC');
+    expect(b.analysis.reply_length).toBe('SHORT');
+  });
+
+  it('JTBD-03/04：否定已解决 → 不触发 CLOSED', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，继续聊。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我不是说已经解决了，只是好一点' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+    expect(b.analysis.control_intent).not.toBe('RESOLVE_TOPIC');
+  });
+
+  it('JTBD-03/04：第三方已解决 ≠ 我解决了', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"你的情况不一样。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我朋友的问题解决了但我的没有' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+    expect(b.analysis.control_intent).not.toBe('RESOLVE_TOPIC');
+  });
+
+  it('JTBD-03/04：安全覆盖解决 → URGENT 紧急回复', async () => {
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '这件事解决了，但我现在想自杀' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.safety_status).toBe('URGENT');
+    expect(b.analysis.routing).toBe('SAFETY_SUPPORT');
+    expect(b.analysis.issue_status).not.toBe('CLOSED');
+    expect(b.model).toBe('safety-rule');
+  });
+
+  it('JTBD-03/04：谢谢 ≠ 已解决', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"嗯，继续。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '谢谢你听我说' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+    expect(b.analysis.control_intent).not.toBe('RESOLVE_TOPIC');
+  });
+
+  it('JTBD-03/04：还想继续 → 不自动结束', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好，继续。"}'));
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我累了但还想聊' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('ACTIVE');
+    expect(b.analysis.control_intent).toBe('GENERAL_CHAT');
+    expect(b.analysis.no_more_questions).toBe(false);
+  });
+
+  it('JTBD-03/04：暂停后可恢复 → PAUSED 但客户端可继续', async () => {
+    const r = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '今天先到这儿' }],
+    }), baseEnv);
+    const b = await json(r);
+    expect(b.analysis.issue_status).toBe('PAUSED');
+    expect(b.analysis.no_more_questions).toBe(true);
+    // 客户端可以从 PAUSED 恢复
+    expect(['ACTIVE', 'PAUSED']).toContain(b.analysis.issue_status);
+  });
+
+  // JTBD-03/04 收尾阻断 1：PAUSED/CLOSED 后正确恢复
+  it('JTBD-03/04 阻断1：PAUSED 后用户回来 → 恢复 ACTIVE', async () => {
+    // 第一轮：普通对话，建立 Issue
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"能多说说吗"}'));
+    const r1 = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-pause-recovery',
+      issue: { issue_id: 'issue-pause-recovery', status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '最近压力很大' }],
+    }), baseEnv);
+    const b1 = await json(r1);
+    expect(b1.analysis.issue_status).toBe('ACTIVE');
+
+    // 第二轮：暂停（不调模型）
+    const r2 = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-pause-recovery',
+      issue: { issue_id: 'issue-pause-recovery', status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '最近压力很大' },
+        { role: 'assistant', content: '能多说说吗', issueId: 'issue-pause-recovery' },
+        { role: 'user', content: '我先安静一会儿' },
+      ],
+    }), baseEnv);
+    const b2 = await json(r2);
+    expect(b2.analysis.issue_status).toBe('PAUSED');
+
+    // 第三轮：用户回来继续 → 应恢复 ACTIVE（需调模型）
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好，继续聊。"}'));
+    const r3 = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-pause-recovery',
+      issue: { issue_id: 'issue-pause-recovery', status: 'PAUSED', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '最近压力很大' },
+        { role: 'assistant', content: '能多说说吗', issueId: 'issue-pause-recovery' },
+        { role: 'user', content: '我先安静一会儿' },
+        { role: 'assistant', content: '好的，需要的时候随时回来。', issueId: 'issue-pause-recovery' },
+        { role: 'user', content: '我回来继续说压力的事' },
+      ],
+    }), baseEnv);
+    const b3 = await json(r3);
+    expect(b3.analysis.issue_status).toBe('ACTIVE');
+    expect(b3.analysis.current_issue_id).toBe('issue-pause-recovery');
+  });
+
+  it('JTBD-03/04 阻断1：CLOSED 后用户说还没解决 → 恢复 ACTIVE', async () => {
+    // 第一轮：用户说解决了（不调模型）
+    const r1 = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-closed-recovery',
+      issue: { issue_id: 'issue-closed-recovery', status: 'ACTIVE', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [{ role: 'user', content: '这件事解决了' }],
+    }), baseEnv);
+    const b1 = await json(r1);
+    expect(b1.analysis.issue_status).toBe('CLOSED');
+
+    // 第二轮：用户改口说还没解决 → 应恢复 ACTIVE（需调模型）
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"好的，我们继续聊。"}'));
+    const r2 = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-closed-recovery',
+      issue: { issue_id: 'issue-closed-recovery', status: 'CLOSED', topic_tags: ['EMOTION'], handoff_offered: false, handoff_state: 'NOT_READY' },
+      messages: [
+        { role: 'user', content: '这件事解决了' },
+        { role: 'assistant', content: '那就好', issueId: 'issue-closed-recovery' },
+        { role: 'user', content: '其实还没解决，我想接着聊' },
+      ],
+    }), baseEnv);
+    const b2 = await json(r2);
+    expect(b2.analysis.issue_status).toBe('ACTIVE');
+    expect(b2.analysis.current_issue_id).toBe('issue-closed-recovery');
+  });
+
   it('连续普通对话在解析失败时回应求助和追问，不重复固定兜底', async () => {
     fetchMock
       .mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":'))

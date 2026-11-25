@@ -603,7 +603,9 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const understanding = buildConversationUnderstanding(analysisMessages, issueTopicTags);
       const rawBaseline = analyzeConversation(latestText, contextText, {
         issueId: resolution.current_issue_id,
-        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || targetIssue.status === 'AWAITING_TOPIC' ? 'ACTIVE' : resuming && targetIssue.status === 'PAUSED' ? 'ACTIVE' : targetIssue.status,
+        // JTBD-03/04 收尾阻断 1：PAUSED/CLOSED 后用户继续同话题 → 恢复 ACTIVE
+        // JTBD-03/04 收尾阻断 3：CLOSED 仅对明确延续意图恢复，纯致谢/收尾不重开
+        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || targetIssue.status === 'AWAITING_TOPIC' ? 'ACTIVE' : (resuming || (resolution.issue_action === 'CONTINUE_CURRENT' && targetIssue.status === 'PAUSED') || (resolution.issue_action === 'CONTINUE_CURRENT' && targetIssue.status === 'CLOSED' && (resolution.control_intent === 'CONTINUE_CURRENT_TOPIC' || resolution.control_intent === 'ACCEPT_HANDOFF'))) ? 'ACTIVE' : targetIssue.status,
         userTurnCount,
         handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : targetIssue.handoff_state === 'DECLINED' ? false : targetIssue.handoff_offered,
         previousTopics: targetIssue.topic_tags,
@@ -634,6 +636,10 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       }, baseline), request);
       if (resolution.awaiting_topic) return json(200, withCurrentJobShadow({ reply: '可以呀，换个话题。你想聊什么？', reply_parts: ['可以呀，换个话题。你想聊什么？'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
       if (resolution.control_intent === 'DECLINE_HANDOFF') return json(200, withCurrentJobShadow({ reply: '可以，我们继续按你舒服的节奏聊。', reply_parts: ['可以，我们继续按你舒服的节奏聊。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
+      // JTBD-04：暂停 — 温和承接，不暗示已解决，不调模型
+      if (resolution.control_intent === 'PAUSE_TOPIC') return json(200, withCurrentJobShadow({ reply: '好的，需要的时候随时回来。', reply_parts: ['好的，需要的时候随时回来。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
+      // JTBD-04：用户明确确认已解决 — 简短承接，不庆功不推测评/预约
+      if (resolution.control_intent === 'RESOLVE_TOPIC') return json(200, withCurrentJobShadow({ reply: '那就好，需要的时候随时回来。', reply_parts: ['那就好，需要的时候随时回来。'], analysis: baseline, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: 'control-rule' }, baseline), request);
       let watchGuidance = '';
       if (body.growthConsent === true && typeof body.growthId === 'string') {
         const growthStore = growthStoreFor(env);
