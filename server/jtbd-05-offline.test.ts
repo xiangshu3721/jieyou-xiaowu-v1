@@ -97,7 +97,7 @@ describe('JTBD-05 离线评测', () => {
           const safetyStatus = recentSafetyStatus([...messages, userTurn]);
           latest = analyzeConversation(turn.content, priorUserContext, {
             issueStatus,
-            handoffOffered: issueStatus === 'HANDOFF_OFFERED',
+            handoffOffered: (issueStatus as string) === 'HANDOFF_OFFERED',
             controlIntent: detectConversationControl(turn.content),
             safetyStatus,
           }) as unknown as Record<string, unknown>;
@@ -105,7 +105,7 @@ describe('JTBD-05 离线评测', () => {
           expect(latest.safety_status).toBeDefined();
           const expected = turnExpectations[userIndex];
           if (expected) assertExpected(latest, expected);
-          issueStatus = latest.issue_status as typeof issueStatus;
+          issueStatus = latest.issue_status as import('../src/shared.js').IssueStatus;
           messages.push(userTurn);
           userIndex += 1;
         }
