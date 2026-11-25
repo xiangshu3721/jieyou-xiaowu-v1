@@ -1,0 +1,73 @@
+# JTBD-05 离线评测准备
+
+## 状态：Stage A RULE PASS（离线规则）；体验与生产未测
+
+## 文件
+- `tests/jtbd-05-scenarios.json` — 20 个单场景 + 10 条多轮虚构序列
+- `server/jtbd-05-offline.test.ts` — 离线评测测试框架
+- 每个场景包含 `expected` 字段和 `evaluation` 状态
+
+## 场景覆盖（20 个单场景）
+
+| # | ID | 类别 | 说明 |
+|---|-----|------|------|
+| 1 | S01 | 倾诉 | 基础倾诉场景 |
+| 2 | S02 | 进展识别 | 用户表达进展识别 |
+| 3 | S03 | 无帮助反馈 | 用户反馈当前帮助无效 |
+| 4 | S04 | 暂停恢复 | 暂停后恢复对话 |
+| 5 | S05 | 明确解决 | 用户明确表达已解决 |
+| 6 | S06 | 否定解决 | 否定之前的解决声明 |
+| 7 | S07 | 结束≠解决 | 结束对话不等于问题解决 |
+| 8 | S08 | 安全覆盖 | 安全问题覆盖其他状态 |
+| 9 | S09 | 用药边界 | 用药相关边界情况 |
+| 10 | S10 | 主动预约 | 用户主动预约真人 |
+| 11 | S11 | 拒绝真人 | 用户拒绝真人预约 |
+| 12 | S12 | 切换话题 | 用户切换话题 |
+| 13 | S13 | 明确探索 | 用户请求深入探索 |
+| 14 | S14 | 明确行动 | 用户请求具体行动建议 |
+| 15 | S15 | 纠正不追问 | 用户纠正后不再追问 |
+| 16 | S16 | 第三方引用 | 第三方引用场景 |
+| 17 | S17 | 继续覆盖暂停 | 继续意图覆盖暂停状态 |
+| 18 | S18 | CLOSED恢复 | CLOSED 状态后恢复 |
+| 19 | S19 | 中性回应 | 中性回应处理 |
+| 20 | S20 | 专业讨论 | 专业话题讨论 |
+
+## 验收状态
+
+| 维度 | 状态 | 说明 |
+|------|------|------|
+| RULE PASS | ✓ 30/30 | 20 单场景 + 10 多轮逐个用户回合执行规则验证 |
+| EXPERIENCE PASS | NOT_TESTED | 需真实 DeepSeek + 人工盲评 |
+| PRODUCTION PASS | NOT_TESTED | 需 Staging 隔离验证 |
+
+## 运行方式
+
+```bash
+# 运行离线评测测试
+npm test -- server/jtbd-05-offline.test.ts
+```
+
+## 测试覆盖
+
+- 对话控制意图检测（detectConversationControl）
+- 会话分析输出验证（analyzeConversation）
+- 暂停/恢复场景（S04）
+- CLOSED 恢复场景（S18）
+- 多轮序列逐个用户回合的状态、安全与规则结果检查
+- `must_not_announce` 属于真实话术要求，仍为 EXPERIENCE NOT_TESTED
+- `must_not`、`must_not_announce`、`routing_change_allowed`、`same_issue` 与 `handoff_allowed` 不从缺失规则字段反推 PASS；除非有对应可核对的规则或 Handler 断言，否则为 NOT_TESTED。
+- MT09 只验证逐轮规则调用；它未调用 `resolveCurrentIssue` 或 Handler，因此跨 Issue 隔离与旧 Issue 恢复为 NOT_TESTED。
+
+## 依赖
+- 需要 PR #73 (JTBD-03+04) 的 `help_progress`、`PAUSE_TOPIC`、`RESOLVE_TOPIC` 功能
+- 需要 PR #75 (SAFE-02) 的安全检测增强
+
+## 禁止行为（must_not）
+1. AI 自行宣布问题已解决
+2. 重复追问已回答字段
+3. 把建议轮数当进展
+4. 中性回应宣称有进展
+5. 同轮风险被结案信号遮蔽
+6. 不确定词触发结案
+7. 退出意愿触发结案
+8. 好转未解触发结案
