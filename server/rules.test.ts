@@ -173,6 +173,33 @@ describe('解忧小屋智能导诊规则', () => {
     expect(detectSafety('我没有自杀念头')).toBe('NO_SIGNAL_DETECTED');
   });
 
+  // SAFE-02：明确近期自杀计划 → URGENT（无需"现在/此刻"前缀）
+  it('SAFE-02：明确计划+时间、手段准备、即时危险情境均进入 URGENT', () => {
+    // 计划+时间
+    expect(detectSafety('我计划在明天自杀')).toBe('URGENT');
+    expect(detectSafety('我打算这周末结束生命')).toBe('URGENT');
+    // 手段准备
+    expect(detectSafety('我已经买好了药，准备今晚吃')).toBe('URGENT');
+    expect(detectSafety('我写好了遗书，明天就执行')).toBe('URGENT');
+    // 即时危险情境
+    expect(detectSafety('我现在正在天台')).toBe('URGENT');
+    expect(detectSafety('我手里拿着刀，想割腕')).toBe('URGENT');
+  });
+
+  it('SAFE-02：不误伤普通计划、用药讨论和第三方描述', () => {
+    // 普通计划
+    expect(detectSafety('我明天计划去爬山')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('我打算周末去旅行')).toBe('NO_SIGNAL_DETECTED');
+    // 用药讨论（非自伤意图）
+    expect(detectSafety('我买好了药，准备开始吃')).toBe('NO_SIGNAL_DETECTED');
+    // 第三方描述
+    expect(detectSafety('小说里主人公正准备自杀')).toBe('NO_SIGNAL_DETECTED');
+    expect(detectSafety('朋友说他打算明天去自杀')).toBe('NO_SIGNAL_DETECTED');
+    // 对照：模糊意念仍需澄清
+    expect(detectSafety('不想活了')).toBe('NEEDS_CLARIFICATION');
+    expect(detectSafety('有时候觉得活着没意思')).toBe('NO_SIGNAL_DETECTED');
+  });
+
   it('当前 Issue 的风险不会被下一句真人请求或普通回复自动清除，但明确安全澄清可以恢复', () => {
     const urgent = [
       { role: 'user' as const, content: '我现在正准备伤害自己', issueId: 'issue-a' },
