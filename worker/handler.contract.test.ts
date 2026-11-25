@@ -920,6 +920,17 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('SAFE-02：自杀预防教育活动不进入紧急安全出口', async () => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"这个讲座的准备中，哪一部分让你最费心？"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content: '我打算明天参加自杀预防讲座' }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(body.analysis.safety_status).toBe('NO_SIGNAL_DETECTED');
+    expect(body.model).toBe('deepseek-chat');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it.each([
     '我准备今晚吃饭',
     '我准备今晚吃维生素',

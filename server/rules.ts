@@ -303,7 +303,8 @@ export function detectSafety(text: string): SafetyStatus {
     for (const pattern of immediateDangerPatterns) {
       for (const m of findAllMatches(segment, pattern)) {
         if (!isMatchLocallyNegated(segment, m.start, m.end)
-          && !isMatchInThirdPartyRegion(segment, m.start, m.end)) {
+          && !isMatchInThirdPartyRegion(segment, m.start, m.end)
+          && !isSafetyEducationContext(segment, m.start, m.end)) {
           return 'URGENT';
         }
       }
@@ -320,7 +321,8 @@ export function detectSafety(text: string): SafetyStatus {
     for (const pattern of possibleDangerPatterns) {
       for (const m of findAllMatches(segment, pattern)) {
         if (!isMatchLocallyNegated(segment, m.start, m.end)
-          && !isMatchInThirdPartyRegion(segment, m.start, m.end)) {
+          && !isMatchInThirdPartyRegion(segment, m.start, m.end)
+          && !isSafetyEducationContext(segment, m.start, m.end)) {
           hasClarification = true;
         }
       }
@@ -351,6 +353,12 @@ export function detectSafety(text: string): SafetyStatus {
 
   if (hasClarification) return 'NEEDS_CLARIFICATION';
   return 'NO_SIGNAL_DETECTED';
+}
+
+// 只排除命中点附近的预防/教育活动，不能吞掉同条消息中的独立危险表达。
+function isSafetyEducationContext(text: string, matchStart: number, matchEnd: number) {
+  const local = text.slice(Math.max(0, matchStart - 12), Math.min(text.length, matchEnd + 16));
+  return /自杀(?:预防|防治|干预|教育|科普)|(?:预防|防治|干预|教育|科普).{0,4}自杀/.test(local);
 }
 
 // SAFE-01 第五轮：枚举正则在全段的所有非重叠匹配及其位置。
