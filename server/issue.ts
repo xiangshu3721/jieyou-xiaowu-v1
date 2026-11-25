@@ -29,7 +29,7 @@ const topicCodes = new Set<TopicCode>(['EMOTION', 'CAREER', 'MONEY', 'INTIMACY',
 const topicSwitchPatterns = [
   /换个话题/, /聊点别的/, /这个先不聊/, /先不聊这个/, /这个先不说/, /先说别的/, /换一个问题/, /以后再说/, /还有另一个烦恼/, /还有个别的问题/, /我还有另外一个/, /我想说另外一件事/,
 ];
-const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/];
+const continueTopicPatterns = [/继续聊这个/, /接着刚才/, /回到刚才/, /再聊回/, /刚才那个问题/, /(?:想|要)(?:接着|继续)聊/];
 // JTBD-04：明确暂停 — 暂时停下但不关闭问题
 const pauseTopicPatterns = [
   /我先安静一(?:会|下)/, /等下再聊/, /先暂停一(?:下|会)/, /过一(?:会|下)(?:再|又|来)?(?:说|聊)/,
@@ -54,6 +54,9 @@ const resolveTopicNegationPatterns = [
   /好像.{0,8}(?:解决|好|处理)/,
   /好(?:了)?(?:一点|一些|多了?).{0,12}(?:但|可是|然而|不过).{0,12}(?:还没|尚未|仍然|还是).{0,8}(?:解决|好|处理)/,
   /还没(?:解决|好|处理)/,
+  // JTBD-03/04 收尾：第三方归因不触发本人结案
+  /^(?:我)?(?:朋友|他|她|同事|同学|客户|家人|伴侣|对象|姐姐|妹妹|哥哥|弟弟|爸爸|妈妈|父亲|母亲).{0,12}(?:的)?(?:问题|事|困扰|烦恼|焦虑).{0,12}(?:解决|好|行了)/,
+  /^(?:朋友|他|她|同事|同学|客户|家人|伴侣|对象)说.{0,16}(?:解决|好|行了)/,
 ];
 const closeTopicPatterns = [/先这样/, /我先不聊了/, /不用了谢谢/, /再见/, /晚安/, /结束对话/];
 const declineHandoffPatterns = [/不找真人了/, /不需要真人/, /不想找(?:真人|人工|老师|导师|心理咨询师|咨询师)/, /不想预约/, /不用预约/, /还是跟你聊/, /先不预约/, /不用了[，,。！! ]*(?:还是|继续)/];
@@ -85,6 +88,10 @@ export function parseIssueContext(value: unknown, fallbackId = 'issue-current'):
 export function detectConversationControl(text: string, handoffOffered = false): ConversationControlIntent {
   const latest = text.trim();
   if (topicSwitchPatterns.some((pattern) => pattern.test(latest))) return 'SWITCH_TOPIC';
+  // JTBD-03/04 收尾：真人预约请求优先级高于暂停/结案
+  // 包含被暂停/结案前缀后的转折（"我先安静一会儿，但我想找真人导师聊聊"）
+  if (wantsHumanBooking(latest)
+    || /(?:但|可是|然而|不过).{0,8}(?:我想|我还是|我决定|我要).{0,10}(?:找真人|找导师|找咨询师|预约|找人聊|和真人聊)/.test(latest)) return 'ACCEPT_HANDOFF';
   // JTBD-04：用户明确确认已解决（排除否定和第三方引用）
   if (resolveTopicPositivePatterns.some((pattern) => pattern.test(latest))
     && !resolveTopicNegationPatterns.some((pattern) => pattern.test(latest))) return 'RESOLVE_TOPIC';
@@ -92,7 +99,6 @@ export function detectConversationControl(text: string, handoffOffered = false):
   if (pauseTopicPatterns.some((pattern) => pattern.test(latest))
     && !explicitContinuePatterns.some((pattern) => pattern.test(latest))) return 'PAUSE_TOPIC';
   if (isHumanHandoffDecline(latest) || declineHandoffPatterns.some((pattern) => pattern.test(latest)) || (handoffOffered && contextualDeclineHandoffPatterns.some((pattern) => pattern.test(latest)))) return 'DECLINE_HANDOFF';
-  if (wantsHumanBooking(latest)) return 'ACCEPT_HANDOFF';
   if (continueTopicPatterns.some((pattern) => pattern.test(latest))) return 'CONTINUE_CURRENT_TOPIC';
   if (closeTopicPatterns.some((pattern) => pattern.test(latest))) return 'CLOSE_TOPIC';
   return 'GENERAL_CHAT';

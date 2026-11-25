@@ -604,7 +604,8 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const rawBaseline = analyzeConversation(latestText, contextText, {
         issueId: resolution.current_issue_id,
         // JTBD-03/04 收尾阻断 1：PAUSED/CLOSED 后用户继续同话题 → 恢复 ACTIVE
-        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || targetIssue.status === 'AWAITING_TOPIC' ? 'ACTIVE' : (resuming || (resolution.issue_action === 'CONTINUE_CURRENT' && (targetIssue.status === 'PAUSED' || targetIssue.status === 'CLOSED'))) ? 'ACTIVE' : targetIssue.status,
+        // JTBD-03/04 收尾阻断 3：CLOSED 仅对明确延续意图恢复，纯致谢/收尾不重开
+        issueStatus: resolution.awaiting_topic ? 'AWAITING_TOPIC' : resolution.issue_action === 'CREATE_NEW' || targetIssue.status === 'AWAITING_TOPIC' ? 'ACTIVE' : (resuming || (resolution.issue_action === 'CONTINUE_CURRENT' && targetIssue.status === 'PAUSED') || (resolution.issue_action === 'CONTINUE_CURRENT' && targetIssue.status === 'CLOSED' && (resolution.control_intent === 'CONTINUE_CURRENT_TOPIC' || resolution.control_intent === 'ACCEPT_HANDOFF'))) ? 'ACTIVE' : targetIssue.status,
         userTurnCount,
         handoffOffered: resolution.issue_action === 'CREATE_NEW' ? false : targetIssue.handoff_state === 'DECLINED' ? false : targetIssue.handoff_offered,
         previousTopics: targetIssue.topic_tags,
