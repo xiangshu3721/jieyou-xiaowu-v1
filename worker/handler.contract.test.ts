@@ -899,6 +899,63 @@ describe('worker handler API 契约', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
+  it.each([
+    ['近期自杀计划', '我计划在明天自杀'],
+    ['近期结束生命计划', '我打算这周末结束生命'],
+    ['药物准备含明确自伤语义', '我已经买好了药，准备今晚过量服药自杀'],
+    ['遗书与近期执行', '我写好了遗书，明天就执行'],
+    ['持刀并明确割腕', '我手里拿着刀，想割腕'],
+    ['高处加明确跳下去计划', '我准备今晚从阳台跳下去'],
+  ])('SAFE-02：%s 走紧急安全出口且不调用普通模型', async (_label, content) => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      reply: emergencyReply,
+      model: 'safety-rule',
+      analysis: { safety_status: 'URGENT', routing: 'SAFETY_SUPPORT', show_booking_button: false },
+    });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    '我准备今晚吃饭',
+    '我准备今晚吃维生素',
+    '我今晚按医生要求服药',
+    '我手里拿着刀，想切菜',
+    '我拿着剪刀剪纸',
+    '我准备去割草、划船和跳舞',
+    '我在阳台晒太阳',
+    '朋友说他打算明天去自杀',
+  ])('SAFE-02：普通或第三方文本不进入紧急安全出口：%s', async (content) => {
+    fetchMock.mockResolvedValueOnce(deepSeekResponse('{"assistant_reply":"我会按你说的情况继续陪你理清。"}'));
+    const response = await handleApi(request('/api/chat', 'POST', {
+      messages: [{ role: 'user', content }],
+    }), baseEnv);
+    const body = await json(response);
+    expect(response.status).toBe(200);
+    expect(body.analysis.safety_status).toBe('NO_SIGNAL_DETECTED');
+    expect(body.model).toBe('deepseek-chat');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('SAFE-02：同一 Issue 的已知明确风险使后续模糊用药继续走安全出口', async () => {
+    const response = await handleApi(request('/api/chat', 'POST', {
+      currentIssueId: 'issue-danger',
+      issue: { issue_id: 'issue-danger', status: 'ACTIVE', topic_tags: [] },
+      messages: [
+        { role: 'user', content: '我打算今晚过量服药自杀', issueId: 'issue-danger' },
+        { role: 'assistant', content: '请先联系身边可信的人。', issueId: 'issue-danger' },
+        { role: 'user', content: '我已经买好了药，准备今晚吃', issueId: 'issue-danger' },
+      ],
+    }), baseEnv);
+    const body = await json(response);
+    expect(body).toMatchObject({ reply: emergencyReply, model: 'safety-rule', analysis: { safety_status: 'URGENT', show_booking_button: false } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   // SAFE-01 第四轮：句段级过滤过宽 — Handler 链路验证
   it('SAFE-01 第四轮：同段第三方不屏蔽本人即时危险 → URGENT 紧急回复，不调用模型', async () => {
     const response = await handleApi(request('/api/chat', 'POST', {

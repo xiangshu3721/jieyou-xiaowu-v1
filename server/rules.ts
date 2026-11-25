@@ -32,23 +32,18 @@ const topicRules: Array<[TopicCode, string[]]> = [
 ];
 
 const immediateDangerPatterns = [
-  /(?:现在|此刻|马上|正在).{0,8}(?:准备|计划|打算|要|想).{0,8}(?:自杀|轻生|结束生命|伤害自己|自残|割腕|跳楼)/,
+  /(?:现在|此刻|马上|正在).{0,8}(?:准备|计划|打算|要|想).{0,8}(?:自杀|轻生|结束生命|伤害自己|自残|割腕|跳楼|跳下去)/,
   /(?:正在|已经开始|马上会|准备|计划|打算).{0,8}(?:杀人|伤害别人|弄死他|暴力伤人)/,
   /(?:正在被打|马上会被伤害|有人拿刀|有人要伤害我)/,
-  // SAFE-02：明确计划+时间（在单段内，必须第一人称）
-  /(?:我|自己).{0,4}(?:计划|打算|准备).{0,4}(?:明天|今晚|这周末|今天|后天|明早|明晚|今晚|这周|下周).{0,8}(?:自杀|轻生|结束生命|离开这个世界|走|不活了)/,
-  // SAFE-02：手段准备+时间（买药/准备好+时间词，无时间则为正常用药，必须第一人称）
-  /(?:我|自己).{0,4}(?:已经)?(?:买好|准备好).{0,4}(?:药|安眠药|农药).{0,4}(?:明天|今晚|这周末|今天|后天|明早|明晚|今晚|这周|下周)/,
-  // SAFE-02：准备+时间+服用（暗示服药自杀，主语可省略）
-  /(?:我|自己)?.{0,2}(?:准备|打算).{0,2}(?:今晚|明天|今夜|明晚).{0,4}(?:吃|喝|服|用)/,
+  // SAFE-02：明确近期自伤计划。时间词或普通动作本身不构成紧急风险。
+  /(?:我|自己).{0,4}(?:计划|打算|准备).{0,4}(?:明天|今晚|这周末|今天|后天|明早|明晚|今夜|这周|下周).{0,12}(?:自杀|轻生|结束生命|离开这个世界|不活了|伤害自己|自残|割腕|跳楼|跳下去)/,
+  // SAFE-02：药物准备仅在同一段已有明确自伤/过量语义时升级，避免把按医嘱服药当成危机。
+  /(?:我|自己)(?=[^。！？\n]{0,50}(?:买好|准备好).{0,8}(?:药|药片|药瓶|安眠药|农药))(?=[^。！？\n]{0,50}(?:明天|今晚|这周末|今天|后天|明早|明晚|今夜|这周|下周))(?=[^。！？\n]{0,50}(?:自杀|轻生|结束生命|伤害自己|自残|过量(?:吃|服|喝|用|服药)))[^。！？\n]{0,80}/,
   // SAFE-02：遗书准备（写遗书本身就是高度危险信号）
   /(?:我|自己).{0,4}(?:已经)?(?:写好|写完|留下|放好).{0,4}(?:遗书|遗言|告别信|绝笔)/,
-  // SAFE-02：即时危险情境（天台/楼顶/桥边）+ 第一人称在段首
-  /(?:我|自己).{0,4}(?:现在|正|就).{0,4}(?:在|站在|坐在|蹲在|趴在).{0,4}(?:天台|楼顶|阳台|桥边|河边|悬崖边|窗台|窗口)/,
-  // SAFE-02：手持危险工具（在段内匹配）
-  /(?:我|自己)?.{0,4}(?:手里|手上|拿着|握着|抓着).{0,4}(?:刀|刀片|剪刀|绳子|药瓶|药片)/,
-  // SAFE-02：明确自伤意图+具体手段（想割腕/想跳楼等在段内）
-  /(?:想|要|准备|打算).{0,4}(?:割腕|割|划|跳楼|跳|结束生命|不活了)/,
+  // SAFE-02：持有工具和具体自伤意图必须在同一段出现；做饭、剪纸等日常动作不升级。
+  /(?:我|自己).{0,6}(?:手里|手上|拿着|握着|抓着).{0,6}(?:刀|刀片|剪刀|绳子|药瓶|药片).{0,16}(?:想|要|准备|打算).{0,8}(?:割腕|自残|伤害自己|跳楼|跳下去|结束生命|不活了)/,
+  /(?:我|自己).{0,8}(?:想|要|准备|打算).{0,8}(?:割腕|自残|伤害自己|跳楼|跳下去|结束生命|不活了)/,
 ];
 
 const possibleDangerPatterns = [
@@ -301,12 +296,14 @@ export function detectSafety(text: string): SafetyStatus {
   // SAFE-01 第四轮：以具体风险候选表达为最小判定单位。
   // 否定、第三方归因、非第一人称主体只影响其对应的局部内容，不一票排除同段其他候选。
 
-  // Pass 1：即时危险 → URGENT（不被第三方归因抑制，但尊重局部否定）
+  // Pass 1：即时危险 → URGENT。原句用于保留逗号前后的明确上下文，
+  // 分段用于准确处理局部否定；两者都只排除匹配点所在的第三方归因区域。
   // SAFE-01 第五轮：遍历所有匹配，不只查首个
-  for (const segment of segments) {
+  for (const segment of [...segments, quotedText]) {
     for (const pattern of immediateDangerPatterns) {
       for (const m of findAllMatches(segment, pattern)) {
-        if (!isMatchLocallyNegated(segment, m.start, m.end)) {
+        if (!isMatchLocallyNegated(segment, m.start, m.end)
+          && !isMatchInThirdPartyRegion(segment, m.start, m.end)) {
           return 'URGENT';
         }
       }
@@ -1236,7 +1233,7 @@ export function analyzeConversation(latestText: string, contextText = '', option
     new_issue_detected: switchResult.detected,
     new_issue_confidence: Number(Math.max(0, Math.min(1, switchResult.confidence)).toFixed(2)),
     user_turn_count: userTurnCount,
-    issue_status: handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : options.controlIntent === 'PAUSE_TOPIC' && safety === 'NO_SIGNAL_DETECTED' ? 'PAUSED' : options.controlIntent === 'RESOLVE_TOPIC' && safety === 'NO_SIGNAL_DETECTED' ? 'CLOSED' : issueStatus,
+    issue_status: safety !== 'NO_SIGNAL_DETECTED' ? 'ACTIVE' : handoffReady ? 'HANDOFF_OFFERED' : declinedHuman ? 'ACTIVE' : options.controlIntent === 'PAUSE_TOPIC' ? 'PAUSED' : options.controlIntent === 'RESOLVE_TOPIC' ? 'CLOSED' : issueStatus,
     handoff_offered: handoffWasOffered || showBookingButton,
     control_intent: options.controlIntent,
     known_facts: understanding.known_facts,
