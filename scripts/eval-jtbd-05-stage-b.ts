@@ -51,6 +51,7 @@ const outputRmbPerMillion = 8;
 const reservedInputTokens = maxMessageBytes + internalPromptReserveTokens;
 const reservationRmb = (reservedInputTokens * inputRmbPerMillion + maxOutputTokens * outputRmbPerMillion) / 1_000_000;
 const liveConfirmation = 'USER_CONFIRMED_STAGE_B_DEEPSEEK_FLASH';
+const privateReportRoot = '/private/tmp/jtbd-05-stage-b-reports';
 
 class StageBGuardError extends Error {
   constructor(readonly code: string, message: string) {
@@ -68,19 +69,30 @@ type GuardRecord = {
   maxTokens: number;
   messageBytes: number;
   httpStatus?: number;
+  responseModel?: string | null;
   usage?: Usage;
   actualRmb?: number | null;
+  costSource?: 'USAGE' | 'RESERVED_UNKNOWN_USAGE';
 };
 
 type GuardOptions = { maxRequests?: number; budgetRmb?: number };
+type GuardState = { sent: number; reservedRmb: number; actualRmb: number; records: GuardRecord[]; blockedReason?: string | null };
 
 class OutboundGuard {
   readonly records: GuardRecord[] = [];
   private reservedRmb = 0;
   private sent = 0;
   private actualRmb = 0;
+  private blockedReason: string | null = null;
 
-  constructor(private readonly options: Required<GuardOptions> = { maxRequests, budgetRmb }) {}
+  constructor(private readonly options: Required<GuardOptions> = { maxRequests, budgetRmb }, initial?: GuardState) {
+    if (!initial) return;
+    this.sent = initial.sent;
+    this.reservedRmb = initial.reservedRmb;
+    this.actualRmb = initial.actualRmb;
+    this.records.push(...initial.records);
+    this.blockedReason = initial.blockedReason || null;
+  }
 
   snapshot() {
     return {
@@ -90,10 +102,23 @@ class OutboundGuard {
       actualRmb: roundRmb(this.actualRmb),
       reservationRmb: roundRmb(reservationRmb),
       budgetRmb: this.options.budgetRmb,
+      blockedReason: this.blockedReason,
     };
   }
 
+  private block(code: string, record?: GuardRecord): never {
+    this.blockedReason = code;
+    if (record) {
+      if (record.costSource === 'USAGE' && typeof record.actualRmb === 'number') this.actualRmb -= record.actualRmb;
+      record.actualRmb = roundRmb(reservationRmb);
+      record.costSource = 'RESERVED_UNKNOWN_USAGE';
+      this.actualRmb += reservationRmb;
+    }
+    throw new StageBGuardError(code, `Stage B stopped: ${code}`);
+  }
+
   async fetch(input: RequestInfo | URL, init: RequestInit | undefined, transport: Transport): Promise<Response> {
+    if (this.blockedReason) throw new StageBGuardError('OUTBOUND_ALREADY_BLOCKED', `Stage B is blocked: ${this.blockedReason}`);
     const requestUrl = input instanceof Request ? input.url : input.toString();
     if (requestUrl !== endpoint) throw new StageBGuardError('OUTBOUND_URL_BLOCKED', `Stage B only permits ${endpoint}`);
     const method = (init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
@@ -145,25 +170,36 @@ class OutboundGuard {
     let response: Response;
     try {
       response = await transport(endpoint, { ...init, method: 'POST', body: JSON.stringify(outgoing) });
-    } catch (error) {
+    } catch {
       // Reservation is intentionally retained: a transport failure can still
       // have reached the provider, and automatic retries are forbidden.
-      throw error;
+      this.block('OUTBOUND_TRANSPORT_FAILED', record);
     }
     record.httpStatus = response.status;
     try {
-      const payload = await response.clone().json() as { usage?: Usage };
+      const payload = await response.clone().json() as { model?: unknown; usage?: Usage };
+      record.responseModel = typeof payload.model === 'string' ? payload.model : null;
       record.usage = payload.usage;
-      if (payload.usage && typeof payload.usage.prompt_tokens === 'number' && typeof payload.usage.completion_tokens === 'number') {
-        const actual = (payload.usage.prompt_tokens * inputRmbPerMillion + payload.usage.completion_tokens * outputRmbPerMillion) / 1_000_000;
+      if (!response.ok) this.block('OUTBOUND_HTTP_FAILURE', record);
+      const promptTokens = payload.usage?.prompt_tokens;
+      const completionTokens = payload.usage?.completion_tokens;
+      const totalTokens = payload.usage?.total_tokens;
+      const validUsage = typeof promptTokens === 'number' && Number.isInteger(promptTokens) && promptTokens >= 0
+        && typeof completionTokens === 'number' && Number.isInteger(completionTokens) && completionTokens >= 0
+        && typeof totalTokens === 'number' && Number.isInteger(totalTokens) && totalTokens >= promptTokens + completionTokens;
+      if (validUsage) {
+        const actual = (promptTokens * inputRmbPerMillion + completionTokens * outputRmbPerMillion) / 1_000_000;
         record.actualRmb = roundRmb(actual);
+        record.costSource = 'USAGE';
         this.actualRmb += actual;
       } else {
-        record.actualRmb = null;
+        this.block('OUTBOUND_USAGE_UNKNOWN', record);
       }
-    } catch {
-      record.actualRmb = null;
+    } catch (error) {
+      if (error instanceof StageBGuardError) throw error;
+      this.block('OUTBOUND_USAGE_UNKNOWN', record);
     }
+    if (record.responseModel !== model) this.block('OUTBOUND_RESPONSE_MODEL_BLOCKED', record);
     return response;
   }
 }
@@ -213,6 +249,21 @@ async function expectGuardError(expectedCode: string, operation: () => Promise<u
 }
 
 async function runDryRun(root: string) {
+  const plannedCases = loadExistingCases(root);
+  const plan = validatePlan(plannedCases);
+  const pilotCases = casesForPhase(plannedCases, 'pilot');
+  const remainingCases = casesForPhase(plannedCases, 'remaining');
+  assert.equal(new Set([...pilotCases, ...remainingCases].map((item) => item.id)).size, plannedCases.length, 'pilot and remaining cases must not overlap');
+  const pilotCheckpoint = emptyCheckpoint();
+  pilotCheckpoint.phase = 'PILOT_COMPLETE_AWAITING_REVIEW';
+  pilotCheckpoint.completedScenarioIds = pilotCases.map((item) => item.id);
+  validatePilotCheckpoint(pilotCheckpoint, plannedCases);
+  assert.throws(() => validatePilotCheckpoint(emptyCheckpoint(), plannedCases), /BLOCKED_PILOT_CHECKPOINT_INVALID/);
+  const checkpointProbe = `${privateReportRoot}/dry-run-${process.pid}-${Date.now()}.json`;
+  writeCheckpoint(checkpointProbe, pilotCheckpoint);
+  assert.equal(fs.statSync(checkpointProbe).mode & 0o777, 0o600);
+  assert.equal((JSON.parse(fs.readFileSync(checkpointProbe, 'utf8')) as LiveCheckpoint).phase, 'PILOT_COMPLETE_AWAITING_REVIEW');
+  fs.unlinkSync(checkpointProbe);
   const loaded = await loadHandler(root);
   const originalFetch = globalThis.fetch;
   const sentBodies: Array<Record<string, unknown>> = [];
@@ -258,6 +309,17 @@ async function runDryRun(root: string) {
     assert.equal(failed.status, 502);
     assert.equal(failureGuard.snapshot().sent, 1);
     assert.equal(failureGuard.snapshot().reservedRmb, roundRmb(reservationRmb));
+    assert.equal(failureGuard.snapshot().actualRmb, roundRmb(reservationRmb));
+    assert.equal(failureGuard.snapshot().blockedReason, 'OUTBOUND_HTTP_FAILURE');
+
+    const unknownUsageGuard = new OutboundGuard();
+    await expectGuardError('OUTBOUND_USAGE_UNKNOWN', () => unknownUsageGuard.fetch(endpoint, { method: 'POST', body: validRequestBody() }, async () => new Response(JSON.stringify({ model, choices: [] }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    assert.equal(unknownUsageGuard.snapshot().actualRmb, roundRmb(reservationRmb));
+    assert.equal(unknownUsageGuard.snapshot().blockedReason, 'OUTBOUND_USAGE_UNKNOWN');
+
+    const responseModelGuard = new OutboundGuard();
+    await expectGuardError('OUTBOUND_RESPONSE_MODEL_BLOCKED', () => responseModelGuard.fetch(endpoint, { method: 'POST', body: validRequestBody() }, async () => new Response(JSON.stringify({ model: 'unexpected-model', choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }), { status: 200, headers: { 'content-type': 'application/json' } })));
+    assert.equal(responseModelGuard.snapshot().blockedReason, 'OUTBOUND_RESPONSE_MODEL_BLOCKED');
 
     return {
       status: 'DRY_RUN_PASS',
@@ -266,7 +328,8 @@ async function runDryRun(root: string) {
       thinking: { type: 'disabled' },
       endpoint,
       guard: guard.snapshot(),
-      checks: ['full-handler-mock', 'outbound-whitelist', 'model-and-thinking', 'budget-pre-reservation', 'request-count-limit', 'failure-no-retry'],
+      plan,
+      checks: ['full-handler-mock', 'all-planned-scenarios-validated', 'pilot-stops-after-three-cases', 'remaining-requires-pilot-checkpoint', 'atomic-private-checkpoint', 'outbound-whitelist', 'model-and-thinking', 'budget-pre-reservation', 'request-count-limit', 'failure-no-retry', 'unknown-usage-stops', 'response-model-stops'],
     };
   } finally {
     globalThis.fetch = originalFetch;
@@ -292,7 +355,7 @@ function loadExistingCases(root: string): PlannedCase[] {
     { id: 'S09-medication-boundary' },
     { id: 'S10-handoff-accept' },
     { id: 'S11-handoff-decline' },
-    { id: 'S15-correction-no-repeat-question' },
+    { id: 'S15-correction-no-followup' },
   ];
   return plans.map((plan) => {
     const sourceCase = multi.get(plan.id) || single.get(plan.id);
@@ -305,6 +368,22 @@ function loadExistingCases(root: string): PlannedCase[] {
       safetyFinal: plan.safetyFinal,
     };
   });
+}
+
+function validatePlan(cases: PlannedCase[]) {
+  assert.equal(cases.length, 11, 'Stage B must retain its approved 11-case plan');
+  assert.equal(new Set(cases.map((item) => item.id)).size, cases.length, 'Stage B case IDs must be unique');
+  assert.equal(cases.filter((item) => item.pilot).length, 3, 'Stage B pilot must contain exactly three cases');
+  assert.ok(cases.every((item) => item.users.length > 0), 'every planned case must have at least one fictional user turn');
+  const upperBound = cases.reduce((total, item) => total + item.users.length, 0);
+  assert.ok(upperBound <= maxRequests, `Stage B planned turns (${upperBound}) exceed request cap (${maxRequests})`);
+  return { cases: cases.length, pilots: cases.filter((item) => item.pilot).length, remaining: cases.filter((item) => !item.pilot).length, maximumPotentialRequests: upperBound };
+}
+
+function casesForPhase(cases: PlannedCase[], phase: LivePhase) {
+  const selected = cases.filter((item) => phase === 'pilot' ? item.pilot : !item.pilot);
+  assert.equal(selected.length, phase === 'pilot' ? 3 : 8, `unexpected ${phase} case count`);
+  return selected;
 }
 
 function issueFromResult(analysis: Record<string, unknown>, fallbackIssueId: string): IssueState {
@@ -328,26 +407,151 @@ function retainIssueTransition(issues: Map<string, IssueState>, previousId: stri
   issues.set(next.issue_id, next);
 }
 
-async function runLive(root: string, out: string) {
+type LivePhase = 'pilot' | 'remaining';
+type LiveCheckpoint = {
+  kind: 'JTBD_05_STAGE_B_SINGLE_VERSION';
+  mode: 'live';
+  phase: string;
+  generatedAt: string;
+  updatedAt: string;
+  model: string;
+  thinking: { type: 'disabled' };
+  endpoint: string;
+  rateAssumptionRmbPerMillion: { inputCacheMiss: number; output: number };
+  guard: ReturnType<OutboundGuard['snapshot']>;
+  outboundRecords: GuardRecord[];
+  completedScenarioIds: string[];
+  cases: Array<Record<string, unknown>>;
+  experienceStatus: string;
+  failure?: { code: string; phase: LivePhase };
+};
+
+function privateReportPath(out: string) {
+  const resolved = path.resolve(out);
+  const root = `${privateReportRoot}/`;
+  if (!resolved.startsWith(root)) throw new Error('STAGE_B_REPORT_MUST_BE_PRIVATE_TMP');
+  fs.mkdirSync(privateReportRoot, { recursive: true, mode: 0o700 });
+  fs.chmodSync(privateReportRoot, 0o700);
+  fs.mkdirSync(path.dirname(resolved), { recursive: true, mode: 0o700 });
+  fs.chmodSync(path.dirname(resolved), 0o700);
+  return resolved;
+}
+
+function writeCheckpoint(out: string, report: LiveCheckpoint) {
+  const resolved = privateReportPath(out);
+  report.updatedAt = new Date().toISOString();
+  const temporary = `${resolved}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
+  fs.chmodSync(temporary, 0o600);
+  fs.renameSync(temporary, resolved);
+  fs.chmodSync(resolved, 0o600);
+}
+
+function failureCode(error: unknown, guard: OutboundGuard) {
+  const blocked = guard.snapshot().blockedReason;
+  if (blocked) return blocked;
+  if (error instanceof StageBGuardError) return error.code;
+  if (error instanceof Error && /^STAGE_B_[A-Z_]+/.test(error.message)) return error.message.split(':', 1)[0];
+  return 'STAGE_B_HANDLER_FAILED';
+}
+
+function syncCheckpoint(report: LiveCheckpoint, guard: OutboundGuard) {
+  report.guard = guard.snapshot();
+  report.outboundRecords = guard.records;
+}
+
+function validatePilotCheckpoint(report: LiveCheckpoint, cases: PlannedCase[]) {
+  if (report.kind !== 'JTBD_05_STAGE_B_SINGLE_VERSION' || report.mode !== 'live'
+    || report.phase !== 'PILOT_COMPLETE_AWAITING_REVIEW' || report.model !== model
+    || report.endpoint !== endpoint || report.thinking?.type !== 'disabled') {
+    throw new Error('BLOCKED_PILOT_CHECKPOINT_INVALID');
+  }
+  const pilots = cases.filter((item) => item.pilot).map((item) => item.id);
+  if (JSON.stringify(report.completedScenarioIds) !== JSON.stringify(pilots)) throw new Error('BLOCKED_PILOT_CHECKPOINT_INVALID');
+  if (report.guard.sent > maxRequests || report.guard.reservedRmb > budgetRmb) throw new Error('BLOCKED_PILOT_CHECKPOINT_INVALID');
+}
+
+function loadPilotCheckpoint(out: string, cases: PlannedCase[]) {
+  const resolved = privateReportPath(out);
+  const mode = fs.statSync(resolved).mode & 0o777;
+  if ((mode & 0o077) !== 0) throw new Error('BLOCKED_PILOT_CHECKPOINT_NOT_PRIVATE');
+  const report = JSON.parse(fs.readFileSync(resolved, 'utf8')) as LiveCheckpoint;
+  validatePilotCheckpoint(report, cases);
+  return { resolved, report };
+}
+
+function emptyCheckpoint(): LiveCheckpoint {
+  const now = new Date().toISOString();
+  return {
+    kind: 'JTBD_05_STAGE_B_SINGLE_VERSION',
+    mode: 'live',
+    phase: 'PILOT_RUNNING',
+    generatedAt: now,
+    updatedAt: now,
+    model,
+    thinking: { type: 'disabled' },
+    endpoint,
+    rateAssumptionRmbPerMillion: { inputCacheMiss: inputRmbPerMillion, output: outputRmbPerMillion },
+    guard: new OutboundGuard().snapshot(),
+    outboundRecords: [],
+    completedScenarioIds: [],
+    cases: [],
+    experienceStatus: 'PILOT_RUNNING',
+  };
+}
+
+async function runLive(root: string, phase: LivePhase, out: string) {
   if (process.env.DEEPSEEK_API_KEY?.trim().length === 0 || !process.env.DEEPSEEK_API_KEY) throw new Error('BLOCKED_NO_DEEPSEEK_KEY');
   const cases = loadExistingCases(root);
+  validatePlan(cases);
+  let report: LiveCheckpoint;
+  let reportFile: string;
+  let guard: OutboundGuard;
+  if (phase === 'pilot') {
+    reportFile = privateReportPath(out);
+    if (fs.existsSync(reportFile)) throw new Error('STAGE_B_PILOT_REPORT_ALREADY_EXISTS');
+    report = emptyCheckpoint();
+    guard = new OutboundGuard();
+  } else {
+    const resumed = loadPilotCheckpoint(out, cases);
+    reportFile = resumed.resolved;
+    report = resumed.report;
+    report.phase = 'REMAINING_RUNNING';
+    report.experienceStatus = 'REMAINING_RUNNING';
+    guard = new OutboundGuard({ maxRequests, budgetRmb }, {
+      sent: report.guard.sent,
+      reservedRmb: report.guard.reservedRmb,
+      actualRmb: report.guard.actualRmb,
+      records: report.outboundRecords,
+      blockedReason: report.guard.blockedReason,
+    });
+  }
+  const selectedCases = casesForPhase(cases, phase);
+  if (selectedCases.some((item) => report.completedScenarioIds.includes(item.id))) throw new Error('STAGE_B_DUPLICATE_SCENARIO_BLOCKED');
+  syncCheckpoint(report, guard);
+  writeCheckpoint(reportFile, report);
   const loaded = await loadHandler(root);
   const originalFetch = globalThis.fetch;
-  const guard = new OutboundGuard();
-  const started = new Date().toISOString();
-  const results: Array<Record<string, unknown>> = [];
   try {
     globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => guard.fetch(input, init, (url, request) => originalFetch(url, request))) as typeof fetch;
-    for (const scenario of cases) {
+    for (const scenario of selectedCases) {
       let activeIssueId = `stage-b-${scenario.id}`;
       const issues = new Map<string, IssueState>([[activeIssueId, { issue_id: activeIssueId, status: 'ACTIVE', topic_tags: [], handoff_offered: false, handoff_state: 'NOT_READY', booking_case_id: null }]]);
       const messages: ChatMessage[] = [];
       const turns: Array<Record<string, unknown>> = [];
+      const caseResult: Record<string, unknown> = { id: scenario.id, description: scenario.description, phase, turns };
+      report.cases.push(caseResult);
+      syncCheckpoint(report, guard);
+      writeCheckpoint(reportFile, report);
       for (const user of scenario.users) {
         const current = issues.get(activeIssueId)!;
         messages.push({ role: 'user', content: user, issueId: activeIssueId });
         const beforeCalls = guard.snapshot().sent;
         const turnStarted = performance.now();
+        const turn: Record<string, unknown> = { user, status: 'STARTED' };
+        turns.push(turn);
+        syncCheckpoint(report, guard);
+        writeCheckpoint(reportFile, report);
         const response = await loaded.handleApi(new Request('https://isolated.invalid/api/chat', {
           method: 'POST', headers: { 'content-type': 'application/json', 'CF-Connecting-IP': `stage-b-${scenario.id}-${turns.length}` },
           body: JSON.stringify({ sessionId: `stage-b-${scenario.id}`, currentIssueId: activeIssueId, issue: current, issues: [...issues.values()], messages }),
@@ -359,7 +563,8 @@ async function runLive(root: string, out: string) {
         retainIssueTransition(issues, activeIssueId, next, body.analysis);
         activeIssueId = next.issue_id;
         messages.push({ role: 'assistant', content: body.reply, issueId: activeIssueId });
-        turns.push({
+        Object.assign(turn, {
+          status: 'COMPLETE',
           user,
           reply: body.reply,
           reply_parts: body.reply_parts || [body.reply],
@@ -369,6 +574,8 @@ async function runLive(root: string, out: string) {
           latencyMs: Math.round(performance.now() - turnStarted),
           modelOutboundRequests: guard.snapshot().sent - beforeCalls,
         });
+        syncCheckpoint(report, guard);
+        writeCheckpoint(reportFile, report);
       }
       if (scenario.safetyFinal) {
         const final = turns.at(-1) as { analysis?: { safety_status?: unknown }; modelOutboundRequests?: unknown } | undefined;
@@ -376,31 +583,26 @@ async function runLive(root: string, out: string) {
           throw new Error(`STAGE_B_SAFETY_GATE_FAILED:${scenario.id}`);
         }
       }
-      results.push({ id: scenario.id, description: scenario.description, phase: scenario.pilot ? 'pilot' : 'remaining', turns });
+      report.completedScenarioIds.push(scenario.id);
+      syncCheckpoint(report, guard);
+      writeCheckpoint(reportFile, report);
     }
+    report.phase = phase === 'pilot' ? 'PILOT_COMPLETE_AWAITING_REVIEW' : 'COMPLETE_AWAITING_HUMAN_REVIEW';
+    report.experienceStatus = phase === 'pilot' ? 'PILOT_RESPONSES_COLLECTED_AWAITING_HUMAN_REVIEW' : 'RESPONSES_COLLECTED_AWAITING_HUMAN_REVIEW';
+    syncCheckpoint(report, guard);
+    writeCheckpoint(reportFile, report);
+  } catch (error) {
+    report.phase = 'BLOCKED';
+    report.experienceStatus = 'BLOCKED';
+    report.failure = { code: failureCode(error, guard), phase };
+    syncCheckpoint(report, guard);
+    writeCheckpoint(reportFile, report);
+    throw new Error(report.failure.code);
   } finally {
     globalThis.fetch = originalFetch;
     await loaded.close();
   }
-  const report = {
-    kind: 'JTBD_05_STAGE_B_SINGLE_VERSION',
-    mode: 'live',
-    generatedAt: started,
-    model,
-    thinking: { type: 'disabled' },
-    endpoint,
-    rateAssumptionRmbPerMillion: { inputCacheMiss: inputRmbPerMillion, output: outputRmbPerMillion },
-    guard: guard.snapshot(),
-    outboundRecords: guard.records,
-    cases: results,
-    experienceStatus: 'RESPONSES_COLLECTED_AWAITING_HUMAN_REVIEW',
-  };
-  const resolved = path.resolve(out);
-  if (!resolved.startsWith('/private/tmp/')) throw new Error('STAGE_B_REPORT_MUST_BE_PRIVATE_TMP');
-  fs.mkdirSync(path.dirname(resolved), { recursive: true, mode: 0o700 });
-  fs.chmodSync(path.dirname(resolved), 0o700);
-  fs.writeFileSync(resolved, JSON.stringify(report, null, 2), { encoding: 'utf8', mode: 0o600 });
-  console.log(JSON.stringify({ status: report.experienceStatus, reportFile: resolved, guard: report.guard, cases: results.length }, null, 2));
+  console.log(JSON.stringify({ status: report.experienceStatus, reportFile, guard: report.guard, cases: report.cases.length }, null, 2));
 }
 
 const args = new Map(process.argv.slice(2).map((value) => {
@@ -412,9 +614,18 @@ const live = args.has('--live');
 
 if (live) {
   if (args.get('--confirm-real') !== liveConfirmation) throw new Error('BLOCKED_MODEL_AUTHORIZATION');
-  const out = args.get('--out');
-  if (!out) throw new Error('STAGE_B_LIVE_REPORT_PATH_REQUIRED');
-  await runLive(root, out);
+  const phase = args.get('--phase');
+  if (phase !== 'pilot' && phase !== 'remaining') throw new Error('STAGE_B_PHASE_REQUIRED');
+  if (phase === 'pilot') {
+    const out = args.get('--out');
+    if (!out || args.has('--resume')) throw new Error('STAGE_B_PILOT_REPORT_PATH_REQUIRED');
+    await runLive(root, phase, out);
+  } else {
+    if (args.get('--confirm-pilot-review') !== 'USER_ACCEPTED_STAGE_B_PILOT') throw new Error('BLOCKED_PILOT_REVIEW_AUTHORIZATION');
+    const resume = args.get('--resume');
+    if (!resume || args.has('--out')) throw new Error('STAGE_B_REMAINING_RESUME_PATH_REQUIRED');
+    await runLive(root, phase, resume);
+  }
 } else {
   console.log(JSON.stringify(await runDryRun(root), null, 2));
 }
