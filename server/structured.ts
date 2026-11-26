@@ -469,7 +469,10 @@ export function fallbackReply(analysis: ConversationAnalysis, options: { allowQu
     return '这件事可能需要合格的专业人员进一步评估和支持。我可以先帮你把当前困扰整理清楚，但不会替代医疗、心理、法律或金融专业意见。';
   }
   if (isReplyChallenge(latestUserMessage)) return challengeFallback(analysis, options, userContext);
-  if (analysis.user_intent !== 'WANTS_COMFORT' && asksForPracticalHelp(latestUserMessage)) return practicalFallback(analysis, userContext);
+  if (analysis.user_intent === 'WANTS_CLARITY' && analysis.reply_length === 'SHORT' && /焦虑|难受|压力大|低落|紧张/.test(latestUserMessage)) {
+    return '听起来这阵子的焦虑一直在缠着你。你愿意先说说，它通常在什么情境下最明显吗？';
+  }
+  if (analysis.user_intent === 'WANTS_ACTION' && asksForPracticalHelp(latestUserMessage)) return practicalFallback(analysis, userContext);
   if (analysis.user_intent === 'WANTS_COMFORT' || !allowQuestion || !analysis.ask_question) {
     return nonRepeatingFallback(listeningFallbackReply, options);
   }

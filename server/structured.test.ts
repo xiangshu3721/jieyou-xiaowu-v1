@@ -110,8 +110,8 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(comfort)).not.toMatch(/建议你|可以先做|试试|应该/);
 
     const noQuestion = analyzeConversation('最近总是焦虑怎么办');
-    expect(noQuestion.ask_question).toBe(false);
-    expect(fallbackReply(noQuestion)).not.toMatch(/[？?]/);
+    expect(noQuestion).toMatchObject({ user_intent: 'WANTS_CLARITY', response_goal: 'CLARIFY', ask_question: true, reply_length: 'SHORT' });
+    expect(fallbackReply(noQuestion, { latestUserMessage: '最近总是焦虑怎么办' })).toMatch(/焦虑一直在缠着你/);
 
     const clarification = analyzeConversation('最近很累，能帮我理清楚吗');
     expect(clarification.ask_question).toBe(true);

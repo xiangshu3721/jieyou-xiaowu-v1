@@ -465,10 +465,17 @@ describe('解忧小屋智能导诊规则', () => {
 
   it('V1.3 默认先由 AI 支持，不因中度标签提前展示真人入口', () => {
     const analysis = analyzeConversation('最近总是焦虑怎么办');
+    expect(analysis).toMatchObject({ user_intent: 'WANTS_CLARITY', response_goal: 'CLARIFY', primary_response_strategy: 'CLARIFY_FACT', reply_length: 'SHORT' });
     expect(analysis.routing).toBe('AI_SUPPORT');
     expect(analysis.handoff_state).toBe('NOT_READY');
     expect(analysis.show_booking_button).toBe(false);
     expect(analysis.response_goal).not.toBe('HANDOFF');
+  });
+
+  it('泛化情绪求助先澄清，具体行动请求仍直接帮助', () => {
+    expect(analyzeConversation('最近总是感到焦虑').user_intent).toBe('VENTING');
+    expect(analyzeConversation('我明天要和主管谈工作优先级，先做什么')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP' });
+    expect(analyzeConversation('我试过了没用，我就想要一个具体办法')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP' });
   });
 
   it('V1.3 信息充分且继续 AI 收益有限时停止追问并交接', () => {
