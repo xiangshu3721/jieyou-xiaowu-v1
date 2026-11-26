@@ -14,6 +14,9 @@ export interface WorkerEnv {
   DEEPSEEK_API_KEY?: string;
   DEEPSEEK_MODEL?: string;
   DEEPSEEK_BASE_URL?: string;
+  // DeepSeek enables thinking by default when the request omits this field.
+  // Keep the production default unchanged; staging can explicitly opt out.
+  DEEPSEEK_THINKING?: string;
   FEISHU_APP_ID?: string;
   FEISHU_APP_SECRET?: string;
   FEISHU_APP_TOKEN?: string;
@@ -151,6 +154,7 @@ function apiConfig(env: WorkerEnv) {
       apiKey: env.DEEPSEEK_API_KEY || '',
       model: env.DEEPSEEK_MODEL || 'deepseek-chat',
       baseUrl: env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com',
+      thinkingDisabled: env.DEEPSEEK_THINKING === 'false',
     },
     feishu: {
       appId: env.FEISHU_APP_ID || '',
@@ -235,6 +239,7 @@ async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 's
         messages,
         temperature,
         stream: false,
+        ...(config.thinkingDisabled ? { thinking: false } : {}),
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
       }),
       signal: timeout.signal,

@@ -87,6 +87,7 @@ if (missing.length) throw new Error(`${deploymentEnvironment} 配置缺少必要
 
 const envVariables = Object.fromEntries(requiredKeys.map((key) => [key, runtimeValue(key)]));
 envVariables.CLOUDBASE_ENV_ID = envId;
+if (runtimeValue('DEEPSEEK_THINKING')) envVariables.DEEPSEEK_THINKING = runtimeValue('DEEPSEEK_THINKING');
 const learningEnabledValue = value('DEPLOY_ENABLE_LEARNING', isStaging ? '' : 'true');
 const growthEnabledValue = value('DEPLOY_ENABLE_GROWTH', isStaging ? '' : 'true');
 envVariables.LEARNING_ENABLED = learningEnabledValue === 'false' ? 'false' : 'true';
