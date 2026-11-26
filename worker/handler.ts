@@ -239,7 +239,7 @@ async function callDeepSeekCompletion(env: WorkerEnv, messages: Array<{ role: 's
         messages,
         temperature,
         stream: false,
-        ...(config.thinkingDisabled ? { thinking: false } : {}),
+        ...(config.thinkingDisabled ? { thinking: { type: 'disabled' } } : {}),
         ...(options.maxTokens ? { max_tokens: options.maxTokens } : {}),
       }),
       signal: timeout.signal,
@@ -722,8 +722,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       // 由上方统一的 withCurrentJobShadow 在所有 HTTP 200 出口附加，回复逐字不变。
       return json(200, withCurrentJobShadow({ reply, reply_parts: replyPartsForDisplay(reply, analysis), analysis, promptVersion: env.PROMPT_VERSION || 'v1.9.0', model: diagnostics.model, diagnostics }, analysis), request);
     } catch (error) {
-      const message = error instanceof ExternalServiceError && error.code === 'DEEPSEEK_UNAVAILABLE' ? error.message : error instanceof Error ? error.message : 'AI 暂时没有回应，请稍后重试';
-      return json(502, { error: message, code: 'DEEPSEEK_UNAVAILABLE' }, request);
+      return json(502, { error: 'AI 暂时无法回应，请稍后再试。', code: 'DEEPSEEK_UNAVAILABLE' }, request);
     }
   }
 

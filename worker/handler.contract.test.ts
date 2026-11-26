@@ -100,7 +100,7 @@ describe('worker handler API 契约', () => {
       messages: [{ role: 'user', content: '请继续聊聊。' }],
     }), baseEnv);
     expect(failed.status).toBe(502);
-    expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE' });
+    expect(await json(failed)).toMatchObject({ code: 'DEEPSEEK_UNAVAILABLE', error: 'AI 暂时无法回应，请稍后再试。' });
   });
 
   it('一轮回复只因自然空行展示为多气泡，且安全和交接保持单条', async () => {
