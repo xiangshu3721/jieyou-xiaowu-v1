@@ -423,6 +423,15 @@ function continuationFor(latestUserMessage: string, recentUserMessages: string[]
   return '我在这里陪着你，我们可以先停一停。';
 }
 
+function openExplorationQuestion(latest: string, context: string) {
+  const source = `${context}\n${latest}`;
+  if (/着急|着急吧/.test(latest)) return '你说的这份着急，眼下最让你放不下的是什么？';
+  if (/摸着石头|探索/.test(source)) return '在这样摸着石头过河的过程中，哪个时刻最让你觉得压力大？';
+  if (/怎么办|怎么做/.test(latest)) return '在这件事里，你现在最想先弄清的是什么？';
+  if (/不知道/.test(latest)) return '说不上来也没关系。你现在最想从哪一部分开始说起？';
+  return '这件事里，眼下最让你在意的是什么？';
+}
+
 function isWorkSituation(analysis: ConversationAnalysis, contextText: string) {
   return analysis.primary_topic === 'CAREER' || /工作|上班|职场|任务|同事|老板/.test(contextText);
 }
@@ -474,13 +483,13 @@ export function fallbackReply(analysis: ConversationAnalysis, options: { allowQu
   if (analysis.user_intent === 'WANTS_CLARITY' && analysis.reply_length === 'SHORT' && /焦虑|难受|压力大|低落|紧张/.test(latestUserMessage)) {
     return '听起来这阵子的焦虑一直在缠着你。你愿意先说说，它通常在什么情境下最明显吗？';
   }
-  if (analysis.user_intent === 'WANTS_ACTION' && asksForPracticalHelp(latestUserMessage)) return practicalFallback(analysis, userContext);
-  if (analysis.user_intent === 'WANTS_COMFORT' || !allowQuestion || !analysis.ask_question) {
+  if (analysis.user_intent === 'WANTS_COMFORT' || !allowQuestion || analysis.no_more_questions) {
     return nonRepeatingFallback(listeningFallbackReply, options);
   }
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';
-  if (analysis.information_gaps.length && analysis.next_question) return `我先听你把刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
+  if (analysis.information_gaps.length && analysis.next_question) return openExplorationQuestion(latestUserMessage, userContext);
+  if (latestUserMessage) return openExplorationQuestion(latestUserMessage, userContext);
   if (analysis.complexity === 'LIGHT') return '你已经把眼前的处境说得很具体了。我们先停在这里，看看其中哪一点最让你过不去。';
   return '我先陪你把目前这几层感受和处境放在一起看，不急着替它下结论。';
 }

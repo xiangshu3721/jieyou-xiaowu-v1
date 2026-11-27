@@ -684,7 +684,7 @@ export async function handleApi(request: Request, env: WorkerEnv) {
       const fallback = () => {
         diagnostics.codes.push('FALLBACK_USED');
         diagnostics.fallback_used = true;
-        return fallbackReply(analysis, { ...replyContext, allowQuestion: false });
+        return fallbackReply(analysis, replyContext);
       };
       let reply: string;
       if (!completion.content) {

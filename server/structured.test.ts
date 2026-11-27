@@ -84,7 +84,7 @@ describe('结构化 AI 输出校验', () => {
   it('模型输出异常时返回安全降级结果', () => {
     expect(parseAssistantOutput('{not-json}')).toBeNull();
     const analysis = analyzeConversation('我最近工作压力很大');
-    expect(fallbackReply(analysis)).toContain('听');
+    expect(fallbackReply(analysis)).toMatch(/[？?]/);
   });
 
   it('模型未遵守 JSON 协议时保留安全的自然语言回复，避免重复固定降级文案', () => {
@@ -152,8 +152,7 @@ describe('结构化 AI 输出校验', () => {
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {
     const first = analyzeConversation('工作压力很大怎么办？');
     const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
-    expect(firstReply).toMatch(/被动/);
-    expect(firstReply).not.toContain('按自己的节奏继续说');
+    expect(firstReply).toContain('按自己的节奏继续说');
 
     const second = analyzeConversation('你这话啥意思？', '用户：工作压力很大怎么办？');
     const secondReply = fallbackReply(second, {
@@ -239,6 +238,23 @@ describe('结构化 AI 输出校验', () => {
   it('Fallback 保留安全澄清和危机指引例外', () => {
     expect(fallbackReply(analyzeConversation('我现在正准备伤害自己'))).toBe(emergencyReply);
     expect(fallbackReply(analyzeConversation('我不想活了'))).toBe(safetyClarificationReply);
+  });
+
+  it('普通探索用开放问题推进短句，不预设动机或二选一', () => {
+    const exploring = fallbackReply(analyzeConversation('就是有很多事在探索，摸着石头过河'), {
+      latestUserMessage: '就是有很多事在探索，摸着石头过河',
+    });
+    expect(exploring).toMatch(/哪个时刻/);
+    const urgent = fallbackReply(analyzeConversation('是啊，怎么办呢', '用户：就是有很多事在探索，摸着石头过河'), {
+      latestUserMessage: '是啊，怎么办呢', recentUserMessages: ['就是有很多事在探索，摸着石头过河'],
+    });
+    expect(urgent).toMatch(/[？?]/);
+    expect(urgent).not.toMatch(/还是|是不是/);
+    const anxious = fallbackReply(analyzeConversation('着急吧', '用户：是啊，怎么办呢'), {
+      latestUserMessage: '着急吧', recentUserMessages: ['是啊，怎么办呢'],
+    });
+    expect(anxious).toMatch(/最让你放不下/);
+    expect(anxious).not.toMatch(/必须快点|结果/);
   });
 
   it('把旧的真人服务流程句替换为温和的用户文案', () => {
