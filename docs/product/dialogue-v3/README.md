@@ -22,6 +22,7 @@
 | 文件 | 用途 | 状态 |
 | --- | --- | --- |
 | [mentor-identity-charter.md](mentor-identity-charter.md) | A02 导师身份宪章、不可偏移的角色行为 | 草案 v0.1 |
+| [mentor-role-rulecards.md](mentor-role-rulecards.md) | A02 R01–R10 的触发、禁区、例外与可观察验收 | 草案 v0.1 |
 | [methodology-source-index.md](methodology-source-index.md) | A03 原典来源、原始结构、适用边界与归档状态 | 草案 v0.1 |
 | [mirror-method-mapping.md](mirror-method-mapping.md) | A03 原典 → 产品方法映射（不替代原文） | 草案 v0.1 |
 | [method-application-register.md](method-application-register.md) | 应用规则、冲突处理、优先级与版本 | 草案 v0.1 |
