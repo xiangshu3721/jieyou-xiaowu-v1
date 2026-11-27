@@ -25,6 +25,8 @@
 | [mentor-role-rulecards.md](mentor-role-rulecards.md) | A02 R01–R10 的触发、禁区、例外与可观察验收 | 草案 v0.1 |
 | [methodology-source-index.md](methodology-source-index.md) | A03 原典来源、原始结构、适用边界与归档状态 | 草案 v0.1 |
 | [mirror-method-mapping.md](mirror-method-mapping.md) | A03 原典 → 产品方法映射（不替代原文） | 草案 v0.1 |
+| [method-cards/MM-02-focus.md](method-cards/MM-02-focus.md) | A03 聚焦方法：输入输出、决策、边界与异常 | 草案 v0.1 |
+| [method-cards/MM-02-focus-cases.md](method-cards/MM-02-focus-cases.md) | 聚焦方法 16 个独立场景与 4 条多轮轨迹 | 设计用例、未执行 |
 | [method-application-register.md](method-application-register.md) | 应用规则、冲突处理、优先级与版本 | 草案 v0.1 |
 | [mentor-identity-test-cases.md](mentor-identity-test-cases.md) | 角色、提问、方法与安全边界的多轮验收案例 | 草案 v0.1 |
 | [CHANGELOG.md](CHANGELOG.md) | 每阶段保存成果、变更与后续待办 | 持续更新 |

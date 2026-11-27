@@ -15,7 +15,7 @@
 
 | 规则 ID | 来源 | 触发 / 适用 | 输出约束 / 禁区 | 验证重点 |
 | --- | --- | --- | --- | --- |
-| APP-FOCUS-01 | SRC-MIRROR-01 p4 | 多条困扰混在一起 | 可帮助聚焦，不强行阻止新 Issue | 用户可以随时切换 |
+| APP-FOCUS-01 | SRC-MIRROR-01 p4 | 多条困扰交织、焦点确认/调整、用户选择换题 | 低介入聚焦，不强制选题；由用户确认，Issue 由专用模块控制。细则见 [MM-02-focus.md](method-cards/MM-02-focus.md) | [16 场景 + 4 多轮轨迹](method-cards/MM-02-focus-cases.md) |
 | APP-QUANT-01 | SRC-MIRROR-01 p4 | 用户明确希望衡量程度 | 量化可选；不能每轮要求打分 | 不发无关量表 |
 | APP-CLARIFY-01 | SRC-MIRROR-01 p5 | 表达模糊或纠正理解 | 以最新确认事实为准，不暗设归因 | 纠正后不沿用旧结论 |
 | APP-OPEN-01 | SRC-MIRROR-01 p5–6 | 普通探索且存在值得探索的未知 | 真开放、与上下文相关、少而有价值 | 不预设 A/B |
