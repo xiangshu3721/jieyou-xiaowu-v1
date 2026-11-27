@@ -885,7 +885,8 @@ export function selectDialogueStrategy(input: {
   // JTBD-02B P1-C/D3：结束意愿优先于普通测评/探索/追问
   if (input.intent === 'WANTS_END') return 'MIRROR';
   if (input.assessment.needed) return 'ASSESSMENT';
-  if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
+  // 求助意愿不等于 AI 可以代替用户开方案；普通对话仍先镜像和澄清。
+  if (input.intent === 'WANTS_ACTION') return input.nextQuestion && input.questionValue >= 0.72 ? 'CLARIFY_FACT' : 'MIRROR';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
   // JTBD-02B D5b/D7b：纠正理解后先镜像确认，不追问事实
   const latestText = input.latestText ?? '';
@@ -1116,17 +1117,16 @@ function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: strin
   if (intent === 'WANTS_END') return 'MIRROR';
   if (intent === 'WANTS_COMFORT') return 'LISTEN';
   if (assessment.needed) return 'ASSESSMENT';
-  if (intent === 'WANTS_ACTION') return 'HELP';
+  if (intent === 'WANTS_ACTION') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
   if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (gaps.length) return 'CLARIFY';
-  return 'HELP';
+  return 'MIRROR';
 }
 
 function replyLengthFor(text: string, intent: UserIntent, goal: ReturnType<typeof responseGoalFor>, complexity: Complexity): 'SHORT' | 'MEDIUM' | 'LONG' {
   if (goal === 'HANDOFF' || goal === 'LISTEN' || intent === 'WANTS_END') return 'SHORT';
   if (goal === 'ASSESSMENT' || goal === 'MIRROR' || complexity === 'COMPLEX') return 'MEDIUM';
-  if (intent === 'WANTS_ACTION' && /具体|方案|步骤|怎么做|下一步/.test(text)) return 'LONG';
   return text.length > 90 ? 'MEDIUM' : 'SHORT';
 }
 

@@ -136,7 +136,7 @@ describe('结构化 AI 输出校验', () => {
 
     const action = analyzeConversation('现在我愿意做点事，但别给长计划。');
     expect(normalizeUserReply('今天先把下个月房租和手头可用的钱写下来。', action))
-      .toBe('今天先把下个月房租和手头可用的钱写下来。');
+      .not.toContain('写下来');
   });
 
   it('服务端覆盖模型对口语化用药决策的不安全建议', () => {
@@ -152,7 +152,7 @@ describe('结构化 AI 输出校验', () => {
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {
     const first = analyzeConversation('工作压力很大怎么办？');
     const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
-    expect(firstReply).toMatch(/任务|工作量|范围/);
+    expect(firstReply).toMatch(/被动/);
     expect(firstReply).not.toContain('按自己的节奏继续说');
 
     const second = analyzeConversation('你这话啥意思？', '用户：工作压力很大怎么办？');
@@ -162,7 +162,7 @@ describe('结构化 AI 输出校验', () => {
       recentAssistantReplies: ['我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。'],
       allowQuestion: false,
     });
-    expect(secondReply).toContain('没有回答');
+    expect(secondReply).toContain('被动');
     expect(secondReply).not.toBe('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
   });
 
@@ -226,7 +226,7 @@ describe('结构化 AI 输出校验', () => {
     };
     const reply = '我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。你现在最想先解决什么？';
     const normalized = normalizeUserReply(reply, analysis, { latestUserMessage: '你刚才的建议是什么意思？' });
-    expect(normalized).toBe('我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。');
+    expect(normalized).toContain('我不想猜测');
     expect(normalized).not.toMatch(/记住了|不重复问/);
 
     const sameSentence = normalizeUserReply('我是在建议先确定今天的优先级，你最想先解决什么？', analysis);

@@ -19,6 +19,7 @@ export function modelGuidanceFor(analysis: ConversationAnalysis) {
     // natural, context-specific open question if that is the most useful move.
     open_question_allowed: !analysis.no_more_questions,
     response_strategy: analysis.primary_response_strategy,
+    autonomy_boundary: '普通对话不得给答案、步骤、练习、行动清单或替用户决定；即使用户要求方法，也先镜像已知处境，帮助其看见感受、矛盾、需要或可选方向。只在安全、专业边界或明确预约时遵循相应服务义务。',
     next_question: analysis.ask_question ? analysis.next_question : null,
     routing: analysis.routing,
     safety_status: analysis.safety_status,

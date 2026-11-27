@@ -304,6 +304,7 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
     if (!withoutOffer) return fallbackReply(analysis, context);
     reply = withoutOffer;
   }
+  if (analysis?.routing === 'AI_SUPPORT' && isDirectiveAdvice(reply)) return fallbackReply(analysis, context);
   if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis, context);
   }
@@ -389,6 +390,11 @@ function asksForPracticalHelp(text: string) {
   return /怎么办|怎么做|给.{0,4}(建议|办法)|有什么办法|如何解决|下一步/.test(text);
 }
 
+function isDirectiveAdvice(reply: string) {
+  return /(?:你可以|建议你|你应该|不妨|先.{0,18}(?:再|然后|把|做|列|分|试)|每天.{0,12}(?:做|花|练|记录)|分(?:成|为).{0,12}(?:步|类)|给你.{0,8}(?:方案|步骤|方法))/.test(reply)
+    && /(?:任务|计划|练习|呼吸|记录|步骤|方法|方案|分类|分钟|完成|行动|优先级|写下来|算出)/.test(reply);
+}
+
 function sameVisibleReply(left: string, right: string) {
   const compact = (value: string) => value.replace(/[\s，。！？!?、；：,;:]/g, '');
   return Boolean(left && right && compact(left) === compact(right));
@@ -422,10 +428,8 @@ function isWorkSituation(analysis: ConversationAnalysis, contextText: string) {
 }
 
 function practicalFallback(analysis: ConversationAnalysis, contextText: string) {
-  if (isWorkSituation(analysis, contextText)) {
-    return '你是在问工作压力眼下怎么处理。先把今天的任务分成“必须今天完成”和“可以延后或需要协调”，只选一件最紧急、能在一小段时间内推进的事开始；如果期限或工作量确实超出承受范围，尽早把风险和你能完成的范围说清楚。先把一个可控动作落下来，不必一次解决全部压力。';
-  }
-  return '你是在问眼下能怎么做。先选一个最具体、最能减轻当下负担的小动作，在今天或接下来一小时内完成；其余要处理的事先写下来，分成现在能做和需要他人协助两部分。先让自己从“全都要解决”回到一个可执行的下一步。';
+  if (isWorkSituation(analysis, contextText)) return '你想尽快摆脱这种工作压力，但眼下最卡住的似乎不是“做得还不够”，而是不停变化的要求把你推得很被动。';
+  return '你很想赶紧找到一个办法，这份着急本身也在说明，这件事已经让你撑得很累了。';
 }
 
 function challengeFallback(analysis: ConversationAnalysis, options: ReplyContext, contextText: string) {
@@ -433,9 +437,7 @@ function challengeFallback(analysis: ConversationAnalysis, options: ReplyContext
   const declinesAdvice = explicitlyDeclinesAdvice(options.latestUserMessage || '');
   if (sameVisibleReply(previousReply, listeningFallbackReply)) {
     if (declinesAdvice) return '刚才那句话的意思是：你不需要马上补充更多信息或回答问题，可以先按自己的节奏说。我不会因为这句话再给你行动建议。';
-    if (asksForPracticalHelp(contextText) && isWorkSituation(analysis, contextText)) {
-      return '你说得对，刚才那句没有回答“工作压力很大怎么办”。它本来只是想说你不用急着补充更多信息，但我应该先直接回应：先把今天的任务分出轻重缓急，只推进一件最紧急的；遇到明显超量或期限风险时，尽早说明你能完成的范围。这样先把压力从一团变成一个可处理的动作。';
-    }
+    if (asksForPracticalHelp(contextText) && isWorkSituation(analysis, contextText)) return practicalFallback(analysis, contextText);
     return '刚才那句话的意思是：你不需要马上补充更多信息或回答问题，可以先按自己的节奏说。';
   }
   if (previousReply && /任务|最紧急|工作量|期限|完成的范围/.test(previousReply)) {
@@ -479,8 +481,8 @@ export function fallbackReply(analysis: ConversationAnalysis, options: { allowQu
   if (analysis.assessment.needed && analysis.assessment.recommended_tool) return `你描述的情况涉及几个方面，继续逐个追问可能会比较累。如果你愿意，可以先做${analysis.assessment.recommended_tool}，它只作为辅助了解，不是诊断。`;
   if (analysis.conversation_state === 'EMOTIONAL_SUPPORT') return '我先陪你把这段经历说清楚，不急着给建议。现在最让你难受、最希望被听见的部分是哪一件？';
   if (analysis.information_gaps.length && analysis.next_question) return `我先听你把刚才说的接住。为了判断下一步更适合怎么帮你，我只想确认一件事：${analysis.next_question}`;
-  if (analysis.complexity === 'LIGHT') return '你现在描述的问题比较具体，我们可以先从一个最小、现实可行的动作开始，再看看它对你有没有帮助。';
-  return '我先把目前的情况做个阶段性整理，再和你一起看一个更适合眼下的下一步。';
+  if (analysis.complexity === 'LIGHT') return '你已经把眼前的处境说得很具体了。我们先停在这里，看看其中哪一点最让你过不去。';
+  return '我先陪你把目前这几层感受和处境放在一起看，不急着替它下结论。';
 }
 
 export function createFallbackAnalysis(latestText: string, contextText = '') {
