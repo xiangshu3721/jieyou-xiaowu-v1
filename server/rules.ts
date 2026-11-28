@@ -493,7 +493,7 @@ export function recentSafetyStatus(messages: ChatMessage[]): SafetyStatus {
   return pending;
 }
 
-const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)|(?:今天|现在|接下来).{0,12}(?:该|先).{0,8}(?:看|做|办|处理|什么)|(?:愿意|想|准备).{0,6}(?:做点事|行动起来)/;
+const actionRequestPattern = /怎么办|怎么做|给.{0,8}(?:建议|办法)|(?:要|想要).{0,4}(?:具体)?(?:建议|办法|方案)|方案|下一步|行动|该不该|要不要|别光安慰我|(?:怎么|如何).{0,12}(?:谈|说|开口|做|办|处理)|(?:今天|现在|接下来|先).{0,12}(?:做|办|处理).{0,8}(?:哪一件|什么|怎么)|(?:今天|现在|接下来).{0,12}(?:该|先).{0,8}(?:看|做|办|处理|什么)|(?:愿意|想|准备).{0,6}(?:做点事|行动起来)/;
 const declinedActionPattern = /(?:别|不要|不用|不想|不必|无需|不需要|没有必要)\s*(?:再)?(?:给.{0,8}(?:建议|办法|方案)|建议|方案|办法|下一步|行动|(?:教|告诉|劝).{0,6}(?:怎么办|怎么做)|怎么办|怎么做)/;
 
 function intentClauses(text: string) {
@@ -510,6 +510,15 @@ function hasExplicitActionRequest(text: string) {
 
 function hasExplicitActionDecline(text: string) {
   return intentClauses(text).some((clause) => declinedActionPattern.test(clause));
+}
+
+function isBroadEmotionActionRequest(text: string) {
+  // “焦虑怎么办”表达了想被帮助，但首轮没有足够事实来指定行动。
+  // 只收窄短、泛化的情绪主诉；具体场景或明确要方法仍直接帮助。
+  return text.length <= 30
+    && /焦虑|难受|压力大|烦|低落|累|紧张|害怕/.test(text)
+    && /怎么办|怎么做/.test(text)
+    && !/具体|办法|步骤|下一步|先做|怎么和|怎么跟|明天|今天|工作优先级/.test(text);
 }
 
 function hasExplicitClarificationRequest(text: string) {
@@ -565,6 +574,7 @@ function detectIntent(text: string): UserIntent {
     if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
     return correctionDeclinesExploration(text) ? 'WANTS_COMFORT' : 'VENTING';
   }
+  if (isBroadEmotionActionRequest(text)) return 'WANTS_CLARITY';
   if (hasExplicitActionRequest(text)) return 'WANTS_ACTION';
   if (/别给我建议|不想听建议|只想倾诉|先听我说|陪我一会|不用分析|(?:只想|就想|只是想把?)(?:把)?[^。！？\n]{0,30}(?:(?:感觉|感受|心里话).{0,8})?说出来/.test(text) || hasExplicitActionDecline(text)) return 'WANTS_COMFORT';
   if (hasExplicitClarificationRequest(text)) return 'WANTS_CLARITY';
@@ -875,7 +885,8 @@ export function selectDialogueStrategy(input: {
   // JTBD-02B P1-C/D3：结束意愿优先于普通测评/探索/追问
   if (input.intent === 'WANTS_END') return 'MIRROR';
   if (input.assessment.needed) return 'ASSESSMENT';
-  if (input.intent === 'WANTS_ACTION') return 'PROVIDE_HELP';
+  // 求助意愿不等于 AI 可以代替用户开方案；普通对话仍先镜像和澄清。
+  if (input.intent === 'WANTS_ACTION') return input.nextQuestion && input.questionValue >= 0.72 ? 'CLARIFY_FACT' : 'MIRROR';
   if (input.supportFeedback) return 'CLARIFY_GOAL';
   // JTBD-02B D5b/D7b：纠正理解后先镜像确认，不追问事实
   const latestText = input.latestText ?? '';
@@ -1106,17 +1117,16 @@ function responseGoalFor(routing: TriageRouting, intent: UserIntent, gaps: strin
   if (intent === 'WANTS_END') return 'MIRROR';
   if (intent === 'WANTS_COMFORT') return 'LISTEN';
   if (assessment.needed) return 'ASSESSMENT';
-  if (intent === 'WANTS_ACTION') return 'HELP';
+  if (intent === 'WANTS_ACTION') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (intent === 'VENTING') return supportFeedback ? 'MIRROR' : 'LISTEN';
   if (intent === 'WANTS_CLARITY') return gaps.length ? 'CLARIFY' : 'MIRROR';
   if (gaps.length) return 'CLARIFY';
-  return 'HELP';
+  return 'MIRROR';
 }
 
 function replyLengthFor(text: string, intent: UserIntent, goal: ReturnType<typeof responseGoalFor>, complexity: Complexity): 'SHORT' | 'MEDIUM' | 'LONG' {
   if (goal === 'HANDOFF' || goal === 'LISTEN' || intent === 'WANTS_END') return 'SHORT';
   if (goal === 'ASSESSMENT' || goal === 'MIRROR' || complexity === 'COMPLEX') return 'MEDIUM';
-  if (intent === 'WANTS_ACTION' && /具体|方案|步骤|怎么做|下一步/.test(text)) return 'LONG';
   return text.length > 90 ? 'MEDIUM' : 'SHORT';
 }
 

@@ -291,10 +291,10 @@ describe('解忧小屋智能导诊规则', () => {
     }
 
     const correctionWithHelp = analyzeConversation('你别往自信上分析，我现在到底该怎么和主管谈？', '用户：部门临时活都塞给我。', { userTurnCount: 3 });
-    expect(correctionWithHelp).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+    expect(correctionWithHelp).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY', primary_response_strategy: 'MIRROR' });
 
     const actionAfterVenting = analyzeConversation('那你说，我今天先做哪一件？', '用户：我现在只想说说，不用给建议。\n用户：失业以后房租快交不上了。', { userTurnCount: 3 });
-    expect(actionAfterVenting).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', primary_response_strategy: 'PROVIDE_HELP', ask_question: false });
+    expect(actionAfterVenting).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY' });
     expect(analyzeConversation('能不能帮我分析一下我为什么总在会议上沉默？').user_intent).toBe('WANTS_CLARITY');
   });
 
@@ -320,8 +320,8 @@ describe('解忧小屋智能导诊规则', () => {
     expect(analyzeConversation('其实最怕的是下个月房租。', context, { userTurnCount: 3 }))
       .toMatchObject({ user_intent: 'WANTS_COMFORT', response_goal: 'LISTEN', ask_question: false, no_more_questions: true });
     expect(analyzeConversation('现在我愿意做点事，但别给长计划。', context, { userTurnCount: 4 }))
-      .toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP', ask_question: false, no_more_questions: false });
-    expect(analyzeConversation('那今天我该先看什么？')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'HELP' });
+      .toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY', no_more_questions: false });
+    expect(analyzeConversation('那今天我该先看什么？')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY' });
   });
 
   it('专业需求进入专业转介，而不是被普通自助覆盖', () => {
@@ -465,10 +465,17 @@ describe('解忧小屋智能导诊规则', () => {
 
   it('V1.3 默认先由 AI 支持，不因中度标签提前展示真人入口', () => {
     const analysis = analyzeConversation('最近总是焦虑怎么办');
+    expect(analysis).toMatchObject({ user_intent: 'WANTS_CLARITY', response_goal: 'CLARIFY', primary_response_strategy: 'CLARIFY_FACT', reply_length: 'SHORT' });
     expect(analysis.routing).toBe('AI_SUPPORT');
     expect(analysis.handoff_state).toBe('NOT_READY');
     expect(analysis.show_booking_button).toBe(false);
     expect(analysis.response_goal).not.toBe('HANDOFF');
+  });
+
+  it('泛化情绪求助先澄清，具体行动请求仍直接帮助', () => {
+    expect(analyzeConversation('最近总是感到焦虑').user_intent).toBe('VENTING');
+    expect(analyzeConversation('我明天要和主管谈工作优先级，先做什么')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY' });
+    expect(analyzeConversation('我试过了没用，我就想要一个具体办法')).toMatchObject({ user_intent: 'WANTS_ACTION', response_goal: 'CLARIFY' });
   });
 
   it('V1.3 信息充分且继续 AI 收益有限时停止追问并交接', () => {

@@ -234,14 +234,14 @@
     },
     {
       "id": "S14-action-request",
-      "category": "明确行动",
+      "category": "明确求解",
       "turns": [
         { "role": "user", "content": "工作压力很大，我该怎么办，给我个下一步" }
       ],
       "expected": {
         "user_intent": "WANTS_ACTION",
-        "response_goal": "HELP",
-        "primary_response_strategy": "PROVIDE_HELP"
+        "response_goal": "CLARIFY",
+        "primary_response_strategy": "CLARIFY_FACT"
       },
       "evaluation": {
         "rule_pass": true,

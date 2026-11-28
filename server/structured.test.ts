@@ -84,7 +84,7 @@ describe('结构化 AI 输出校验', () => {
   it('模型输出异常时返回安全降级结果', () => {
     expect(parseAssistantOutput('{not-json}')).toBeNull();
     const analysis = analyzeConversation('我最近工作压力很大');
-    expect(fallbackReply(analysis)).toContain('听');
+    expect(fallbackReply(analysis)).toMatch(/[？?]/);
   });
 
   it('模型未遵守 JSON 协议时保留安全的自然语言回复，避免重复固定降级文案', () => {
@@ -110,8 +110,8 @@ describe('结构化 AI 输出校验', () => {
     expect(fallbackReply(comfort)).not.toMatch(/建议你|可以先做|试试|应该/);
 
     const noQuestion = analyzeConversation('最近总是焦虑怎么办');
-    expect(noQuestion.ask_question).toBe(false);
-    expect(fallbackReply(noQuestion)).not.toMatch(/[？?]/);
+    expect(noQuestion).toMatchObject({ user_intent: 'WANTS_CLARITY', response_goal: 'CLARIFY', ask_question: true, reply_length: 'SHORT' });
+    expect(fallbackReply(noQuestion, { latestUserMessage: '最近总是焦虑怎么办' })).toMatch(/焦虑一直在缠着你/);
 
     const clarification = analyzeConversation('最近很累，能帮我理清楚吗');
     expect(clarification.ask_question).toBe(true);
@@ -136,7 +136,7 @@ describe('结构化 AI 输出校验', () => {
 
     const action = analyzeConversation('现在我愿意做点事，但别给长计划。');
     expect(normalizeUserReply('今天先把下个月房租和手头可用的钱写下来。', action))
-      .toBe('今天先把下个月房租和手头可用的钱写下来。');
+      .not.toContain('写下来');
   });
 
   it('服务端覆盖模型对口语化用药决策的不安全建议', () => {
@@ -152,8 +152,7 @@ describe('结构化 AI 输出校验', () => {
   it('普通 Fallback 会直接回应求助，并只在上一条确为旧模板时补救', () => {
     const first = analyzeConversation('工作压力很大怎么办？');
     const firstReply = fallbackReply(first, { latestUserMessage: '工作压力很大怎么办？', allowQuestion: false });
-    expect(firstReply).toMatch(/任务|工作量|范围/);
-    expect(firstReply).not.toContain('按自己的节奏继续说');
+    expect(firstReply).toContain('按自己的节奏继续说');
 
     const second = analyzeConversation('你这话啥意思？', '用户：工作压力很大怎么办？');
     const secondReply = fallbackReply(second, {
@@ -162,7 +161,7 @@ describe('结构化 AI 输出校验', () => {
       recentAssistantReplies: ['我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。'],
       allowQuestion: false,
     });
-    expect(secondReply).toContain('没有回答');
+    expect(secondReply).toContain('被动');
     expect(secondReply).not.toBe('我先听着，也接住你刚才说的这部分。你可以按自己的节奏继续说，不必急着回答问题。');
   });
 
@@ -226,7 +225,7 @@ describe('结构化 AI 输出校验', () => {
     };
     const reply = '我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。你现在最想先解决什么？';
     const normalized = normalizeUserReply(reply, analysis, { latestUserMessage: '你刚才的建议是什么意思？' });
-    expect(normalized).toBe('我的意思是先把工作任务分出轻重缓急，今天只推进一个最紧急的小步骤。');
+    expect(normalized).toContain('我不想猜测');
     expect(normalized).not.toMatch(/记住了|不重复问/);
 
     const sameSentence = normalizeUserReply('我是在建议先确定今天的优先级，你最想先解决什么？', analysis);
@@ -239,6 +238,34 @@ describe('结构化 AI 输出校验', () => {
   it('Fallback 保留安全澄清和危机指引例外', () => {
     expect(fallbackReply(analyzeConversation('我现在正准备伤害自己'))).toBe(emergencyReply);
     expect(fallbackReply(analyzeConversation('我不想活了'))).toBe(safetyClarificationReply);
+  });
+
+  it('普通探索用开放问题推进短句，不预设动机或二选一', () => {
+    const exploring = fallbackReply(analyzeConversation('就是有很多事在探索，摸着石头过河'), {
+      latestUserMessage: '就是有很多事在探索，摸着石头过河',
+    });
+    expect(exploring).toMatch(/哪个时刻/);
+    const urgent = fallbackReply(analyzeConversation('是啊，怎么办呢', '用户：就是有很多事在探索，摸着石头过河'), {
+      latestUserMessage: '是啊，怎么办呢', recentUserMessages: ['就是有很多事在探索，摸着石头过河'],
+    });
+    expect(urgent).toMatch(/[？?]/);
+    expect(urgent).not.toMatch(/还是|是不是/);
+    const anxious = fallbackReply(analyzeConversation('着急吧', '用户：是啊，怎么办呢'), {
+      latestUserMessage: '着急吧', recentUserMessages: ['是啊，怎么办呢'],
+    });
+    expect(anxious).toMatch(/最让你放不下/);
+    expect(anxious).not.toMatch(/必须快点|结果/);
+  });
+
+  it('用户明确要求继续探索时，不以“可以问”或留白代替真实开放问题', () => {
+    const context = {
+      latestUserMessage: '倒是问啊',
+      recentUserMessages: ['就是有很多事在探索，摸着石头过河', '是啊，怎么办呢', '着急吧'],
+    };
+    const analysis = analyzeConversation('倒是问啊', '用户：就是有很多事在探索，摸着石头过河\n用户：是啊，怎么办呢\n用户：着急吧');
+    const reply = normalizeUserReply('当然可以问。', analysis, context);
+    expect(reply).toMatch(/最让你放不下/);
+    expect(reply).not.toMatch(/可以问|是不是|还是/);
   });
 
   it('把旧的真人服务流程句替换为温和的用户文案', () => {

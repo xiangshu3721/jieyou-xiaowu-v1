@@ -39,4 +39,18 @@ describe('Issue #59 Handler 控制面回归', () => {
     expect(body.reply).toContain('工作压力');
     vi.unstubAllGlobals();
   });
+
+  it('仅在显式关闭思考时向 DeepSeek 发送关闭思考对象', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(response('我们先从你最困扰的部分说起。'));
+    vi.stubGlobal('fetch', fetchMock);
+    const request = new Request('https://staging.test/api/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: '最近工作很累。' }] }),
+    });
+    const result = await handleApi(request, { ...env, DEEPSEEK_MODEL: 'deepseek-flash', DEEPSEEK_THINKING: 'false' });
+    expect(result.status).toBe(200);
+    const posted = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(posted).toMatchObject({ model: 'deepseek-flash', thinking: { type: 'disabled' } });
+    vi.unstubAllGlobals();
+  });
 });
