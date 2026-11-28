@@ -17,6 +17,14 @@
 5. 真人式自然表达：以既定动作生成自然中文对话。
 6. 质量治理：输出校验、无效回复降级、脱敏轨迹、跨轮回归和发布闸门。
 
+## V3.1 新增：C04 数据训练与评测闭环
+
+- [architecture-v3-overview.md](architecture-v3-overview.md)：更新的简单架构图，区分实时对话与离线训练。
+- [conversation-data-learning.md](conversation-data-learning.md)：授权、清洗、标注、黄金案例、导师盲评、回归与可选微调的边界。
+- [internal-mentor-pilot.md](internal-mentor-pilot.md)：公开 Pages 已有旧版入口、最新 Staging 未核验和新版本受控发布门槛。
+
+**重要**：内测用户对话不得默认作为训练样本；本批文档不代表 V3 已开发或新 Pages 版本已发布。
+
 ## 当前阶段交付物（A02 / A03）
 
 | 文件 | 用途 | 状态 |
