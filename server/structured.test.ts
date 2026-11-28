@@ -257,6 +257,17 @@ describe('结构化 AI 输出校验', () => {
     expect(anxious).not.toMatch(/必须快点|结果/);
   });
 
+  it('用户明确要求继续探索时，不以“可以问”或留白代替真实开放问题', () => {
+    const context = {
+      latestUserMessage: '倒是问啊',
+      recentUserMessages: ['就是有很多事在探索，摸着石头过河', '是啊，怎么办呢', '着急吧'],
+    };
+    const analysis = analyzeConversation('倒是问啊', '用户：就是有很多事在探索，摸着石头过河\n用户：是啊，怎么办呢\n用户：着急吧');
+    const reply = normalizeUserReply('当然可以问。', analysis, context);
+    expect(reply).toMatch(/最让你放不下/);
+    expect(reply).not.toMatch(/可以问|是不是|还是/);
+  });
+
   it('把旧的真人服务流程句替换为温和的用户文案', () => {
     const normalized = normalizeUserReply('提交后由运营人员在飞书里人工分配导师并联系你。');
     expect(normalized).toMatch(/预约.*免费/);

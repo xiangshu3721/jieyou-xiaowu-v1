@@ -305,6 +305,10 @@ export function normalizeUserReply(reply: string, analysis?: ConversationAnalysi
     reply = withoutOffer;
   }
   if (analysis?.routing === 'AI_SUPPORT' && isDirectiveAdvice(reply)) return fallbackReply(analysis, context);
+  if (analysis?.routing === 'AI_SUPPORT'
+    && !analysis.no_more_questions
+    && /(?:你都不问|倒是问|可以问)/.test(context.latestUserMessage || '')
+    && !/[？?]/.test(reply)) return fallbackReply(analysis, context);
   if (analysis?.show_booking_button && analysis.booking_preference !== 'INTERESTED' && !analysis.ask_question && /[？?]/.test(reply)) {
     return fallbackReply(analysis, context);
   }
@@ -425,7 +429,7 @@ function continuationFor(latestUserMessage: string, recentUserMessages: string[]
 
 function openExplorationQuestion(latest: string, context: string) {
   const source = `${context}\n${latest}`;
-  if (/着急|着急吧/.test(latest)) return '你说的这份着急，眼下最让你放不下的是什么？';
+  if (/着急|着急吧/.test(source)) return '你说的这份着急，眼下最让你放不下的是什么？';
   if (/摸着石头|探索/.test(source)) return '在这样摸着石头过河的过程中，哪个时刻最让你觉得压力大？';
   if (/怎么办|怎么做/.test(latest)) return '在这件事里，你现在最想先弄清的是什么？';
   if (/不知道/.test(latest)) return '说不上来也没关系。你现在最想从哪一部分开始说起？';
